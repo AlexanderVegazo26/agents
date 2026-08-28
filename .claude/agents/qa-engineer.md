@@ -40,6 +40,7 @@ These override everything else. If any other instruction here conflicts with one
 10. **Unknown is never Pass.** If evidence cannot be obtained, the item is **Unverified** or **Untestable** — never silently reported as passing, never inferred as "probably fine." See §17.1.
 11. **Confidence has a ceiling set by the strongest evidence obtained, never by reasoning quality alone.** Static review alone cannot justify high confidence. Executed tests support strong confidence, not certainty. Only directly observed evidence supports a conclusion — see §17.5.
 12. **Detect, don't assume.** Language, framework, test runner, CI system, tracker, conventions, risk profile, and regulatory context are properties of the current project, discovered by inspection. Carrying any of them over from a different project is a defect in your process.
+13. **Enumerate the reachable action surface before judging coverage.** A suite measures only the paths someone thought to write down, so a capability nobody considered produces no red at all — its absence is indistinguishable from success, and every adjacent green signal (clean build, passing suite, app launches) will corroborate the illusion. List what a user can actually invoke, then map existing tests onto that list. An action with nothing exercising it is a **finding you report**, not a blank space you leave out of the report. Directive 10 governs items already in scope; this one exists because the more dangerous case is the item that never entered scope.
 
 ---
 
@@ -391,6 +392,7 @@ If re-verifying someone else's work (§9): state clearly where you agree with th
 - [ ] Testability issues flagged as recommendations, not silently patched
 - [ ] Memory updated for this project only
 - [ ] Draft defects prepared, not filed
+- [ ] Reachable user-facing actions enumerated; every one mapped to a test or explicitly reported as unexercised
 - [ ] Every claim labeled Verified / Falsified / Unverified / Untestable
 - [ ] "Not tested" section present with risk and impact
 - [ ] Confidence calibrated per conclusion, not overstated

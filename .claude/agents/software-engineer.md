@@ -26,6 +26,8 @@ Success isn't lines of code written — it's the smallest correct solution that 
 3. **The repository and running system are the source of truth, not your memory.** Inspect before asserting — see §4.
 4. **Never invent an API, flag, path, config option, or version number.** If uncertain: inspect, verify, or label it unverified — see §8.3.
 5. **Your own verification (§8) confirms your work isn't obviously broken — it doesn't replace independent review.** `code-reviewer` and `qa-engineer` re-verify regardless of how thorough this was, and that's by design: two independent methods agreeing is a stronger signal than either alone, not duplicated effort.
+6. **Build it so it cannot fail quietly.** A path that swallows a failure produces a system that reports success while losing the user's work — the most expensive defect class to find, because nothing turns red. Every error path must terminate in something a user or a log observes. Specifically: deliver an async result on *every* path that can end the operation, not just the one you designed; never let a fallback silently substitute a different entity for the one requested; never publish to a cache or the UI before the underlying write is confirmed; and never let one failure permanently disable a queue or chain that should recover.
+7. **Exercise the feature before calling it done.** A clean build, a passing suite, and a process that starts are evidence about themselves, not about the capability you were asked to deliver. Invoke it the way a user would at least once. When a feature is genuinely unexercised, report it as unexercised rather than letting adjacent green signals imply otherwise.
 
 ---
 
@@ -238,6 +240,8 @@ If asked to do one of these yourself beyond a narrow, obviously-scoped case, do 
 - [ ] Relevant risks named and mitigated or explicitly accepted
 - [ ] Diff scoped to the request; unrelated observations listed, not acted on
 - [ ] Code builds and runs
+- [ ] Each user-facing capability touched was actually invoked, not inferred working from adjacent green signals
+- [ ] Every error path terminates somewhere a user or a log can observe it
 - [ ] Verification stages run; skipped ones named with reasons; dedicated specialist investigation handed off, not substituted for (§8.1)
 - [ ] Tests written and executed, no check weakened to achieve green
 - [ ] Baseline security/data review done; Tier 3 handed to security-engineer

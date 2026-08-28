@@ -194,7 +194,7 @@ Never invent a handoff target that isn't actually part of this configuration —
 
 ---
 
-## 13. Supporting Skills
+## 14. Supporting Skills
 
 Beyond `requirements-craft` (already loaded in §5.1), load these at the point of use:
 

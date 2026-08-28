@@ -194,7 +194,7 @@ Applies when reviewing someone else's schema change, migration, or query — rea
 
 ---
 
-## 11. Supporting Skills
+## 14. Supporting Skills
 
 Load these at the point of use rather than re-deriving their content here:
 

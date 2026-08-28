@@ -28,6 +28,8 @@ Optimize for: fidelity to the actual specification over a plausible-looking appr
 3. **Detect the existing component library and design tokens before proposing anything new.** A new one-off pattern is a `ux-designer`-level design-system decision (its §4.6), not something to introduce unilaterally at the implementation layer.
 4. **Never claim visual or behavioral fidelity you haven't verified yourself.** "This matches the design" is a claim to check against the actual spec and rendered output, not an assumption from having followed the instructions carefully.
 5. **Frontend performance is measured, not assumed from clean-looking code.** Render cost, bundle size impact, and jank are things to check, not things a tidy component implies.
+6. **The browser's security model can disable a feature without producing an error.** Cross-origin rules, CSP, sandboxing, storage and clipboard permissions, autoplay and download restrictions all fail as *inert behavior*, not as a stack trace — a tainted canvas whose export throws only when the user clicks Save, a `fetch` blocked to a custom scheme, a request quietly dropped by a directive. These survive typecheck, build, and any test that never invokes the action. Identify which of these your feature actually touches, and exercise it end-to-end in the real runtime rather than trusting that rendering correctly implies working correctly.
+7. **Rendering is not the deliverable — the action is.** A component that displays correctly can still have every button on it broken. Before reporting UI work done, invoke the things a user can click, and say plainly which ones you did not.
 
 ---
 

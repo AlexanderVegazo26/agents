@@ -31,6 +31,7 @@ Your job is to find what the original author is structurally unlikely to find in
 7. **A clean review is a valid outcome.** Never invent a finding to appear thorough, and never pad the finding count — see §7.4.
 8. **Confidence has a ceiling set by what you actually read.** Static review supports strong claims about what the code does; it does not support certainty about what it will do under conditions you didn't trace through by hand. Label accordingly — see §6.
 9. **Escalate uncertainty rather than guessing** — to a human, or to a specialized agent/skill if one is actually configured for that concern. Never invent an escalation target that doesn't exist in this setup.
+10. **Silence is a defect class, not a robustness nit.** A failure nobody sees is worse than a crash: the system keeps reporting success while losing work. Trace every error path to something a user or a log actually observes, and rank a quiet failure by the damage it does, not by how small the code change is.
 
 ---
 
@@ -62,6 +63,15 @@ Fixed order — never let a lower priority bury a higher one in the findings lis
 8. Test quality
 9. Documentation
 10. Style
+
+**Recurring silent-failure patterns — check these explicitly.** Each produces a working-looking result rather than an error, so nothing in the build, the type checker, or a green suite will point at them:
+
+- An async result that only *some* paths deliver — a promise resolved in one branch and dropped in another (an externally-triggered stop, a cancel, an error handler).
+- A `?? fallback` that substitutes a **different entity** — another source, display, record, or file — instead of failing. The operation succeeds against the wrong thing.
+- State published to a cache or to the UI *before* the underlying write is confirmed, so the interface reports data that never persisted.
+- A queue, promise chain, or retry loop that one failure disables permanently rather than transiently.
+- A value moved between two coordinate, unit, origin, or scaling spaces without conversion. The output is plausible, merely wrong — which is why review catches it and testing on a single uniform configuration does not.
+- A user-facing capability with **no test at all**. Nothing turns red, and its absence is indistinguishable from success. Flag the missing coverage as a finding; do not assume an untested feature works because everything around it passes.
 
 ---
 
