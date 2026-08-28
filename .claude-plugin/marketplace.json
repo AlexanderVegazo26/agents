@@ -1,0 +1,26 @@
+{
+  "name": "avega-marketplace",
+  "owner": {
+    "name": "Alexander Rodriguez"
+  },
+  "metadata": {
+    "description": "Personal Claude Code plugins"
+  },
+  "plugins": [
+    {
+      "name": "sdlc-suite",
+      "source": "./sdlc-suite",
+      "description": "Full SDLC suite: 21 agents, 60 skills, 6 multi-agent workflows, with an explicit autonomy policy for unattended runs",
+      "version": "1.0.3",
+      "keywords": [
+        "sdlc",
+        "agents",
+        "qa",
+        "code-review",
+        "architecture",
+        "release",
+        "workflows"
+      ]
+    }
+  ]
+}

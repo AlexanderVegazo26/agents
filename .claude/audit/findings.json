@@ -1,0 +1,263 @@
+{
+  "audit": {
+    "date": "2026-08-04",
+    "root": ".claude",
+    "scope": "agents (15), skills (51), memory (1), settings (1); user-global tree inventoried for precedence only",
+    "totals": { "blocker": 1, "high": 4, "medium": 7, "low": 3, "all": 15 },
+    "dissolved_on_verification": [
+      {
+        "claim": "No agent declares the Skill tool, so 'Load the <skill> skill' directives are unsatisfiable",
+        "resolution": "Not a finding. The Skill tool is available to subagents regardless of the tools: allowlist per https://code.claude.com/docs/en/sub-agents.md. All 8 load directives work as written."
+      },
+      {
+        "claim": "TaskCreate may not be a valid frontmatter tool name",
+        "resolution": "Not a finding. TaskCreate is documented and valid. The 7 agents declaring it are correct."
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "DELEG-01",
+      "severity": "BLOCKER",
+      "category": "unbounded-behavior/unimplementable-directive",
+      "artifact": "qa-engineer, database-engineer, performance-engineer, incident-commander, qa-runner",
+      "path": ".claude/agents/qa-engineer.md",
+      "line": 4,
+      "finding": "No agent in the registry declares the Agent tool, so no agent can invoke qa-runner. Delegation to it is instructed in prose across four agents.",
+      "evidence": "agents/qa-engineer.md:4 tools list omits Agent; agents/database-engineer.md:4, agents/performance-engineer.md:4, agents/incident-commander.md:4 likewise. Delegation instructed at agents/qa-engineer.md sec 9.1, agents/qa-runner.md:3, agents/qa-runner.md:27, agents/incident-commander.md:3. Docs confirm Agent must be listed in tools: for a subagent to spawn subagents.",
+      "impact": "qa-runner's sole purpose is keeping large raw output out of a reasoning agent's context. It is unreachable, so that protection silently does not work and qa-engineer will flood its own context via Bash instead.",
+      "recommendation": "Add scoped Agent(qa-runner) to qa-engineer, database-engineer, performance-engineer. Decide explicitly what incident-commander may spawn, or reword its description to drop the coordination claim.",
+      "effort": "trivial"
+    },
+    {
+      "id": "WIRE-01",
+      "severity": "HIGH",
+      "category": "overlap/layer-violation",
+      "artifact": "14 of 15 agents; 36+ of 51 skills",
+      "path": ".claude/agents/ux-designer.md",
+      "line": 70,
+      "finding": "qa-engineer is the only agent that systematically calls domain skills. The other 14 inline their domain knowledge and name zero domain skills, leaving 36+ of 51 skills unreachable.",
+      "evidence": "Wired: qa-engineer.md:133,163,222,249; product-analyst.md:71; incident-commander.md:92; technical-writer.md:19. Unwired with inline duplication: ux-designer.md:58,64,70,73 duplicate skills/ux-research/SKILL.md:8, skills/interaction-design/SKILL.md:8, skills/accessibility/SKILL.md:10-19, skills/design-systems/SKILL.md:12 while naming none of them; solution-architect.md:75 duplicates skills/architecture-decisions/SKILL.md:12-20; code-reviewer.md names no code-review-craft; performance-engineer.md names neither performance-engineering nor capacity-planning; release-manager.md names none of release-engineering/rollback-strategies/feature-flagging; security-engineer.md names none of threat-modeling/secure-coding/supply-chain-security/privacy-engineering; site-reliability.md names none of observability-design/capacity-planning/disaster-recovery.",
+      "impact": "36+ skills have no caller, so the better-written half of the registry rarely if ever fires while agents run a thinner duplicated copy inline; the two copies will drift. Scoping note: description-based auto-triggering INSIDE a subagent is undocumented rather than documented as absent, so the supportable claim is that an unnamed skill cannot be relied on to load. The finding does not depend on resolving this - 14 agents inlining a thinner duplicate of content the skill layer owns better is a defect either way.",
+      "recommendation": "Wire, do not delete. Add explicit 'Load the <skill> skill' directives at the point of use in each owning agent following the qa-engineer pattern, then thin the now-redundant inline prose. Shrinks agents and makes skills reachable in one move.",
+      "effort": "large"
+    },
+    {
+      "id": "PATH-01",
+      "severity": "HIGH",
+      "category": "instruction-conflict/silent-failure",
+      "artifact": "8 agents, 8 skills, memory/README.md",
+      "path": ".claude/skills/project-memory/SKILL.md",
+      "line": 8,
+      "finding": "The memory root is specified two incompatible ways: canonical '.claude/memory/<project>/' and bare relative 'memory/<project>/'.",
+      "evidence": "Canonical: skills/project-memory/SKILL.md:8, agents/qa-engineer.md:298, agents/code-reviewer.md:151. Bare: agents/product-manager.md:93,109; agents/product-analyst.md:95,101,115; agents/incident-commander.md:146; agents/release-manager.md:107; agents/technical-writer.md:31; agents/ux-designer.md:115; skills/risk-management/SKILL.md:10; skills/stakeholder-management/SKILL.md:10; skills/technical-debt-management/SKILL.md:10; skills/retrospectives/SKILL.md:22; skills/disaster-recovery/SKILL.md:26; skills/ux-research/SKILL.md:26; skills/architecture-decisions/SKILL.md:25; skills/analytics-and-telemetry/SKILL.md:26; memory/README.md:8.",
+      "impact": "PROSPECTIVE, not yet observed: .claude/memory/ contains only README.md and no <repo>/memory/ exists, so nothing has been written to either location and no memory has been lost yet. But the relative form resolves against cwd, so once agents persist, writers will land in <repo>/memory/ while readers look in <repo>/.claude/memory/. Cross-agent memory handoff will silently fail, presenting as an empty/missing file, which memory/README.md:24 instructs agents to read as 'nothing recorded yet' - indistinguishable from valid information. Fixing before first use costs 20 lines; after, a data migration.",
+      "recommendation": "Mechanical replace to .claude/memory/<project>/ across all 18 files. Direction is a judgment call, stated explicitly: the bare form is the numerical majority (16 sites vs 3), but .claude/memory/<project>/ is treated as canonical because skills/project-memory/SKILL.md:3,8 is the artifact that defines the convention and the memory root genuinely lives inside .claude/.",
+      "effort": "small"
+    },
+    {
+      "id": "SCHEMA-01",
+      "severity": "HIGH",
+      "category": "schema/trigger-failure",
+      "artifact": "all 51 skills",
+      "path": ".claude/skills/api-design/SKILL.md",
+      "line": 3,
+      "finding": "No skill description carries negative scope. 51/51 state a positive trigger; none state a 'do NOT use for' clause.",
+      "evidence": "skills/api-design/SKILL.md:3, skills/system-architecture/SKILL.md:3, skills/accessibility/SKILL.md:3, skills/capacity-planning/SKILL.md:3 - all positive-trigger only.",
+      "impact": "Reduced by WIRE-01 (selection should be by explicit agent directive, not description match). Still material for the adjacent pairs a human or main-loop invoker must choose between.",
+      "recommendation": "Add negative scope only to the ~8 skills in genuinely adjacent pairs (capacity-planning/performance-engineering, disaster-recovery/business-continuity, api-versioning/backward-compatibility, documentation vs technical-writer). Do not edit all 51.",
+      "effort": "small"
+    },
+    {
+      "id": "STRUCT-01",
+      "severity": "HIGH",
+      "category": "schema/structural-inconsistency",
+      "artifact": "technical-writer",
+      "path": ".claude/agents/technical-writer.md",
+      "line": 3,
+      "finding": "technical-writer.md is structurally out of family: 33 lines vs 62-305 for peers, with no numbered sections, no proportionality tiers, no evidence classification, no stop conditions, and no engineering-integrity/project-memory load directive.",
+      "evidence": "agents/technical-writer.md:3 omits the 'Loads the ... skills' clause peers carry (contrast agents/ux-designer.md:3); no equivalent of agents/ux-designer.md:11 load directive; agents/technical-writer.md:31 instructs memory persistence with no convention loaded; quality bar at :40 demands verification with no vocabulary to express an unverifiable claim.",
+      "impact": "The only agent producing durable, externally-consumed artifacts has the weakest verification discipline and no memory protocol.",
+      "recommendation": "Rewrite to family structure. Draft provided at audit/proposed/technical-writer.md.",
+      "effort": "medium"
+    },
+    {
+      "id": "SCHEMA-02",
+      "severity": "MEDIUM",
+      "category": "schema/model-tier",
+      "artifact": "all 15 agents, qa-runner specifically",
+      "path": ".claude/agents/qa-runner.md",
+      "line": 13,
+      "finding": "No agent declares model:; all 15 inherit. Appropriate for 14, but qa-runner is an explicitly no-judgment mechanical executor.",
+      "evidence": "All agent frontmatter is name/description/tools only. agents/qa-runner.md:13 ('You do not decide what should be tested...'), :17 ('You deliberately have no tiering and no memory').",
+      "impact": "qa-runner inherits the main-conversation model for work that is mechanical by design.",
+      "recommendation": "Set an explicit lighter tier on qa-runner only; leave the other 14 inheriting and state that as deliberate.",
+      "effort": "trivial"
+    },
+    {
+      "id": "SCHEMA-03",
+      "severity": "MEDIUM",
+      "category": "schema/skill-preload",
+      "artifact": "software-engineer, solution-architect, security-engineer, site-reliability, ux-designer, product-analyst",
+      "path": ".claude/agents/ux-designer.md",
+      "line": 11,
+      "finding": "The skills: preload frontmatter field is unused, though six agents commit to loading two skills unconditionally.",
+      "evidence": "agents/ux-designer.md:3 and :11; agents/solution-architect.md:3 and :11; agents/security-engineer.md:3 and :11; agents/site-reliability.md:3 and :11; agents/software-engineer.md:3 and :11. No agent declares skills:.",
+      "impact": "Costs a tool round-trip per agent per session on two always-wanted skills, and makes the guarantee depend on the model obeying a prose line rather than being structural.",
+      "recommendation": "Add 'skills: [engineering-integrity, project-memory]' to the agents that load unconditionally; drop the redundant prose directive.",
+      "effort": "small"
+    },
+    {
+      "id": "TOOL-01",
+      "severity": "MEDIUM",
+      "category": "least-privilege",
+      "artifact": "qa-runner",
+      "path": ".claude/agents/qa-runner.md",
+      "line": 4,
+      "finding": "qa-runner holds Write with no documented need.",
+      "evidence": "agents/qa-runner.md:4 grants Write; :3 charters it as 'returns factual execution evidence - nothing interpreted'; :17 makes it explicitly memory-less. No procedure in the 62-line body writes a file.",
+      "impact": "Write capability on the one agent defined by having no judgment - the profile where least-privilege matters most.",
+      "recommendation": "Drop Write, or document the artifact it produces.",
+      "effort": "trivial"
+    },
+    {
+      "id": "TOOL-02",
+      "severity": "MEDIUM",
+      "category": "least-privilege/prompt-hygiene",
+      "artifact": "code-reviewer",
+      "path": ".claude/agents/code-reviewer.md",
+      "line": 3,
+      "finding": "code-reviewer's description asserts it is read-only and 'does not execute', but its tools grant includes Bash.",
+      "evidence": "agents/code-reviewer.md:3 'Read-only; never modifies code... this agent reads and reasons, it does not execute' vs :4 'tools: Read, Grep, Glob, Bash'.",
+      "impact": "The description contradicts the grant and asserts non-execution to the orchestrator while execute capability is present. Almost certainly intentional for git diff/git log.",
+      "recommendation": "State the intended read-only Bash scope in the body, or remove Bash.",
+      "effort": "trivial"
+    },
+    {
+      "id": "OVERLAP-02",
+      "severity": "MEDIUM",
+      "category": "overlap/delineate",
+      "artifact": "documentation skill vs technical-writer agent",
+      "path": ".claude/skills/documentation/SKILL.md",
+      "line": 3,
+      "finding": "The documentation skill claims the technical-writer agent's entire remit; neither states the boundary.",
+      "evidence": "agents/technical-writer.md:19 loads documentation for 'structure conventions'; skills/documentation/SKILL.md:3 claims 'Structure and quality bar for technical documentation... Load when writing or updating any documentation artifact'.",
+      "impact": "Both are justified (DELINEATE, not merge), but an invoker cannot tell which owns what.",
+      "recommendation": "Scope the skill to conventions/mechanics and the agent to authorship/verification, explicitly on both sides.",
+      "effort": "small"
+    },
+    {
+      "id": "OVERLAP-01",
+      "severity": "MEDIUM",
+      "category": "overlap/merge",
+      "artifact": "dependency-management, dependency-upgrades",
+      "path": ".claude/skills/dependency-management/SKILL.md",
+      "line": 16,
+      "finding": "dependency-management's Updating section restates dependency-upgrades nearly verbatim. The only genuine near-duplicate pair in the registry.",
+      "evidence": "skills/dependency-management/SKILL.md:16-18 ('Prefer frequent small updates over rare large ones... don't bump blindly because a bot opened a PR') vs skills/dependency-upgrades/SKILL.md:8-14 (same two claims). An orchestrator choosing between them for an upgrade task is a coin flip.",
+      "impact": "Duplicated guidance that will drift; ambiguous selection.",
+      "recommendation": "MERGE to a single dependency-health skill. Draft at audit/proposed/dependency-health/SKILL.md.",
+      "effort": "small"
+    },
+    {
+      "id": "GAP-01",
+      "severity": "MEDIUM",
+      "category": "dangling-reference",
+      "artifact": "qa-tooling",
+      "path": ".claude/skills/qa-tooling/SKILL.md",
+      "line": 27,
+      "finding": "References playwright-best-practices and playwright-cli, which exist only in the user-global skills tree.",
+      "evidence": "skills/qa-tooling/SKILL.md:27 '(see playwright-best-practices / playwright-cli skills)'; neither exists under .claude/skills/. Both exist under %USERPROFILE%/.claude/skills/.",
+      "impact": "Resolves on this machine only; the project tree is otherwise fully self-contained.",
+      "recommendation": "Vendor them into the project tree, or mark the reference as environment-dependent.",
+      "effort": "small"
+    },
+    {
+      "id": "PORT-01",
+      "severity": "LOW",
+      "category": "portability",
+      "artifact": "user-global settings.json PreToolUse hook",
+      "path": "%USERPROFILE%/.claude/settings.json",
+      "line": null,
+      "finding": "A PreToolUse hook on Bash runs 'rtk hook claude', a user-local binary. Ten of 15 agents hold Bash and route through it.",
+      "evidence": "%USERPROFILE%/.claude/settings.json hooks.PreToolUse matcher 'Bash' command 'rtk hook claude'; rtk resolves to C:/Users/avega/.local/bin/rtk.exe.",
+      "impact": "On a machine without rtk, every Bash call in the suite hits a missing-binary hook. Outside the audited project tree, so advisory - and notably the project tree itself has no such coupling.",
+      "recommendation": "Guard the hook on binary presence, or document rtk as an environment prerequisite. Requires a separate decision - not in project scope.",
+      "effort": "small"
+    },
+    {
+      "id": "SETTINGS-01",
+      "severity": "LOW",
+      "category": "dangling-reference",
+      "artifact": "settings.local.json",
+      "path": ".claude/settings.local.json",
+      "line": 3,
+      "finding": "disabledMcpjsonServers lists 'webmcp', but no .mcp.json exists anywhere under the repo.",
+      "evidence": "settings.local.json disabledMcpjsonServers: [\"webmcp\"]; recursive search for .mcp.json under the repo returns nothing.",
+      "impact": "Harmless dead configuration.",
+      "recommendation": "Remove the entry for tidiness.",
+      "effort": "trivial"
+    },
+    {
+      "id": "SHADOW-01",
+      "severity": "LOW",
+      "category": "precedence-conflict",
+      "artifact": "software-engineer, accessibility",
+      "path": ".claude/agents/software-engineer.md",
+      "line": 1,
+      "finding": "software-engineer and the accessibility skill exist in both the project and user-global trees; project definitions win, leaving the user-global copies inert here.",
+      "evidence": "agents/software-engineer.md (179 lines) vs %USERPROFILE%/.claude/agents/software-engineer.md (241 lines); skills/accessibility/SKILL.md vs %USERPROFILE%/.claude/skills/accessibility/.",
+      "impact": "The risk is editing the wrong file in a later session - the user-global software-engineer is 62 lines longer, so it looks like the more developed one.",
+      "recommendation": "Delete or rename the user-global copies, or add a header note marking them superseded. Outside project scope - requires a separate decision.",
+      "effort": "trivial"
+    }
+  ],
+  "remediation": {
+    "applied": "2026-08-04",
+    "outcomes": {
+      "DELEG-01": "fixed - Agent(qa-runner) added to qa-engineer/database-engineer/performance-engineer; incident-commander description reworded (option b)",
+      "WIRE-01": "fixed - Supporting Skills section added to 12 agents; orphan count 36+ -> 0 of 51",
+      "PATH-01": "fixed - 20 sites across 16 files canonicalized; zero bare paths remain",
+      "SCHEMA-01": "fixed (scoped) - negative scope added to 8 adjacent-pair skills, not all 51",
+      "STRUCT-01": "fixed - technical-writer.md rewritten to family structure, 33 -> 150 lines",
+      "SCHEMA-02": "fixed - model: sonnet on qa-runner only",
+      "SCHEMA-03": "fixed - skills: preload on the 6 unconditional loaders",
+      "TOOL-01": "fixed - Write dropped from qa-runner",
+      "TOOL-02": "fixed - code-reviewer body scopes Bash to read-only inspection",
+      "OVERLAP-01": "fixed - merged to dependency-health; 51 -> 50 skills",
+      "OVERLAP-02": "fixed - documentation scoped to conventions, technical-writer owns authorship",
+      "GAP-01": "fixed, and the original finding was incomplete - it cited 2 dangling references (playwright-best-practices, playwright-cli) but qa-tooling/SKILL.md:29 also references mabl-plan-test and mabl-debug, equally user-global-only. All 4 now marked environment-dependent with a stack-neutral fallback note.",
+      "SETTINGS-01": "fixed - dead disabledMcpjsonServers entry removed",
+      "PORT-01": "deferred by design - lives in %USERPROFILE%/.claude, affects every project on this machine, needs a separate decision",
+      "SHADOW-01": "deferred by design - same reason as PORT-01"
+    },
+    "process_note": "The first PATH-01 pass used Get-Content -Raw + WriteAllText, which in PowerShell 5.1 read UTF-8 as cp1252 and double-encoded every em-dash and section sign in 16 files. Caught on the next read, reversed via cp1252 round-trip, verified 0 mojibake remaining. All later edits used the editor rather than shell rewrites. Future bulk edits of this tree must not round-trip through Get-Content -Raw.",
+    "added_this_session_not_audit_findings": {
+      "agents": ["persona-discovery", "persona-runner", "boundary-prober", "journey-orchestrator"],
+      "skills": ["exploration-charter (with personas-schema-template.yaml sibling - the registry's first progressive-disclosure reference file)"],
+      "audit_fixes_applied_pre_install": [
+        "bare memory/<project>/ path corrected to .claude/memory/<project>/ (PATH-01)",
+        "tools: Task corrected to scoped Agent(persona-runner) - bare Task is not a valid tool name, and the scoping is the DELEG-01 lesson",
+        "referenced-but-missing personas-schema-template.yaml actually created, at a path that resolves",
+        "prose skill-load directives converted to skills: preload (SCHEMA-03)",
+        "negative scope added to the exploration-charter description (SCHEMA-01)"
+      ]
+    }
+  },
+  "verified_clean": [
+    "No secrets, tokens, API keys, tenant IDs, org URLs, client/employer names, internal hostnames, or project keys anywhere in the project tree.",
+    "No absolute paths and no username-bearing paths in the project tree.",
+    "No shell-specific syntax in any artifact - no artifact contains a shell command at all, so cross-platform quoting and path-separator breakage cannot occur.",
+    "No '|| true', no swallowed exit codes, no procedure that continues past a failed step.",
+    "No --force/--yes/force-push instruction except inside explicit prohibitions at agents/software-engineer.md:192 and skills/engineering-integrity/SKILL.md:55; destructive-action gates are present and judge by blast radius and reversibility.",
+    "No recursive delegation cycle - though note this is currently vacuous: per DELEG-01 no delegation is possible at all, so re-check this property after DELEG-01 is fixed.",
+    "No stale pinned versions, deprecated flags, or aged-out 'current as of' claims.",
+    "All 15 agent and 51 skill frontmatter blocks parse cleanly; every name is kebab-case, unique, and matches its filename stem.",
+    "Agent descriptions are genuine routing signals with negative scope, not nominal labels.",
+    "No skill exceeds 36 lines, so progressive-disclosure bloat is not a concern.",
+    "Every inter-agent handoff target named across the 15 agents resolves to a real configured agent; the lifecycle is closed with no unowned stage.",
+    "No agent/skill category errors; no skill needs promoting to an agent and no agent demoting to a skill.",
+    "Portability: 15/15 agents and 51/51 skills score 'pass' against both a Rust/Cargo CLI and a COBOL/DB2 mainframe project. No artifact requires adapter changes.",
+    "No capability-abstraction layer is needed - skills/qa-tooling/SKILL.md:12-31 already implements detection-signal to implementation mapping correctly, enforced as policy at agents/qa-engineer.md:163."
+  ]
+}

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Shortcut wrapper for .kimi-code/workflows/*.py — runs against your CURRENT
+# directory, so it can be used from any repository (e.g. via the ~/bin/kflow shim).
+#
+# Usage:
+#   kflow sdlc "Add CSV export to the reporting dashboard"
+#   kflow review "the diff on feature/checkout-v2"
+#   kflow release "release 2.4.0"
+#   kflow qa --target http://localhost:3000 --env staging
+#   kflow archaeology "the billing subsystem" --observe-target http://localhost:8080
+#   kflow audit --root .claude
+
+set -e
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WF_DIR="$ROOT/.kimi-code/workflows"
+
+name="$1"
+shift || true
+
+case "$name" in
+  sdlc|sdlc-feature)        script="sdlc-feature.py" ;;
+  review|independent-review) script="independent-review.py" ;;
+  release|release-readiness) script="release-readiness.py" ;;
+  qa|persona-qa-sweep)      script="persona-qa-sweep.py" ;;
+  archaeology|system-archaeology) script="system-archaeology.py" ;;
+  audit|registry-audit)     script="registry-audit.py" ;;
+  ""|-h|--help|help)
+    grep '^#' "$0" | grep -v '^#!' | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  *)
+    echo "Unknown workflow: $name" >&2
+    echo "Run 'kflow --help' for usage." >&2
+    exit 1
+    ;;
+esac
+
+# Intentionally no `cd` — the workflow runs against the caller's cwd.
+exec python "$WF_DIR/$script" "$@"

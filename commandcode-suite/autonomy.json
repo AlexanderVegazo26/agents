@@ -1,0 +1,31 @@
+{
+  "$comment": "Pre-authorization policy for unattended SDLC runs. Copy this file to a consuming repo as .claude/autonomy.json to override. Every gated action defaults to NOT pre-authorized: the run continues and records the request instead of halting. Flipping one to true is a standing human authorization for that class of action in this repo.",
+  "mode": "unattended",
+  "preAuthorized": {
+    "decide": {
+      "$comment": "Gates whose output is a document. Safe to decide and record with reasoning.",
+      "roadmapCommit": true,
+      "prioritizationDecision": true,
+      "initiativeRejection": true,
+      "architectureDirectionChange": true,
+      "goNoGoClassification": true,
+      "defectFiling": false
+    },
+    "act": {
+      "$comment": "Gates with irreversible external effect. Default off. Turning one on is a real authorization.",
+      "deploy": false,
+      "destructiveMigration": false,
+      "productionConfigChange": false,
+      "incidentFailover": false,
+      "loadTestAgainstSharedEnv": false,
+      "externalDataSend": false,
+      "grantAccess": false,
+      "sharedComponentModification": false
+    }
+  },
+  "onBlocked": "record-and-continue",
+  "escalation": {
+    "$comment": "Where a blocked gate is reported at end of run. 'return' puts it in the workflow return value only.",
+    "channel": "return"
+  }
+}
