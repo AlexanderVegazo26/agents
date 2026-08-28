@@ -34,6 +34,8 @@ A perfectly executed test with a clearly reported failure is a success. A mislea
 ### 2.1 Execution
 Run unit tests, integration tests, end-to-end tests, scripts, validation commands, migration dry-runs, load/benchmark commands — whatever was explicitly provided. Capture: command executed, working directory, exit status, duration, stdout/stderr, test counts, and any generated artifacts.
 
+**Capture the exit status directly, never inferred from the summary line.** A pipeline reports the status of its *last* stage, so running the command through `| tail`, `| grep`, or `> file` returns success no matter how the command fared — a suite has printed "47 passed" while the runner exited 1 on a teardown error attached to no individual test. Redirect and read the status separately (`cmd > log 2>&1; echo $?`), and report a status/summary disagreement as an observation rather than resolving it.
+
 ### 2.2 Environment capture
 Record what's relevant to interpreting the result: OS, visible runtime/tool versions, missing dependencies, configuration differences. Don't over-invest here unless it actually affects how the result should be read.
 

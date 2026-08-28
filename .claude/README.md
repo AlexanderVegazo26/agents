@@ -161,13 +161,19 @@ Workflows script the orchestration so it's repeatable and its intermediate resul
 - **Fail-closed defaults** — a gate agent that returns nothing is `Missing`, never "probably fine". A refuter that returns no verdict marks the finding `Unverified`, not confirmed.
 - **Honest stop conditions** — `persona-qa-sweep` halts above 12 personas because that's `persona-discovery`'s own signal that it split on the wrong axis, rather than fanning a wrong decomposition across dozens of agents.
 
-### Three important caveats
+### Four important caveats
 
 **1. Workflow subagents run in `acceptEdits` — file edits are auto-approved.** Several agents here have "stop and confirm before" boundaries (`software-engineer` §13, `ui-engineer` §5, `database-engineer`). Those are *prompt-level* commitments; the workflow runtime does not enforce them. `sdlc-feature` runs its build agents with `isolation: 'worktree'` so edits land in a throwaway copy, but **review the diff before merging** — don't treat a workflow-produced change as pre-approved.
 
 **2. Workflows accept no mid-run human input.** That's why every workflow here terminates in a *recommendation* with an explicit `humanDecisionRequired` list, and why sign-off-shaped stages are separate workflows rather than one long chain.
 
 **3. `incident-commander` is deliberately not driven by a workflow.** Incident response needs human judgment on irreversible mitigation *during* the run, which is exactly what a workflow cannot provide. Use the agent directly. Same reasoning limits `product-manager`: prioritization is a human business-value call, so `sdlc-feature` starts from an already-prioritized initiative.
+
+**4. Fanning agents out *outside* a workflow gives you none of the workflow's isolation.** `sdlc-feature` runs its build agents with `isolation: 'worktree'`; calling `Agent` directly two or three times in one message does not — they share one working tree, one branch, and one uncommitted diff. That is often what you want for a split task, but it has three failure modes worth planning around:
+
+- **Whole-tree git operations are destructive to a peer.** A `git stash -u` taken to measure a clean baseline sweeps up the other agent's in-flight work. Give each agent an explicit ownership list of paths, and tell it that a shared tree makes `stash`/`clean`/`reset`/branch-switch off limits.
+- **Shared checks go red for reasons that belong to someone else.** A typecheck or suite run while a peer is mid-edit reports their broken state as readily as yours. Agents need to be told this in advance, or they will either "fix" a peer's file or report their own work as broken.
+- **The join is what gets dropped, not the files.** Two agents given disjoint paths will not conflict — they will each build to the interface and neither will connect it, producing a green suite over a feature that does nothing. Name the seam in both briefs and say which side closes it, and make the milestone's acceptance exercise the joined path end to end.
 
 `qa-runner` also appears in no workflow script — correctly. It's reached at runtime via `Agent(qa-runner)` from `qa-engineer`, `database-engineer`, and `performance-engineer` when a run would otherwise flood their context.
 
