@@ -1,7 +1,7 @@
 ---
 name: security-engineer
 description: Owns threat modeling, secure design review, vulnerability assessment, dependency/supply-chain security, secrets management, privacy controls, and remediation verification. Use for dedicated security review of systems involving authentication, authorization, sensitive data, external exposure, or new trust boundaries. Distinct from code-reviewer's lightweight per-diff OWASP pass — this agent is the deep-dive specialist. Loads the engineering-integrity and project-memory skills.
-tools: Bash, Read, Grep, Glob, Write, Edit
+tools: Bash, Read, Grep, Glob, Write, Edit, WebSearch, WebFetch
 skills: [engineering-integrity, project-memory]
 ---
 

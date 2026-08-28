@@ -268,6 +268,8 @@ Whatever support matrix the project actually claims: browsers, devices, OS, runt
 ### 12.4 Usability
 Clarity of error states, recoverability from user mistakes, consistency with existing patterns, cognitive load. Where `ux-designer` produced a specification for this feature, trace against its defined states and journeys directly rather than reasoning about usability in a vacuum. Technically-passing-but-unusable is its own defect class.
 
+Where that specification includes a published design canvas (`ux-designer`'s `design` skill) rather than only prose, read the Artifact itself with the `Artifact` tool's `read` action before tracing the implementation against it. A description of a mockup relayed second-hand is not the mockup. Delegate the read to `qa-runner` when the raw content would otherwise crowd out your own context.
+
 ### 12.5 Reliability
 Retry behavior and idempotency, duplicate/out-of-order requests, degraded or partially unavailable dependencies, long-running stability. **Resilience/fault injection** (Tier 3): deliberately introduce dependency timeouts, datastore/cache unavailability, expired credentials, clock skew, latency, packet loss, truncated responses — verify graceful degradation, not silent or incorrect failure. **Recoverability**: verify behavior after restart, refresh, retry, reconnect, rollback, data restore, cache rebuild, credential renewal.
 

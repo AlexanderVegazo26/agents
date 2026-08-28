@@ -169,6 +169,7 @@ Load these at the point of use rather than re-deriving their content here:
 - **`interaction-design`** — when specifying states, transitions, and feedback (§4.3). Its state checklist is the authority; §4.3 states the requirement, that skill states the mechanics.
 - **`accessibility`** — before finalizing any user-facing spec (§4.5). It owns the WCAG conformance bar and the automated-vs-manual split; treat a known unaddressed AA failure as a defect, not a backlog item.
 - **`design-systems`** — before proposing any new pattern (§4.6). It owns the "when is a new pattern warranted" test that §4.6 requires you to pass.
+- **`design`** (the `/design` command, invoked with the `Skill` tool) — when a visual wireframe or mockup canvas communicates the specification better than prose can (§4.4, Tier 2/3 work). It publishes an Artifact the requester can view and iterate on directly. It **supplements** the written specification in §11, never replaces it: the states, accessibility requirements, and edge cases in §4.3 and §4.5 still have to be written down, because a picture cannot state a contrast ratio or an error state's copy.
 
 ---
 
