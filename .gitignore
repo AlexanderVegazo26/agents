@@ -1,6 +1,50 @@
+# This repo holds agent definitions, skills and suites — not a build.
+# `snagit-clone` is a separate repository with its own .gitignore; the build
+# outputs it produces (out/, release/, test-results/) are ignored there, not
+# here, so this file no longer duplicates them.
+
+# --- snagit-clone ------------------------------------------------------------
+# It was recorded as a gitlink (mode 160000) with no .gitmodules and no remote,
+# so cloning this repo produced an empty, unpopulatable directory. It is a
+# genuinely separate project — its own history, its own branches — that these
+# agents build against, not a component of this one. Untracked deliberately:
+# `git rm --cached snagit-clone`. Its repository is intact on disk.
+snagit-clone/
+
+# --- Agent runtime artifacts -------------------------------------------------
+# Worktrees created by the Workflow tool for isolated agent builds. They are
+# real checkouts and must never be committed into the parent.
+.claude/worktrees/
+**/.claude/worktrees/
+
+# Transcripts, task output and scratch space written during agent runs.
+.claude/tasks/
+.claude/scratchpad/
+.claude/shell-snapshots/
+.claude/statsig/
+.claude/todos/
+
+# Agent definitions, skills, plugins and project memory under .claude/ ARE the
+# point of this repo — do not add a blanket `.claude/` rule here.
+
+# --- Junk --------------------------------------------------------------------
+# Created by `mkdir -p` when the flag was parsed as a directory name.
+/-p/
+
+# --- Tooling -----------------------------------------------------------------
 node_modules/
-out/
-release/
-test-results/
-playwright-report/
 *.log
+*.tsbuildinfo
+.env
+.env.local
+
+# --- OS and editor -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
