@@ -30,7 +30,7 @@ async function main() {
     '===== END AGENT DEFINITION =====',
     '',
     '===== TASK =====',
-    `Convert this initiative into implementation-ready requirements: Build a Windows desktop screen-capture and recording application (a Snagit replacement).
+    `Convert this initiative into implementation-ready requirements: Build a Windows desktop screen-capture and recording application (a nawi replacement).
 
 Produce numbered, stable acceptance-criterion IDs — every downstream agent in this workflow traces against them, so an unstable ID breaks the whole run. Record assumptions as numbered/traceable/risk-rated per your §4. Do not invent a success metric that wasn't given; label any proposal as proposed-not-confirmed.
 

@@ -1,14 +1,16 @@
 # This repo holds agent definitions, skills and suites — not a build.
-# `snagit-clone` is a separate repository with its own .gitignore; the build
+# `nawi` is a separate repository with its own .gitignore; the build
 # outputs it produces (out/, release/, test-results/) are ignored there, not
 # here, so this file no longer duplicates them.
 
-# --- snagit-clone ------------------------------------------------------------
+# --- nawi ------------------------------------------------------------
 # It was recorded as a gitlink (mode 160000) with no .gitmodules and no remote,
 # so cloning this repo produced an empty, unpopulatable directory. It is a
 # genuinely separate project — its own history, its own branches — that these
 # agents build against, not a component of this one. Untracked deliberately:
-# `git rm --cached snagit-clone`. Its repository is intact on disk.
+# `git rm --cached nawi`. Its repository is intact on disk.
+nawi/
+# Same directory, pre-rename name — until the rename lands, both must be ignored.
 snagit-clone/
 
 # --- Agent runtime artifacts -------------------------------------------------
