@@ -2,18 +2,24 @@
 
 > **Naming note.** Agents and skills are written with bare names throughout this document (`qa-engineer`, `engineering-integrity`). Installed as a plugin they resolve as `sdlc-suite:qa-engineer` and `sdlc-suite:qa-techniques`. See `USAGE.md` for install, cross-repo use, and unattended runs.
 
-A full software-development-lifecycle framework for Claude Code: **21 agents**, **59 skills**, **6 dynamic workflows**, and a shared per-project memory root.
+A full software-development-lifecycle framework for Claude Code: **22 agents**, **60 skills**, **6 workflows**, **6 slash commands**, and a shared per-project memory root.
 
 The organizing idea is that the agent which *does* the work is never the agent that *certifies* it. Implementation, review, execution-based verification, security assessment, and release authorization are held by separate agents on purpose, and none of them can quietly absorb another's job.
 
+That rule governs behavior *once an agent is invoked*. It does not make a caller invoke anything — which is why the suite now also carries an `orchestrator` (below) and why the source repository's root `CLAUDE.md` carries a routing policy.
+
 ```
-.claude/
-├── agents/      20 agent definitions
-├── skills/      57 skills (procedural knowledge agents load on demand)
-├── workflows/   5 dynamic workflows (scripted multi-agent orchestration)
-├── memory/      per-project durable context
-└── audit/       the registry's own audit report + remediation record
+sdlc-suite/
+├── agents/            22 agent definitions
+├── skills/            60 skills (procedural knowledge agents load on demand)
+├── workflows/          6 workflows (scripted multi-agent orchestration)
+├── commands/           6 slash commands, one per workflow
+├── memory-template/   the per-project memory layout, ready to copy
+├── autonomy.json      unattended-run policy (see USAGE.md)
+└── .claude-plugin/    plugin manifest
 ```
+
+Counts verified by listing this directory on 2026-08-29. The audit trail (`AUDIT.md`, `findings.json`, remediation record) lives in the source repository and is deliberately not shipped with the plugin — see **Registry health** below.
 
 ---
 
@@ -23,14 +29,40 @@ The organizing idea is that the agent which *does* the work is never the agent t
 |---|---|---|---|
 | **Skill** | Procedural knowledge, loaded on demand | Claude, following it | You need the *how* of a technique |
 | **Agent** | A specialist with its own context, tools, and evidence discipline | Claude, turn by turn | One role's judgment is what's needed |
+| **Command** | A thin slash-command entry point that invokes a workflow | The workflow it calls | You want one of the six orchestrations, by name |
 | **Workflow** | A JS script the runtime executes, spawning agents | The script | Many agents, or a repeatable orchestration |
 | **Memory** | Durable per-project context | The agents that own each file | Something must outlive the session |
 
-The registry is deliberately wired so **no skill is orphaned** — every one of the 57 is named by at least one agent body at its point of use. Skills do not reliably auto-trigger inside a subagent, so an unnamed skill is effectively unreachable. That property is checked by `/registry-audit`.
+The registry is deliberately wired so **no skill is orphaned** — each one is named by at least one agent body at its point of use. Skills do not reliably auto-trigger inside a subagent, so an unnamed skill is effectively unreachable. That property is checked by `/registry-audit`; this document does not restate its verdict.
 
 ---
 
-## The 20 agents by lifecycle stage
+## Naming a skill is not enough: the skills contract
+
+This is the part most likely to be copied wrongly into another registry, so it is stated in full.
+
+Three successive fixes were needed, and only the third worked:
+
+1. **Prose alone.** Agents carried a *Supporting Skills* section saying "load these at the point of use". Thirteen of them had no `Skill` tool at all, so the instruction was literally unfollowable. *(Count of 13 is from the maintainer's record of the pre-fix state, not re-measurable from the current tree — see the arithmetic below.)*
+2. **Granting the tool.** Necessary, and still insufficient. `ux-designer` held the `Skill` tool and never invoked `ux-research`: declarative prose describing a good habit is not an instruction an agent must satisfy.
+3. **Moving the requirement into the output contract.** Each affected agent's reporting section now opens with a **`Skills loaded`** line naming every skill invoked, with a one-clause reason for each skipped. A report without that line is malformed, which makes the omission visible to the caller instead of silent.
+
+Currently **15 agents** hold the `Skill` tool *and* carry the `Skills loaded` output-contract line — verified by reading the frontmatter and reporting section of every agent file in `agents/`. Subtracting `orchestrator` (added later) and `qa-engineer` (see below) reconciles with the 13 originally fixed.
+
+`qa-engineer` was missed by the first pass entirely: it references its skills in running prose without a *Supporting Skills* heading, so a heading-based sweep did not see it. Any audit of this pattern must search for the behavior, not the heading.
+
+> **Reported effect.** On one real security review, the before/after was zero `Skill` invocations and then five. That measurement comes from the maintainer's record of that run and is **not reproducible from this repository** — treat it as a reported result, not a benchmark.
+
+---
+
+## The 22 agents by lifecycle stage
+
+### Route — *which lenses this task actually needs*
+| Agent | Owns | Never |
+|---|---|---|
+| `orchestrator` | Deciding which specialists a task requires, in what order, and dispatching them | Implements anything — it holds `Agent()` grants for the specialists and no `Write`/`Edit` |
+
+It exists because of the gap the certification rule cannot close: a definition governs an agent's behavior once invoked and cannot make a caller invoke it. Lenses were being skipped not because the agents were wrong but because whoever dispatched them narrowed scope silently. Its output contract requires a **lens ledger** — every trigger, and for each one, dispatched or skipped with the reason the trigger did not fire. A report without the ledger is malformed. Announcing a skip does not authorize it; a fired trigger is discharged by dispatching, or by showing the condition is factually absent.
 
 ### Excavate — *what's already there* (for a rebuild or an unfamiliar system)
 | Agent | Owns | Never |
@@ -125,6 +157,8 @@ Overlap between these is a **feature**: two independent methods agreeing is a st
                                 └──────────► retrospective ──► memory
 ```
 
+`orchestrator` is not a stage in this diagram — it sits above it, choosing which of these boxes a given task actually needs and accounting for the ones it skipped.
+
 Two properties hold at every arrow:
 
 1. **Traceability.** Everything downstream cites `product-analyst`'s numbered criterion IDs. Those IDs are Tier 3 of `qa-engineer`'s Oracle Hierarchy, which is the suite's tie-breaker when sources of truth disagree — regulatory requirement first, the agent's own inference last, and a conflict is *reported*, never silently resolved by taking the higher tier.
@@ -153,6 +187,8 @@ Workflows script the orchestration so it's repeatable and its intermediate resul
 /system-archaeology    { "scope": "the billing subsystem", "observeTarget": "http://localhost:8080" }
 /registry-audit
 ```
+
+Commands are shown bare for readability, matching the naming note at the top. Installed as a plugin they resolve as `/sdlc-suite:sdlc-feature` and so on; the six command files ship under `commands/` in this plugin, so the prefixed form is the one guaranteed to resolve.
 
 `/system-archaeology` runs **static-evidence-only** unless you pass `observeTarget`, and it refuses to guess at a safe one — dynamic observation is opt-in and must name a non-production target.
 
@@ -200,7 +236,7 @@ Adding an agent or skill? These are the invariants `/registry-audit` checks:
 
 1. **Frontmatter** — `name` kebab-case and matching the filename stem; `description` states *when to invoke* and *when not to*, not just what it is.
 2. **Least privilege** — every tool in `tools:` must be exercised by a procedure in the body. If the body says "delegate to X", the frontmatter needs `Agent(X)` — a prose delegation instruction with no grant is unimplementable, and that was the one BLOCKER the original audit found.
-3. **Skills get wired** — name the skill in an agent body at its point of use. An unnamed skill is unreachable.
+3. **Skills get wired, three ways at once** — name the skill in the agent body at its point of use, grant the agent the `Skill` tool, and require a `Skills loaded` line in its output contract. Any one of the three alone has already been observed to fail (see *the skills contract* above). An unnamed skill is unreachable; an ungranted one is unloadable; an uncontracted one is skippable in silence. *Known exception at time of writing: `technical-writer` instructs loading four skills in its body but holds no `Skill` grant — same defect class as the thirteen already fixed, left for the maintainer rather than patched by the document that describes it.*
 4. **Negative scope on adjacent skills** — where two skills could both plausibly fire, both say what they're *not* for.
 5. **Evidence vocabulary** — pick the classification scheme that fits the agent's evidentiary basis, and never let an assumption read as a confirmed fact.
 6. **Escalate only to what exists** — route to a real configured agent, and don't default to "the human" for something an agent already owns.
@@ -212,4 +248,10 @@ Run `/sdlc-suite:registry-audit` to re-check the registry — schema validation,
 
 Health is whatever that run reports, not a number recorded here. An earlier audit trail (`AUDIT.md`, `findings.json`, remediation record) lives in the source repository and is deliberately not distributed with the plugin — a stale "0 findings" claim shipped alongside the code is worse than no claim, because it invites skipping the check.
 
-Known open findings as of the last run: `qa-engineer` documents a delegation to `persona-runner` without holding the corresponding `Agent()` grant, and rollback-rehearsal ownership is described inconsistently across `release-manager`, `database-engineer`, and the `sdlc-suite:rollback-strategies` skill. Both are design decisions left to the maintainer rather than silently patched.
+Known open findings, re-checked against the current agent files on 2026-08-29:
+
+- `qa-engineer` documents a delegation to `persona-runner` in its body without holding the corresponding `Agent(persona-runner)` grant. **Confirmed still open.**
+- `technical-writer` is instructed to load `api-design`, `documentation`, `disaster-recovery` and `backward-compatibility`, but its frontmatter grants no `Skill` tool. **Confirmed still open.**
+- Rollback-rehearsal ownership was previously reported as described inconsistently across `release-manager`, `database-engineer`, and the `rollback-strategies` skill. **Not re-verified in this pass** — treat as unconfirmed until `/registry-audit` runs again.
+
+These are design decisions left to the maintainer rather than silently patched.

@@ -126,5 +126,5 @@ Both live copies must be changed together, or which behavior you get depends on
 which name the caller happened to use. Note that `sdlc-suite/` namespaces its skill
 references (`sdlc-suite:requirements-craft`), so text edits are not always identical.
 
-`nawi/` is a separate repository these agents build against — deliberately
+`nawi/` (still named `snagit-clone/` on disk until the rename lands — both are ignored) is a separate repository these agents build against — deliberately
 untracked here, with its own history and branches.

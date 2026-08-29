@@ -10,7 +10,7 @@
     {
       "name": "sdlc-suite",
       "source": "./sdlc-suite",
-      "description": "Full SDLC suite: 21 agents, 60 skills, 6 multi-agent workflows, with an explicit autonomy policy for unattended runs",
+      "description": "Full SDLC suite: 22 agents, 60 skills, 6 multi-agent workflows, with an explicit autonomy policy for unattended runs",
       "version": "1.0.3",
       "keywords": [
         "sdlc",

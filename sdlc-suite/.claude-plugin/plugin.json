@@ -1,7 +1,7 @@
 {
   "name": "sdlc-suite",
   "version": "1.0.3",
-  "description": "Full software-development-lifecycle suite: 21 agents, 60 skills, and 6 scripted multi-agent workflows. The agent that does the work is never the agent that certifies it.",
+  "description": "Full software-development-lifecycle suite: 22 agents, 60 skills, and 6 scripted multi-agent workflows. The agent that does the work is never the agent that certifies it.",
   "author": {
     "name": "Alexander Rodriguez"
   },
