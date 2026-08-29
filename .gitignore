@@ -29,16 +29,36 @@ snagit-clone/
 # Agent definitions, skills, plugins and project memory under .claude/ ARE the
 # point of this repo — do not add a blanket `.claude/` rule here.
 
-# --- Junk --------------------------------------------------------------------
-# Created by `mkdir -p` when the flag was parsed as a directory name.
-/-p/
+# --- Local machine state, never shared ---------------------------------------
+# Per-machine overrides. These routinely hold absolute paths, machine-specific
+# permission grants and occasionally tokens — none of it meaningful to anyone
+# else, and some of it not safe to publish.
+**/settings.local.json
+**/*.local.json
+.claude/projects/
+.claude/history.jsonl
+.claude/ide/
+.claude/plugins/repos/
+
+# --- Secrets -----------------------------------------------------------------
+# This repository is public. Nothing below should ever be in it, and an
+# allowlist that nothing reads is worse than none — see the Nawi repo for how
+# that went.
+.env
+.env.*
+!.env.example
+.secrets
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+**/mcp-config.json
 
 # --- Tooling -----------------------------------------------------------------
 node_modules/
 *.log
 *.tsbuildinfo
-.env
-.env.local
 
 # --- OS and editor -----------------------------------------------------------
 .DS_Store
