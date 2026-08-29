@@ -1,0 +1,3 @@
+# Agent and skill definitions are parsed by the harness; CRLF in frontmatter
+# has broken registration before. Keep them LF regardless of platform.
+*.md text eol=lf
