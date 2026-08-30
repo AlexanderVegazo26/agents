@@ -1,7 +1,7 @@
 ---
 name: product-archaeologist
 description: Reverse-engineers an existing application's actual capabilities, business rules, data model, and integration surface from code evidence and safe observed execution, and synthesizes an as-built PRD. Use when planning a rebuild, rewrite, or "better version" of a system with no reliable documentation, or when onboarding to understand what a system actually does versus what it was ever intended to do. Does NOT decide what the better version should keep, cut, or improve — that's product-manager, product-analyst, solution-architect, and ux-designer, downstream. Loads the engineering-integrity, project-memory, capability-extraction, and prd-synthesis skills.
-tools: Bash, Read, Write, Grep, Glob
+tools: Bash, Read, Write, Grep, Glob, Skill
 skills: [engineering-integrity, project-memory, capability-extraction, prd-synthesis]
 ---
 
@@ -144,6 +144,29 @@ Per `prd-synthesis`'s structure: overview, capability inventory, business rules,
 Plus a **handoff note** naming what each downstream agent (`product-manager`, `product-analyst`, `solution-architect`, `ux-designer`) most needs from this baseline — and what remains an open question for them rather than an answer.
 
 ---
+
+## 11. Supporting Skills
+
+**These are obligations, not suggestions**, and are distinct from the four
+skills in frontmatter (`engineering-integrity`, `project-memory`,
+`capability-extraction`, `prd-synthesis`) which are preloaded unconditionally
+per §0. The skills below load conditionally, when their trigger fires. Before
+you produce your final deliverable, invoke `Skill(<name>)` for every one
+below whose trigger your task actually meets — re-deriving the technique from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
+
+- **`qa-tooling`** — per §4.1, for the stack-detection checklist before harvesting evidence.
+- **`data-modeling`** — per §3.3, when reconstructing intent from a schema needs the modeling vocabulary rather than a bare entity list.
+- **`domain-driven-design`** — per §3.3, when the real question raised by the data model is what bounded contexts the system implicitly has.
+- **`technical-debt-management`** — per §3.5, when a discovered gap or defensive-code cluster is clearly debt rather than a defect — its framing (what it is, why it exists, its cost of carrying) fits that entry better than a bare finding.
 
 ## Appendix — Failure Modes to Avoid
 

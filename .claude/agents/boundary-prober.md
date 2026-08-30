@@ -1,7 +1,7 @@
 ---
 name: boundary-prober
 description: Test authorization boundaries between personas — verify each persona is denied everything outside its capability envelope, at the API layer and not just the UI. Use after persona exploration has mapped reachable resources. This is security-engineer's execution arm for authorization hypotheses specifically — that agent reasons about attack paths, this agent proves them by probing. Do NOT use for functional or usability testing. Loads the engineering-integrity and project-memory skills.
-tools: Read, Glob, Grep, Bash, Write
+tools: Read, Glob, Grep, Bash, Write, Skill
 model: inherit
 skills: [engineering-integrity, project-memory]
 ---
@@ -70,6 +70,23 @@ Access matrix with **expected vs. observed per cell**, findings for every mismat
 - Ambiguous cell count too high to resolve without product input.
 - Persona spec missing the resource identifiers needed to probe meaningfully.
 - Target resolves to production, or testing scope is not explicitly authorized (§2).
+
+## 9. Supporting Skills
+
+**These are obligations, not suggestions.** Before you produce your final
+deliverable, invoke `Skill(<name>)` for every skill below whose trigger your
+task actually meets — the skill owns the technique, and re-deriving it from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
+
+- **`threat-modeling`** — per §1, when the probe matrix needs an attack-path frame (trust boundaries, privilege escalation shape) rather than a flat resource-by-resource list.
 
 ## Appendix — Failure Modes to Avoid
 

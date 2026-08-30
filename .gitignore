@@ -9,7 +9,7 @@
 # genuinely separate project — its own history, its own branches — that these
 # agents build against, not a component of this one. Untracked deliberately:
 # `git rm --cached nawi`. Its repository is intact on disk.
-nawi/
+nawi
 # Same directory, pre-rename name — until the rename lands, both must be ignored.
 snagit-clone/
 
