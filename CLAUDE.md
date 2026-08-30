@@ -109,6 +109,18 @@ made have to agree.
 - **A test that cannot fail proves nothing.** When adding an assertion for a fix,
   demonstrate it failing against the unfixed code first. A guard shadowed by an
   earlier guard makes its own test permanently green.
+- **A comment asserting a guarantee is an unverified claim.** Seven were found
+  false in a single day — "`unknown` covers Windows", "failures after this point
+  arrive through `onRecordingFailed`", "every terminal path unlinks the temp
+  file", an ADR naming a field that does not exist, an allowlist nothing read.
+  Each survived many readings *because* it sounded authoritative, and one of them
+  is directly why a P0 dead-end shipped. Check them, and when writing one, state
+  the measurement and its date or scope it explicitly.
+- **A collector harness hides the whole loop.** A test harness that stubs a
+  callback as a sink (`h.failures.push(msg)`) terminates one hop before anything
+  the consumer does with it. Three consecutive defects passed green suites for
+  exactly this reason. When a callback gains a consumer, the harness has to model
+  the consumer too.
 
 ---
 
@@ -125,6 +137,18 @@ The same agents exist in several trees. Editing the wrong one changes nothing.
 Both live copies must be changed together, or which behavior you get depends on
 which name the caller happened to use. Note that `sdlc-suite/` namespaces its skill
 references (`sdlc-suite:requirements-craft`), so text edits are not always identical.
+
+**If an agent vanishes from the roster, check its line endings first.** Five agents
+silently stopped registering — dispatch failed with "agent type not found" — and every
+one had CRLF in its frontmatter; normalising to LF restored them in the same session.
+The CRLF was never authored, git's autocrlf introduced it on checkout, which is what
+the "LF will be replaced by CRLF" warnings report. `.gitattributes` now pins `*.md
+text eol=lf`. Two hypotheses were falsified and should not be retried: description
+length (a 480-char broken one sat beside a 659-char working one) and the `INVOKE WHEN:`
+colon-space in unquoted YAML (nine carry it, five broke).
+
+Definitions are read fresh per invocation, so an edit takes effect without a restart —
+which also means a broken one breaks immediately.
 
 `nawi/` (still named `snagit-clone/` on disk until the rename lands — both are ignored) is a separate repository these agents build against — deliberately
 untracked here, with its own history and branches.
