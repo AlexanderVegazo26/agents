@@ -12,6 +12,8 @@ SYNC_SCRIPTS = [
     ROOT / ".kimi-code" / "sync-skills.py",
     ROOT / ".copilot" / "convert-agents.py",
     ROOT / ".copilot" / "sync-skills.py",
+    ROOT / "commandcode-suite" / "convert-agents.py",
+    ROOT / "commandcode-suite" / "sync-skills.py",
 ]
 
 
@@ -51,6 +53,8 @@ def main():
         print("  - .kimi-code/skills/ (65 skills)")
         print("  - .copilot/agents/ (22 agents)")
         print("  - .copilot/skills/ (59 skills)")
+        print("  - commandcode-suite/agents/ (22 agents)")
+        print("  - commandcode-suite/skills/ (59 skills)")
     else:
         print("[ERROR] Some syncs failed. Check output above.")
         sys.exit(1)
