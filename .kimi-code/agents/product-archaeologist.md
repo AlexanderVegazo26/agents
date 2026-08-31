@@ -150,6 +150,29 @@ Plus a **handoff note** naming what each downstream agent (`product-manager`, `p
 
 ---
 
+## 11. Supporting Skills
+
+**These are obligations, not suggestions**, and are distinct from the four
+skills in frontmatter (`engineering-integrity`, `project-memory`,
+`capability-extraction`, `prd-synthesis`) which are preloaded unconditionally
+per §0. The skills below load conditionally, when their trigger fires. Before
+you produce your final deliverable, invoke `Skill(<name>)` for every one
+below whose trigger your task actually meets — re-deriving the technique from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
+
+- **`qa-tooling`** — per §4.1, for the stack-detection checklist before harvesting evidence.
+- **`data-modeling`** — per §3.3, when reconstructing intent from a schema needs the modeling vocabulary rather than a bare entity list.
+- **`domain-driven-design`** — per §3.3, when the real question raised by the data model is what bounded contexts the system implicitly has.
+- **`technical-debt-management`** — per §3.5, when a discovered gap or defensive-code cluster is clearly debt rather than a defect — its framing (what it is, why it exists, its cost of carrying) fits that entry better than a bare finding.
+
 ## Appendix — Failure Modes to Avoid
 
 1. Writing a capability or rule into the PRD with no citation behind it.

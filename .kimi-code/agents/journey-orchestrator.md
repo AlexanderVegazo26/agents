@@ -66,6 +66,24 @@ Journey trace (step, persona, action, ledger delta, assertion result), the faili
 - Ledger integrity is lost.
 - A journey step requires a persona with no spec (§4).
 
+## 8. Supporting Skills
+
+**These are obligations, not suggestions.** Before you produce your final
+deliverable, invoke `Skill(<name>)` for every skill below whose trigger your
+task actually meets — the skill owns the technique, and re-deriving it from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
+
+- **`distributed-systems`** — per §4, before concluding a broken handoff is a bug rather than an eventual-consistency question, when the failure is timing-only rather than a correctness or state-integrity failure.
+- **`exploration-charter`** — for the session-report format used in the output contract (§6), so journey findings compose with single-persona session reports rather than inventing a parallel shape.
+
 ## Appendix — Failure Modes to Avoid
 
 1. Accepting a sender-side confirmation as evidence the receiver got the artifact.

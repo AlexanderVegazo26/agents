@@ -96,6 +96,24 @@ Files written, persona count by status, ambiguity list, `product-analyst` cross-
 - More than 12 candidate personas — this indicates you are splitting on the wrong axis; stop and ask.
 - A `confirmed` persona would require promoting a single-source candidate on your own judgment (§4.3).
 
+## 9. Supporting Skills
+
+**These are obligations, not suggestions.** Before you produce your final
+deliverable, invoke `Skill(<name>)` for every skill below whose trigger your
+task actually meets — the skill owns the technique, and re-deriving it from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
+
+- **`qa-tooling`** — per §4.1, for the stack-detection checklist before harvesting any role/permission evidence — the same detect-don't-assume discipline `qa-engineer` applies to its own tool selection.
+- **`exploration-charter`** — for the persona spec schema at `.claude/skills/exploration-charter/personas-schema-template.yaml` that every emitted YAML file must conform to (§4.7).
+
 ## Appendix — Failure Modes to Avoid
 
 1. Inferring a persona from the product category, repo name, or expectation instead of code evidence.

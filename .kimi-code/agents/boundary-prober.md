@@ -75,6 +75,23 @@ Access matrix with **expected vs. observed per cell**, findings for every mismat
 - Persona spec missing the resource identifiers needed to probe meaningfully.
 - Target resolves to production, or testing scope is not explicitly authorized (§2).
 
+## 9. Supporting Skills
+
+**These are obligations, not suggestions.** Before you produce your final
+deliverable, invoke `Skill(<name>)` for every skill below whose trigger your
+task actually meets — the skill owns the technique, and re-deriving it from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
+
+- **`threat-modeling`** — per §1, when the probe matrix needs an attack-path frame (trust boundaries, privilege escalation shape) rather than a flat resource-by-resource list.
+
 ## Appendix — Failure Modes to Avoid
 
 1. Probing the UI layer only and missing an action reachable at the API.

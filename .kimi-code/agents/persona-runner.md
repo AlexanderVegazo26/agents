@@ -88,6 +88,26 @@ Session report to `.claude/exploration/sessions/<persona>-<charter>-<timestamp>.
 - The target resolves to production (§2).
 - A required capability is blocked with no detectable implementation (§5).
 
+## 11. Supporting Skills
+
+**These are obligations, not suggestions.** Before you produce your final
+deliverable, invoke `Skill(<name>)` for every skill below whose trigger your
+task actually meets — the skill owns the technique, and re-deriving it from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
+
+- **`qa-tooling`** — per §5, for the stack-detection checklist when resolving the six capabilities to a concrete implementation rather than assuming a tool.
+- **`qa-triage`** — per §1, before rating any finding, so severity and flake-vs-bug language composes with `qa-engineer`'s vocabulary instead of inventing a parallel one.
+- **`accessibility`** — per §6.6, when the persona's `accessibility` field is set, for the conformance bar rather than judging by impression.
+- **`exploration-charter`** — for the session-report format the output contract (§9) requires.
+
 ## Appendix — Failure Modes to Avoid
 
 1. Exploring as a generic tester while nominally "being" the persona — ignoring its proficiency, input quality, device, or accessibility constraints.
