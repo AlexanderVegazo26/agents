@@ -52,7 +52,7 @@ Ten agents carry *stop and confirm* gates. Those were written assuming someone i
 `autonomy.json` at the plugin root is the default; drop a copy at `.claude/autonomy.json` in a consuming repo to override per project.
 
 - `preAuthorized.decide.*` — gates whose output is a document (roadmap commit, prioritization, architecture direction, go/no-go *classification*). **On by default.** These were only human because they carry organizational accountability, not because they're irreversible.
-- `preAuthorized.act.*` — gates with irreversible external effect (deploy, destructive migration, production config, failover, external data send, access grants). **Off by default.** Setting one to `true` is a real standing authorization for that class of action in that repo, and the agent must name the gate in its output when it acts on one.
+- `preAuthorized.act.*` — gates with irreversible external effect (deploy, destructive migration, production config, failover, load test against shared env, external data send, access grants, shared component modification). **Off by default.** Setting one to `true` is a real standing authorization for that class of action in that repo, and the agent must name the gate in its output when it acts on one.
 
 A gate absent from the file is treated as not authorized. Uncertainty about reversibility is treated as irreversibility.
 
