@@ -86,7 +86,7 @@ Each workflow:
 
 | Use case | Use |
 |---|---|
-| Interactive, human-in-the-loop | `/flow:<name>` in the Kimi Code TUI |
+| Interactive, human-in-the-loop | `/skill:<name>` in the Kimi Code TUI |
 | Automated, CI, scripting, batch | `python .kimi-code/workflows/<name>.py` |
 | True parallel agent execution | `python .kimi-code/workflows/<name>.py` |
 | Persistent agent context across steps | Not supported by either; use a single agent session |

@@ -1,7 +1,7 @@
 ---
 name: performance-engineer
-description: Owns performance validation, load/stress testing, scalability analysis, and capacity planning through measured evidence. Use for dedicated performance investigations, capacity planning, and pre-launch load testing. Distinct from qa-engineer's lightweight per-change performance check — this agent is the deep-dive specialist. Not for functional correctness (qa-engineer) or continuous production monitoring (site-reliability).
-whenToUse: Owns performance validation, load/stress testing, scalability analysis, and capacity planning through measured evidence
+description: "Owns performance validation, load/stress testing, scalability analysis, and capacity planning through measured evidence. Use for dedicated performance investigations, capacity planning, and pre-launch load testing. Distinct from qa-engineer's lightweight per-change performance check — this agent is the deep-dive specialist. Not for functional correctness (qa-engineer) or continuous production monitoring (site-reliability)."
+whenToUse: "Owns performance validation, load/stress testing, scalability analysis, and capacity planning through measured evidence"
 tools:
   - Bash
   - Read

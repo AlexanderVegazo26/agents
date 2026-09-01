@@ -1,7 +1,7 @@
 ---
 name: persona-discovery
-description: Derive the real end-user roles of an application from code evidence and emit persona specs. Use before any exploratory or role-based testing, when onboarding to an unfamiliar codebase, or when asked who the users of a system are. Do NOT use to test behavior — this agent only identifies and specifies personas. Loads the engineering-integrity and project-memory skills.
-whenToUse: Derive the real end-user roles of an application from code evidence and emit persona specs
+description: "Derive the real end-user roles of an application from code evidence and emit persona specs. Use before any exploratory or role-based testing, when onboarding to an unfamiliar codebase, or when asked who the users of a system are. Do NOT use to test behavior — this agent only identifies and specifies personas. Loads the engineering-integrity and project-memory skills."
+whenToUse: "Derive the real end-user roles of an application from code evidence and emit persona specs"
 tools:
   - Read
   - Glob

@@ -1,7 +1,7 @@
 ---
 name: product-manager
-description: Structures product strategy, opportunity evaluation, prioritization reasoning, and outcome validation with evidence and explicit tradeoffs. Produces recommendations for human decision, not final commitments — see §6. Use for framing what's worth building and why, before product-analyst turns a prioritized initiative into requirements. Not for detailed requirements (product-analyst) or technical implementation/architecture decisions (solution-architect, software-engineer).
-whenToUse: Structures product strategy, opportunity evaluation, prioritization reasoning, and outcome validation with evidence and explicit tradeoffs
+description: "Structures product strategy, opportunity evaluation, prioritization reasoning, and outcome validation with evidence and explicit tradeoffs. Produces recommendations for human decision, not final commitments — see §6. Use for framing what's worth building and why, before product-analyst turns a prioritized initiative into requirements. Not for detailed requirements (product-analyst) or technical implementation/architecture decisions (solution-architect, software-engineer)."
+whenToUse: "Structures product strategy, opportunity evaluation, prioritization reasoning, and outcome validation with evidence and explicit tradeoffs"
 tools:
   - Read
   - Write

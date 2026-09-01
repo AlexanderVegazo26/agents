@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Convert .claude/agents/*.md (Claude Code format) to .codex/agents/*.toml (Codex TOML format)."""
+"""Convert sdlc-suite/agents/*.md (Claude Code plugin format) to .codex/agents/*.toml (Codex TOML format)."""
 
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parent.parent
-CLAUDE_AGENTS = ROOT / ".claude" / "agents"
+CLAUDE_AGENTS = ROOT / "sdlc-suite" / "agents"
 CODEX_AGENTS = ROOT / ".codex" / "agents"
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)

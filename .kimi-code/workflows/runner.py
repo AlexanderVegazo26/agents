@@ -22,15 +22,17 @@ AGENTS_DIR = KIMI_CODE / "agents"
 def _kimi_bin() -> str:
     """Resolve the Kimi Code CLI binary.
 
-    Priority: $KIMI_BIN env var -> standalone Kimi Code (~/.kimi-code/bin/kimi.exe)
-    -> 'kimi' from PATH. The standalone is preferred over PATH because PATH may
-    resolve to the legacy Python kimi-cli, which cannot read Markdown agent files.
+    Priority: $KIMI_BIN env var -> standalone Kimi Code (~/.kimi-code/bin/kimi,
+    or kimi.exe on Windows) -> 'kimi' from PATH. The standalone is preferred over
+    PATH because PATH may resolve to the legacy Python kimi-cli, which cannot
+    read Markdown agent files.
     """
     if os.environ.get("KIMI_BIN"):
         return os.environ["KIMI_BIN"]
-    standalone = Path.home() / ".kimi-code" / "bin" / "kimi.exe"
-    if standalone.exists():
-        return str(standalone)
+    for name in ("kimi", "kimi.exe"):
+        standalone = Path.home() / ".kimi-code" / "bin" / name
+        if standalone.exists():
+            return str(standalone)
     return "kimi"
 
 

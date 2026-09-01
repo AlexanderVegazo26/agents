@@ -1,6 +1,6 @@
 ---
 name: release-readiness
-description: Collect every release gate in parallel from the agent that owns it, then have release-manager synthesize an evidence-classified go/no-go recommendation. Use before a production release. Produces a recommendation for human confirmation — it does not deploy and never upgrades a claim to Confirmed on its own. Invoke with /flow:release-readiness, then describe the release in the next message.
+description: Collect every release gate in parallel from the agent that owns it, then have release-manager synthesize an evidence-classified go/no-go recommendation. Use before a production release. Produces a recommendation for human confirmation — it does not deploy and never upgrades a claim to Confirmed on its own. Invoke with /skill:release-readiness, then describe the release in the next message.
 type: flow
 ---
 

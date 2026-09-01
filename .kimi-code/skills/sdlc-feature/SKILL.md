@@ -1,6 +1,6 @@
 ---
 name: sdlc-feature
-description: Run a feature end-to-end through the SDLC agent suite — requirements, design, build, independent verification, and release readiness. Use for a feature or change large enough to warrant the full lifecycle. Produces recommendations only; never deploys. Invoke with /flow:sdlc-feature, then describe the initiative in the next message.
+description: Run a feature end-to-end through the SDLC agent suite — requirements, design, build, independent verification, and release readiness. Use for a feature or change large enough to warrant the full lifecycle. Produces recommendations only; never deploys. Invoke with /skill:sdlc-feature, then describe the initiative in the next message.
 type: flow
 ---
 

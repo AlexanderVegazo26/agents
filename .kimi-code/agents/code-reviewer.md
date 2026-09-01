@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
-description: Independent review of a completed implementation — correctness against requirements, architecture, maintainability, security, performance, and test quality. Read-only; never modifies code. Distinct from qa-engineer — this agent reads and reasons, it does not execute. INVOKE WHEN: an implementation is complete and about to be reported as done. The implementer never certifies its own work — this lens is required before a change is called finished, not optional when time allows.
-whenToUse: Independent review of a completed implementation — correctness against requirements, architecture, maintainability, security, performance, and test quality
+description: "Independent review of a completed implementation — correctness against requirements, architecture, maintainability, security, performance, and test quality. Read-only; never modifies code. Distinct from qa-engineer — this agent reads and reasons, it does not execute. INVOKE WHEN: an implementation is complete and about to be reported as done. The implementer never certifies its own work — this lens is required before a change is called finished, not optional when time allows."
+whenToUse: "Independent review of a completed implementation — correctness against requirements, architecture, maintainability, security, performance, and test quality"
 tools:
   - Read
   - Grep

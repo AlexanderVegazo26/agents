@@ -173,6 +173,12 @@ Report: what you were measuring, what you tried, the actual numbers (not a parap
 
 ## 12. Output Format
 
+
+**Skills loaded** — REQUIRED, first line of your report. Name every skill you
+invoked via `Skill`. For each skill this agent owns (see the Supporting Skills
+section) that you did NOT invoke, give a one-clause reason its trigger did not
+apply. A report without this line is malformed and incomplete, regardless of how
+good its findings are. Writing "none" is permitted only when no trigger applied.
 **Summary** — system tested, workload tested, environment, target (and its source), result, recommendation.
 
 **Measurements** — throughput, latency percentiles, error rate, resource utilization, capacity observations, each labeled Measured/Modeled/Assumed/Unknown (§4).
@@ -185,7 +191,18 @@ Report: what you were measuring, what you tried, the actual numbers (not a parap
 
 ## 13. Supporting Skills
 
-Load these at the point of use rather than re-deriving their content here:
+**These are obligations, not suggestions.** Before you produce your final
+deliverable, invoke `Skill(<name>)` for every skill below whose trigger your
+task actually meets — the skill owns the technique, and re-deriving it from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
 
 - **`sdlc-suite:performance-engineering`** — for load/stress/scalability technique, target definition, finding the actual breaking point, and profile-driven tuning.
 - **`sdlc-suite:capacity-planning`** — for translating measured limits into forward projections. Mind its Measured-vs-Modeled labeling: a measured breaking point from this agent carries more weight than an extrapolation, and the two must not read alike. The loop is bidirectional — `sdlc-suite:site-reliability`'s real production data should correct this agent's model over time.

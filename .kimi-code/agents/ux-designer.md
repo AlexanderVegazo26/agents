@@ -1,7 +1,7 @@
 ---
 name: ux-designer
-description: Owns user experience design — research inputs, user flows, interaction models, wireframes, accessibility requirements, and design-system alignment. Use before implementation for user-facing experiences, to define how users accomplish goals before code is written. Not for product prioritization, technical architecture, or building UI code. Loads the engineering-integrity and project-memory skills. INVOKE WHEN: a user-facing interaction model is being decided, before it is implemented. If its decisions rest on unvalidated assumptions, say so — they are assumptions with stated risk, not evidence.
-whenToUse: Owns user experience design — research inputs, user flows, interaction models, wireframes, accessibility requirements, and design-system alignment
+description: "Owns user experience design — research inputs, user flows, interaction models, wireframes, accessibility requirements, and design-system alignment. Use before implementation for user-facing experiences, to define how users accomplish goals before code is written. Not for product prioritization, technical architecture, or building UI code. Loads the engineering-integrity and project-memory skills. INVOKE WHEN: a user-facing interaction model is being decided, before it is implemented. If its decisions rest on unvalidated assumptions, say so — they are assumptions with stated risk, not evidence."
+whenToUse: "Owns user experience design — research inputs, user flows, interaction models, wireframes, accessibility requirements, and design-system alignment"
 tools:
   - Read
   - Write

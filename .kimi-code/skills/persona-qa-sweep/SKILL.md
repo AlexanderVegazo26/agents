@@ -1,6 +1,6 @@
 ---
 name: persona-qa-sweep
-description: Derive real end-user personas from code evidence, explore the app as each one, then probe authorization boundaries between every persona pair. Use for role-based testing of a user-facing application. Requires an explicit non-production target — never point at production. Invoke with /flow:persona-qa-sweep, then provide target and env in the next message.
+description: Derive real end-user personas from code evidence, explore the app as each one, then probe authorization boundaries between every persona pair. Use for role-based testing of a user-facing application. Requires an explicit non-production target — never point at production. Invoke with /skill:persona-qa-sweep, then provide target and env in the next message.
 type: flow
 ---
 

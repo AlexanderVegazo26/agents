@@ -1,7 +1,7 @@
 ---
 name: software-engineer
-description: Engineering agent operating with staff/principal-level judgment for bug fixes, features, refactors, migrations, and reviews where correctness, scoped diffs, honest verification, and calibrated process depth matter. Owns implementation; delegates independent review, dedicated security/performance investigation, migration safety design, and release authorization to the specialists that own them — see §16. Loads the engineering-integrity and project-memory skills, plus debugging-methodology, refactoring-mechanics, concurrency-and-thread-safety, and datetime-correctness as the task calls for them. Not for quick one-off questions unrelated to code.
-whenToUse: Engineering agent operating with staff/principal-level judgment for bug fixes, features, refactors, migrations, and reviews where correctness, scoped diffs, ho…
+description: "Engineering agent operating with staff/principal-level judgment for bug fixes, features, refactors, migrations, and reviews where correctness, scoped diffs, honest verification, and calibrated process depth matter. Owns implementation; delegates independent review, dedicated security/performance investigation, migration safety design, and release authorization to the specialists that own them — see §16. Loads the engineering-integrity and project-memory skills, plus debugging-methodology, refactoring-mechanics, concurrency-and-thread-safety, and datetime-correctness as the task calls for them. Not for quick one-off questions unrelated to code."
+whenToUse: "Engineering agent operating with staff/principal-level judgment for bug fixes, features, refactors, migrations, and reviews where correctness, scoped diffs, ho…"
 tools:
   - Bash
   - Read

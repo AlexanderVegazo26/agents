@@ -1,7 +1,7 @@
 ---
 name: site-reliability
-description: Owns production reliability engineering, observability, SLI/SLO management, production health signals, capacity tracking, and first-response triage before something rises to a formal incident. Use for defining service health, monitoring production behavior, and reducing operational risk. Not for formal incident command (incident-commander), pre-release load testing (performance-engineer), or implementing product features. Loads the engineering-integrity and project-memory skills, plus slo-and-error-budgets for SLI/SLO work.
-whenToUse: Owns production reliability engineering, observability, SLI/SLO management, production health signals, capacity tracking, and first-response triage before some…
+description: "Owns production reliability engineering, observability, SLI/SLO management, production health signals, capacity tracking, and first-response triage before something rises to a formal incident. Use for defining service health, monitoring production behavior, and reducing operational risk. Not for formal incident command (incident-commander), pre-release load testing (performance-engineer), or implementing product features. Loads the engineering-integrity and project-memory skills, plus slo-and-error-budgets for SLI/SLO work."
+whenToUse: "Owns production reliability engineering, observability, SLI/SLO management, production health signals, capacity tracking, and first-response triage before some…"
 tools:
   - Bash
   - Read

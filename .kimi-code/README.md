@@ -12,8 +12,8 @@ This directory contains the `.claude/` SDLC Agent Suite converted to the current
 
 ```
 .kimi-code/
-├── agents/              # 21 custom agents (Markdown with YAML frontmatter)
-├── skills/              # 59 domain skills + 6 flow skills
+├── agents/              # 22 custom agents (Markdown with YAML frontmatter)
+├── skills/              # 60 domain skills + 6 flow skills
 ├── workflows/           # 6 Python workflow scripts (programmatic orchestration)
 ├── GLOBAL-SETUP.md      # Global tool-wallet setup & operations guide
 ├── memory/              # Pointer to the shared .claude/memory/ root
@@ -23,7 +23,7 @@ This directory contains the `.claude/` SDLC Agent Suite converted to the current
 └── validate.py          # Structural sanity check
 ```
 
-The 59 domain skills are mirrored from `.claude/skills/` because the current Kimi Code only auto-discovers `.kimi-code/skills/` and `.agents/skills/`, not `.claude/skills/`. The 6 flow skills were rebuilt from `.claude/workflows/*.js`. Shared per-project memory remains in `.claude/memory/` (see `.kimi-code/memory/README.md`).
+The 60 domain skills are mirrored from `.claude/skills/` because the current Kimi Code only auto-discovers `.kimi-code/skills/` and `.agents/skills/`, not `.claude/skills/`. The 6 flow skills were rebuilt from `.claude/workflows/*.js`. Shared per-project memory remains in `.claude/memory/` (see `.kimi-code/memory/README.md`).
 
 ## Quick start
 
@@ -40,7 +40,7 @@ kimi --agent code-reviewer
 
 # Or start normally and use flows
 kimi
-/flow:sdlc-feature
+/skill:sdlc-feature
 Add CSV export to the reporting dashboard
 
 # Run a Python workflow against the current repo (kflow shim lives in ~/bin)
@@ -82,7 +82,7 @@ Agents are discovered automatically from `.kimi-code/agents/` and can be delegat
 
 ## Flow skills
 
-Flow skills use `type: flow` with a D2 diagram. Invoke with `/flow:<name>` (no inline args), then describe the target in the next message.
+Flow skills use `type: flow` with a D2 diagram. Invoke with `/skill:<name>` (no inline args), then describe the target in the next message.
 
 ## Workflows
 

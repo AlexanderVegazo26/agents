@@ -1,6 +1,6 @@
 ---
 name: system-archaeology
-description: Reverse-engineer an undocumented system — derive who uses it and what it does from code evidence in parallel, cross-check the two, and synthesize an as-built PRD. Use when planning a rebuild or onboarding onto a poorly documented system. Produces evidence only; never a recommendation about what to change. Invoke with /flow:system-archaeology, then describe the scope in the next message.
+description: Reverse-engineer an undocumented system — derive who uses it and what it does from code evidence in parallel, cross-check the two, and synthesize an as-built PRD. Use when planning a rebuild or onboarding onto a poorly documented system. Produces evidence only; never a recommendation about what to change. Invoke with /skill:system-archaeology, then describe the scope in the next message.
 type: flow
 ---
 

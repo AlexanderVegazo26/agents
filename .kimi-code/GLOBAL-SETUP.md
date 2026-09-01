@@ -1,4 +1,4 @@
-# Global Tool Wallet — Setup & Operations Guide
+# Global Tool Wallet — Setup & Operations Guide (macOS)
 
 How the SDLC Agent Suite is installed as a **global, repo-agnostic tool wallet** for the
 standalone Kimi Code CLI: every agent, skill, and workflow is callable from any
@@ -9,36 +9,26 @@ repository on this machine, with this repo as the single source of truth.
 ## 1. Architecture
 
 ```
-C:\Users\avega\Documents\personal\agents        ← source of truth (edit here)
+~/Documents/Documents - Alexander’s MacBook Pro/personal/agents   ← source of truth (edit here)
 └── .kimi-code/
-    ├── agents/      21 custom agents (Markdown + YAML frontmatter)
-    ├── skills/      59 domain skills + 6 flow skills
+    ├── agents/      22 custom agents (Markdown + YAML frontmatter)
+    ├── skills/      60 domain skills + 6 flow skills
     └── workflows/   6 Python orchestration scripts + runner.py
 
-C:\Users\avega\.kimi-code\
-├── bin\kimi.exe     standalone Kimi Code CLI (v0.32.0)
+~/.kimi-code/
+├── bin/kimi         standalone Kimi Code CLI (on PATH)
 └── config.toml      extra_agent_dirs + extra_skill_dirs → point at the repo above
 
-C:\Users\avega\bin\  (on PATH: persistent User PATH registration + Git Bash profile)
-├── kimi             Git Bash shim → ~/.kimi-code/bin/kimi.exe
-├── kimi.cmd         cmd/PowerShell shim → %USERPROFILE%\.kimi-code\bin\kimi.exe
-├── kflow            Git Bash shim → <repo>/kflow (workflow shortcut)
-└── kflow.cmd        cmd/PowerShell shim → bash <repo>/kflow
+~/bin/               (registered on PATH via ~/.zshrc)
+└── kflow            shim → <repo>/kflow (workflow shortcut)
 ```
 
-> The workflow shortcut is named `kflow`, not `wf`: `wf` collides with `wf.msc`
-> (Windows Defender Firewall console) in cmd/PowerShell, where `.MSC` is in
-> `PATHEXT` and extensionless shims are not executable.
+> The repo path contains spaces and a curly apostrophe (`Alexander’s`). Always
+> quote it in shell commands and TOML strings — all examples below do.
 
-**Why shims, not symlinks:** Windows symlinks require Developer Mode or admin rights,
-Git Bash `ln -s` silently falls back to copies, and cmd/PowerShell need a `PATHEXT`
-extension anyway. Shims work in every shell with zero privileges.
-
-**Two Kimi products exist on this machine.** The legacy Python `kimi-cli` lives at
-`~/.local/bin/kimi` (config `~/.kimi/`); the standalone Kimi Code lives at
-`~/.kimi-code/bin/kimi.exe` (config `~/.kimi-code/`). The `~/bin/kimi*` shims come
-first on PATH, so plain `kimi` = the standalone everywhere. The legacy CLI remains
-reachable via its full path.
+**Why a shim, not a symlink:** a shim works in every shell, survives Spotlight
+path renames being re-typed, and needs no special flags. Symlinks would also
+work on macOS; the shim is kept for parity with the Windows setup.
 
 ---
 
@@ -47,13 +37,13 @@ reachable via its full path.
 ### 2.1 User-level registration (`~/.kimi-code/config.toml`)
 
 ```toml
-extra_agent_dirs = [ "C:/Users/avega/Documents/personal/agents/.kimi-code/agents" ]
-extra_skill_dirs = [ "C:/Users/avega/Documents/personal/agents/.kimi-code/skills" ]
+extra_agent_dirs = ["/Users/alexandervegazo/Documents/Documents - Alexander’s MacBook Pro/personal/agents/.kimi-code/agents"]
+extra_skill_dirs = ["/Users/alexandervegazo/Documents/Documents - Alexander’s MacBook Pro/personal/agents/.kimi-code/skills"]
 ```
 
 Kimi Code scans these "Extra" scope directories in **every** project
 (priority: Project > Extra > User > Plugin > Built-in). Edits to the repo take
-effect everywhere immediately — no copies, no sync step.
+effect everywhere on the next session start — no copies, no sync step.
 
 Validate with:
 
@@ -61,7 +51,7 @@ Validate with:
 kimi doctor        # checks config.toml / tui.toml syntax
 ```
 
-### 2.2 Agents (21)
+### 2.2 Agents (22)
 
 Discovered globally via `extra_agent_dirs`. Use as the main agent or delegate by name:
 
@@ -75,17 +65,23 @@ Full list in [`AGENTS.md`](./AGENTS.md) (software-engineer, code-reviewer, qa-en
 qa-runner, security-engineer, performance-engineer, database-engineer, ui-engineer,
 ux-designer, solution-architect, product-manager, product-analyst, product-archaeologist,
 persona-discovery, persona-runner, boundary-prober, journey-orchestrator, release-manager,
-technical-writer, site-reliability, incident-commander).
+technical-writer, site-reliability, incident-commander, plus `orchestrator`).
 
-### 2.3 Skills (59 domain + 6 flow)
+> **Frontmatter discipline:** `description:` / `whenToUse:` values must be quoted
+> YAML scalars. An unquoted value containing `: ` (e.g. "INVOKE WHEN: ...") is
+> invalid YAML, and Kimi Code **silently skips the agent**. `convert-agents.py`
+> quotes automatically; `validate.py` fails the check if a hand-edited file
+> regresses.
+
+### 2.3 Skills (60 domain + 6 flow)
 
 Discovered globally via `extra_skill_dirs`. Invocation:
 
 - Mention it in conversation (auto-loaded by the model), or
 - `/skill:<name>` — inject the skill as a prompt, or
-- `/flow:<name>` — execute a flow skill's D2 diagram end-to-end:
-  `/flow:sdlc-feature`, `/flow:independent-review`, `/flow:release-readiness`,
-  `/flow:persona-qa-sweep`, `/flow:system-archaeology`, `/flow:registry-audit`
+- `/skill:<name>` — execute a flow skill's D2 diagram end-to-end:
+  `/skill:sdlc-feature`, `/skill:independent-review`, `/skill:release-readiness`,
+  `/skill:persona-qa-sweep`, `/skill:system-archaeology`, `/skill:registry-audit`
 
 ### 2.4 Python workflows (`.kimi-code/workflows/`)
 
@@ -105,14 +101,17 @@ structured JSON extracted between phases.
 `kflow` resolves the suite by absolute path and runs the workflow against your
 **current working directory** — `cd` into any project and go.
 
+The `~/bin/kflow` shim execs `<repo>/kflow`; `~/bin` is prepended to `PATH` in
+`~/.zshrc` (open a new shell or `source ~/.zshrc` after first install).
+
 ### 2.5 `runner.py` resolution rules
 
 | Setting | Default | Override |
 |---|---|---|
-| Kimi binary | `~/.kimi-code/bin/kimi.exe` (standalone; NOT PATH `kimi`, which may be legacy) | `$KIMI_BIN` |
+| Kimi binary | `~/.kimi-code/bin/kimi` (standalone; NOT PATH `kimi`, which may be the legacy Python CLI) | `$KIMI_BIN` |
 | Agent files | `<repo>/.kimi-code/agents/<name>.md` (absolute) | — |
 | Working dir | caller's cwd (the target repo) | — |
-| Approval mode | none needed — print mode (`-p`) is inherently non-interactive and executes tool calls without prompts (the CLI rejects `--yolo`/`--auto` combined with `-p`) | `$KIMI_APPROVAL_FLAG` (escape hatch for future versions) |
+| Approval mode | none needed — print mode (`-p`) is inherently non-interactive and executes tool calls without prompts | `$KIMI_APPROVAL_FLAG` (escape hatch for future versions) |
 | Per-agent timeout | 3600s | `timeout=` arg in the script |
 
 ---
@@ -127,7 +126,7 @@ kimi --agent software-engineer
 
 # Interactive flows
 kimi
-/flow:sdlc-feature
+/skill:sdlc-feature
 Add CSV export to the reporting dashboard
 
 # One-shot non-interactive
@@ -150,8 +149,6 @@ kimi login        # device-code flow, ~15 min window, cached afterwards
 - The token persists per machine; subsequent runs are fully unattended.
 - For CI/headless: `kimi provider` to configure an API-key provider instead —
   no browser, no token refresh.
-- Legacy credentials do **not** carry over automatically; `kimi migrate` ports
-  config (it kept our `extra_*_dirs` on conflict) but OAuth still requires one login.
 
 ### 4.2 Auto-approval
 
@@ -193,12 +190,14 @@ phase markers and warnings.
 
 | Symptom | Cause / fix |
 |---|---|
-| `kimi --version` shows old Python CLI | You're bypassing the shim; use `hash -r` (bash) or a new shell. `which -a kimi` should list `~/bin/kimi` first |
-| `No model configured` | Not logged in → `kimi login` (or `kimi migrate` from legacy, then login once) |
+| `kimi --version` shows old Python CLI | PATH order issue; `which -a kimi` should list `~/.kimi-code/bin/kimi` first. The legacy Python `kimi-cli` (config `~/.kimi/`) stays reachable via its full path |
+| `kflow: command not found` | `~/bin` not on PATH in this shell → `source ~/.zshrc` or open a new terminal |
+| `No model configured` | Not logged in → `kimi login` |
 | `auth.login_required ... requires login` | OAuth token missing/expired → `kimi login` |
-| Agent not found | Check `kimi doctor`; confirm `extra_agent_dirs` path exists |
+| Agent not found | Check `kimi doctor`; confirm the `extra_agent_dirs` path exists |
+| Agent silently missing from delegation list | Invalid frontmatter (unquoted `:` in `description:`) — run `python .kimi-code/validate.py` |
 | Workflow phase "failed" warnings | Agent returned prose, not JSON — inspect the phase output in the log |
-| Workflow used wrong CLI | Set `$KIMI_BIN` explicitly; default prefers `~/.kimi-code/bin/kimi.exe` |
+| Workflow used wrong CLI | Set `$KIMI_BIN` explicitly; default prefers `~/.kimi-code/bin/kimi` |
 
 ---
 
@@ -209,11 +208,12 @@ This repo remains the source of truth. After editing the suite:
 ```bash
 python .kimi-code/convert-agents.py   # regenerate .kimi-code/agents/ from .claude/agents/
 python .kimi-code/sync-skills.py      # copy new .claude/skills/ into .kimi-code/skills/
-python .kimi-code/validate.py         # structural sanity check
+python .kimi-code/validate.py         # structural sanity check (incl. YAML-safe frontmatter)
 ```
 
 Changes are picked up globally with **no further steps** — `extra_agent_dirs` /
-`extra_skill_dirs` point directly at this repo.
+`extra_skill_dirs` point directly at this repo. Running sessions keep their
+snapshot; new sessions see the changes.
 
 If the suite repo ever moves, update:
 1. `~/.kimi-code/config.toml` (`extra_agent_dirs`, `extra_skill_dirs`)
@@ -221,3 +221,12 @@ If the suite repo ever moves, update:
 
 Shared per-project memory stays in `.claude/memory/<project>/` (tool-agnostic by
 design); see [`memory/README.md`](./memory/README.md).
+
+---
+
+## 7. Platform note
+
+This guide describes the **macOS** machine. The suite was previously set up on a
+Windows machine (`C:\Users\avega`, `kimi.exe`, cmd/PowerShell shims); that setup
+is independent. `runner.py` prefers `~/.kimi-code/bin/kimi` and falls back to
+`kimi.exe`, so the same workflows run on both platforms unchanged.

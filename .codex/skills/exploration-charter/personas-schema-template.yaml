@@ -1,0 +1,73 @@
+# .claude/personas/<id>.yaml — emitted by persona-discovery, edited by the user,
+# consumed by persona-runner, boundary-prober, and journey-orchestrator.
+# Personas are data, not agents. Copy this template per confirmed/candidate persona.
+#
+# This file is the schema reference and lives in the skill directory on purpose —
+# it must NOT live in .claude/personas/, where a *.yaml glob would pick it up as
+# if it were a real persona.
+
+id: teacher                      # kebab-case, unique
+label: Classroom Teacher
+status: confirmed                # confirmed | candidate | rejected
+confidence: high                 # high | medium | low
+
+provenance:                      # REQUIRED. min 2 independent source types to be `confirmed`
+  - source: role-enum
+    ref: src/auth/roles.ts:14
+  - source: route-guard
+    ref: src/router/index.ts:88
+  - source: i18n
+    ref: locales/en.json:203
+
+identity:
+  auth_method: detected          # never hardcode; resolved at runtime
+  credential_ref: env:PERSONA_TEACHER_CREDS   # reference only, never a literal
+  session_isolation_key: teacher # each persona gets its own isolated session/profile
+  tenant_scope: single           # single | multi | global
+
+capability_envelope:
+  permitted:                     # what this persona SHOULD be able to do
+    - create-assignment
+    - view-roster
+    - grade-submission
+  forbidden:                     # what MUST be denied — drives boundary-prober
+    - modify-billing
+    - view-other-classroom-roster
+  ambiguous: []                  # unresolved — surfaced for human decision, never assumed
+
+jobs_to_be_done:                 # ranked; drives charter generation
+  - rank: 1
+    job: Assign work to a class and see who has submitted
+  - rank: 2
+    job: Grade a submission and return feedback
+
+entry_points:
+  - kind: route                  # route | endpoint | screen | cli | job
+    ref: /classroom/:id/assignments
+
+data_dependencies:               # what must exist before this persona can do anything
+  - at least one classroom owned by this persona
+  - at least one enrolled student persona
+
+behavior_model:
+  proficiency: expert            # novice | intermediate | expert
+  input_quality: careful         # careful | sloppy | adversarial
+  device: desktop
+  locale: en-US
+  accessibility: none            # none | keyboard-only | screen-reader | reduced-motion
+  patience_steps: 40             # abandons the task past this budget
+
+oracles:                         # what "correct" means for THIS persona
+  - Only classrooms owned by this persona appear in the roster list
+  - Grade changes are visible to the affected student and no other student
+
+anti_goals:                      # keeps exploration realistic
+  - Would never attempt to edit platform-wide settings
+
+# Cross-check note (populated by persona-discovery): whether this persona
+# corresponds to a requirement in .claude/memory/<project>/requirements/ from
+# product-analyst, or is implemented with no matching product intent, or vice
+# versa. A mismatch here is a finding, not something to silently resolve.
+product_analyst_cross_check:
+  matched_requirement: null      # e.g. "REQ-014" or null if no match found
+  note: ""

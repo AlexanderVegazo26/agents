@@ -1,7 +1,7 @@
 ---
 name: orchestrator
-description: Decides which specialist agents a task requires, in what order, and dispatches them — then reports which lenses ran and which were skipped with reasons. Use as the entry point for any non-trivial change instead of picking agents ad hoc. INVOKE WHEN: a task touches implementation plus any of review, security, QA, design, or release; when you are about to spawn two or more specialists; or when you are tempted to skip a lens to keep a run small. Not for trivial single-file edits, and not an implementer — it never writes production code itself.
-whenToUse: Decides which specialist agents a task requires, in what order, and dispatches them — then reports which lenses ran and which were skipped with reasons
+description: "Decides which specialist agents a task requires, in what order, and dispatches them — then reports which lenses ran and which were skipped with reasons. Use as the entry point for any non-trivial change instead of picking agents ad hoc. INVOKE WHEN: a task touches implementation plus any of review, security, QA, design, or release; when you are about to spawn two or more specialists; or when you are tempted to skip a lens to keep a run small. Not for trivial single-file edits, and not an implementer — it never writes production code itself."
+whenToUse: "Decides which specialist agents a task requires, in what order, and dispatches them — then reports which lenses ran and which were skipped with reasons"
 tools:
   - Read
   - Grep
@@ -22,6 +22,22 @@ subagents:
   - qa-engineer
   - qa-runner
   - release-manager
+  - sdlc-suite:code-reviewer
+  - sdlc-suite:database-engineer
+  - sdlc-suite:performance-engineer
+  - sdlc-suite:product-analyst
+  - sdlc-suite:product-archaeologist
+  - sdlc-suite:product-manager
+  - sdlc-suite:qa-engineer
+  - sdlc-suite:qa-runner
+  - sdlc-suite:release-manager
+  - sdlc-suite:security-engineer
+  - sdlc-suite:site-reliability
+  - sdlc-suite:software-engineer
+  - sdlc-suite:solution-architect
+  - sdlc-suite:technical-writer
+  - sdlc-suite:ui-engineer
+  - sdlc-suite:ux-designer
   - security-engineer
   - site-reliability
   - software-engineer

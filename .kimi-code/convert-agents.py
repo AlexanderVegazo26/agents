@@ -94,6 +94,18 @@ def format_yaml_list(items):
     return "\n".join(f"  - {item}" for item in items)
 
 
+def yaml_dq(value: str) -> str:
+    """Render a string as a YAML double-quoted scalar.
+
+    Plain (unquoted) scalars break when the value contains ': ' or starts
+    with an indicator character, which several agent descriptions do
+    (e.g. "INVOKE WHEN: ..."). Invalid frontmatter is skipped by Kimi Code,
+    so always quote.
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def write_agent(name: str, front: dict, body: str):
     out_path = KIMI_AGENTS / f"{name}.md"
 
@@ -106,8 +118,8 @@ def write_agent(name: str, front: dict, body: str):
     lines = [
         "---",
         f"name: {name}",
-        f"description: {description}",
-        f"whenToUse: {when_to_use}",
+        f"description: {yaml_dq(description)}",
+        f"whenToUse: {yaml_dq(when_to_use)}",
     ]
 
     if tools:

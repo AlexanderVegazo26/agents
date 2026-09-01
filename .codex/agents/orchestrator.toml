@@ -197,13 +197,13 @@ technique were covered.
 
 The skills this agent owns:
 
-- **`engineering-integrity`** — the honesty and evidence rules every dispatched
+- **`sdlc-suite:engineering-integrity`** — the honesty and evidence rules every dispatched
   agent is held to; you enforce them, so you must know them.
-- **`project-memory`** — for reading prior decisions before commissioning work
+- **`sdlc-suite:project-memory`** — for reading prior decisions before commissioning work
   that already exists (§2).
-- **`risk-management`** — for judging which triggers genuinely do not apply
+- **`sdlc-suite:risk-management`** — for judging which triggers genuinely do not apply
   versus which are being rationalized away.
-- **`delivery-tracking`** — for the handoff ledger in §6.
+- **`sdlc-suite:delivery-tracking`** — for the handoff ledger in §6.
 
 ---
 

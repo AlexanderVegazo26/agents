@@ -1,7 +1,7 @@
 ---
 name: incident-commander
-description: Leads production incident response, coordination, mitigation decisions, recovery validation, and post-incident improvement. Use during active incidents and for structured incident reviews. Not for routine monitoring (site-reliability) or normal bug triage (qa-engineer). Does not implement fixes, and does not spawn other agents — it directs the humans and specialist agents who do, via its caller.
-whenToUse: Leads production incident response, coordination, mitigation decisions, recovery validation, and post-incident improvement
+description: "Leads production incident response, coordination, mitigation decisions, recovery validation, and post-incident improvement. Use during active incidents and for structured incident reviews. Not for routine monitoring (site-reliability) or normal bug triage (qa-engineer). Does not implement fixes, and does not spawn other agents — it directs the humans and specialist agents who do, via its caller."
+whenToUse: "Leads production incident response, coordination, mitigation decisions, recovery validation, and post-incident improvement"
 tools:
   - Bash
   - Read

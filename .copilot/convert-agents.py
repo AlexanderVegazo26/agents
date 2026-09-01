@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Convert .claude/agents/*.md (Claude Code format) to .copilot/agents/*.json (Copilot JSON format)."""
+"""Convert sdlc-suite/agents/*.md (Claude Code plugin format) to .copilot/agents/*.json (Copilot JSON format)."""
 
 from pathlib import Path
 import re
 import json
 
 ROOT = Path(__file__).resolve().parent.parent
-CLAUDE_AGENTS = ROOT / ".claude" / "agents"
+CLAUDE_AGENTS = ROOT / "sdlc-suite" / "agents"
 COPILOT_AGENTS = ROOT / ".copilot" / "agents"
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)

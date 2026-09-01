@@ -1,6 +1,6 @@
 ---
 name: registry-audit
-description: Re-run the .claude registry audit as a repeatable check — schema validation, orphan detection, overlap analysis, tech-agnosticism, and consistency, with every finding adversarially verified. Use after adding or changing agents/skills to confirm the registry has not regressed. Invoke with /flow:registry-audit, then confirm the registry root in the next message if needed.
+description: Re-run the .claude registry audit as a repeatable check — schema validation, orphan detection, overlap analysis, tech-agnosticism, and consistency, with every finding adversarially verified. Use after adding or changing agents/skills to confirm the registry has not regressed. Invoke with /skill:registry-audit, then confirm the registry root in the next message if needed.
 type: flow
 ---
 

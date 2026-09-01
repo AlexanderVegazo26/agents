@@ -26,6 +26,19 @@ def main():
             print(f"FAIL {f.name}: missing {missing}")
             ok = False
             continue
+        # Unquoted plain scalars break YAML when the value contains ': '
+        # (or starts with an indicator char). Kimi Code silently skips
+        # agents with invalid frontmatter, so fail loudly here.
+        unsafe = []
+        for line in front.splitlines():
+            kv = re.match(r"^([A-Za-z0-9_-]+):\s+(\S.*)$", line)
+            if kv and not kv.group(2).startswith(('"', "'")):
+                if ": " in kv.group(2) or kv.group(2).endswith(":"):
+                    unsafe.append(kv.group(1))
+        if unsafe:
+            print(f"FAIL {f.name}: unquoted scalar(s) with ':' in value: {unsafe} — wrap in quotes")
+            ok = False
+            continue
         print(f"OK   {f.name}")
 
     print()

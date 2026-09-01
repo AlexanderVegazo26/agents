@@ -1,6 +1,6 @@
 ---
 name: independent-review
-description: Review a completed change through four independent evidentiary bases in parallel, adversarially cross-check every finding, then merge into one ranked report. Use for a branch, PR, diff, or working tree that needs review deeper than one pass. Invoke with /flow:independent-review, then describe the target in the next message.
+description: Review a completed change through four independent evidentiary bases in parallel, adversarially cross-check every finding, then merge into one ranked report. Use for a branch, PR, diff, or working tree that needs review deeper than one pass. Invoke with /skill:independent-review, then describe the target in the next message.
 type: flow
 ---
 

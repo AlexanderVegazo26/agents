@@ -7,7 +7,7 @@ This project contains a full software-development-lifecycle agent suite converte
 
 ## Skills
 
-Project-scope skills are auto-discovered from `.kimi-code/skills/`. This includes **59 domain skills** (mirrored from `.claude/skills/`) plus **6 flow skills** (rebuilt from `.claude/workflows/*.js`). Load a skill by mentioning it, with `/skill:<name>`, or run a flow with `/flow:<name>`.
+Project-scope skills are auto-discovered from `.kimi-code/skills/`. This includes **60 domain skills** (mirrored from `.claude/skills/`) plus **6 flow skills** (rebuilt from `.claude/workflows/*.js`). Load any skill by mentioning it or with `/skill:<name>` — including the 6 flow skills (there is no separate `/flow:` namespace; `type: flow` skills are manual-invocation only, so they don't appear in the model's auto-invocation listing).
 
 > Note: `.claude/skills/` is **not** auto-discovered by the current Kimi Code. The domain skills are copied into `.kimi-code/skills/` so they are visible.
 
@@ -49,18 +49,18 @@ kimi --agent software-engineer
 
 The original `.claude/workflows/*.js` orchestrations have been rebuilt as Kimi flow skills in `.kimi-code/skills/`:
 
-- **/flow:sdlc-feature** — full lifecycle: requirements → design → build → verification → readiness
-- **/flow:independent-review** — four-lens review with adversarial cross-check
-- **/flow:release-readiness** — five gates → release-manager recommendation
-- **/flow:persona-qa-sweep** — derive personas → explore → probe → triage
-- **/flow:system-archaeology** — reverse-engineer who + what from code evidence
-- **/flow:registry-audit** — re-audit the registry for orphans, overlap, agnosticism, consistency
+- **/skill:sdlc-feature** — full lifecycle: requirements → design → build → verification → readiness
+- **/skill:independent-review** — four-lens review with adversarial cross-check
+- **/skill:release-readiness** — five gates → release-manager recommendation
+- **/skill:persona-qa-sweep** — derive personas → explore → probe → triage
+- **/skill:system-archaeology** — reverse-engineer who + what from code evidence
+- **/skill:registry-audit** — re-audit the registry for orphans, overlap, agnosticism, consistency
 
 Example:
 
 ```bash
 kimi
-/flow:sdlc-feature
+/skill:sdlc-feature
 Add CSV export to the reporting dashboard
 ```
 

@@ -143,6 +143,12 @@ Stop and report, beyond the general `sdlc-suite:engineering-integrity` condition
 
 ## 11. Output Format
 
+
+**Skills loaded** — REQUIRED, first line of your report. Name every skill you
+invoked via `Skill`. For each skill this agent owns (see the Supporting Skills
+section) that you did NOT invoke, give a one-clause reason its trigger did not
+apply. A report without this line is malformed and incomplete, regardless of how
+good its findings are. Writing "none" is permitted only when no trigger applied.
 **Health summary** — current state per key SLI, error-budget status, capacity trend.
 
 **Signal response** (when applicable) — tier (§2), evidence classification (§3), impact, mitigation taken or escalation made.
@@ -153,7 +159,18 @@ Stop and report, beyond the general `sdlc-suite:engineering-integrity` condition
 
 ## 12. Supporting Skills
 
-Load these at the point of use rather than re-deriving their content here:
+**These are obligations, not suggestions.** Before you produce your final
+deliverable, invoke `Skill(<name>)` for every skill below whose trigger your
+task actually meets — the skill owns the technique, and re-deriving it from
+memory is how a review silently loses the checklist it was supposed to apply.
+
+In your final report, include a **Skills loaded** line naming every skill you
+invoked, and for any listed below that you did NOT invoke, state in one clause
+why its trigger did not apply. "I considered it" is not invoking it. If you
+cannot call `Skill`, say so explicitly rather than proceeding as though the
+technique were covered.
+
+The skills this agent owns:
 
 - **`sdlc-suite:slo-and-error-budgets`** — the mechanics behind §4.2 and §4.3: choosing an SLI that reflects user experience, setting a target with a defensible basis, and multi-window burn-rate alerting. It also states the rule §4.3 depends on — the budget is a policy lever feeding `sdlc-suite:release-manager`'s risk assessment and engineering prioritization, not a dashboard.
 - **`sdlc-suite:observability-design`** — for what to instrument and what makes an alert actionable rather than noise. It stops short of what target to set; that's `sdlc-suite:slo-and-error-budgets`.

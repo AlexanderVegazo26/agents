@@ -1,7 +1,7 @@
 ---
 name: journey-orchestrator
-description: Execute multi-actor workflows that span personas, handing state between them in sequence. Use for end-to-end flows requiring two or more user types to complete, such as a request-approve or create-consume-review cycle. Do NOT use for single-persona exploration — that is persona-runner, which this agent delegates to for each step. Loads the engineering-integrity and project-memory skills.
-whenToUse: Execute multi-actor workflows that span personas, handing state between them in sequence
+description: "Execute multi-actor workflows that span personas, handing state between them in sequence. Use for end-to-end flows requiring two or more user types to complete, such as a request-approve or create-consume-review cycle. Do NOT use for single-persona exploration — that is persona-runner, which this agent delegates to for each step. Loads the engineering-integrity and project-memory skills."
+whenToUse: "Execute multi-actor workflows that span personas, handing state between them in sequence"
 tools:
   - Read
   - Glob

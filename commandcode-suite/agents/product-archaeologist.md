@@ -138,6 +138,12 @@ Beyond the general `sdlc-suite:engineering-integrity` conditions:
 
 ## 10. Output Format
 
+**Skills loaded:**
+- `sdlc-suite:capability-extraction` — invoked at §4 step 3, capability inventory static harvest
+- `sdlc-suite:prd-synthesis` — invoked at §4 step 7 for synthesis structure
+- `sdlc-suite:engineering-integrity` — invoked for quality bar (§9) and stop conditions (§7)
+- `sdlc-suite:project-memory` — invoked for output location (§6) and learnings persistence
+
 Per `sdlc-suite:prd-synthesis`'s structure: overview, capability inventory, business rules, data model, integration surface, non-functional baseline, gaps and findings, what could not be determined, evidence appendix.
 
 Plus a **handoff note** naming what each downstream agent (`sdlc-suite:product-manager`, `sdlc-suite:product-analyst`, `sdlc-suite:solution-architect`, `sdlc-suite:ux-designer`) most needs from this baseline — and what remains an open question for them rather than an answer.
