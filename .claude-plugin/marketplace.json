@@ -11,7 +11,7 @@
       "name": "sdlc-suite",
       "source": "./sdlc-suite",
       "description": "Full SDLC suite for Claude Code: specialist agents, skills and scripted multi-agent workflows, with a routing policy that names which agent must run when, and an explicit autonomy policy for unattended runs. The agent that does the work is never the agent that certifies it.",
-      "version": "1.0.3",
+      "version": "1.1.0",
       "keywords": [
         "sdlc",
         "agents",

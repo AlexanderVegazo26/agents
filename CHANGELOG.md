@@ -7,7 +7,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Agents and skills carry their own versions; the plugin version is the release
 train. See `CONTRIBUTING.md` for the compatibility policy.
 
-## [Unreleased]
+## [1.1.0] — unreleased
+
+Minor, not major. Nothing a consumer could depend on was removed: the one grant
+dropped (`TaskCreate`, from eight agents) was exercised by no procedure in any
+tree, and `Skill` was *added* to four packaged agents that could not previously
+invoke one. The plugin version moves because it is the only thing that reaches a
+consumer — installing copies the plugin into a versioned cache directory, so
+edits to the source do nothing until it does.
 
 Entries are added as each change lands. Nothing is listed here before the file
 it describes exists — a changelog that promises absent files is the same defect
