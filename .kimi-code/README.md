@@ -12,7 +12,7 @@ This directory contains the `.claude/` SDLC Agent Suite converted to the current
 
 ```
 .kimi-code/
-├── agents/              # 22 custom agents (Markdown with YAML frontmatter)
+├── agents/              # custom agents (Markdown with YAML frontmatter) — see the counts table in the root README.md
 ├── skills/              # 60 domain skills + 6 flow skills
 ├── workflows/           # 6 Python workflow scripts (programmatic orchestration)
 ├── GLOBAL-SETUP.md      # Global tool-wallet setup & operations guide

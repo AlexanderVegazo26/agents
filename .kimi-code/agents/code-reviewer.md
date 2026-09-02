@@ -9,6 +9,8 @@ tools:
   - Bash
 ---
 
+<!-- GENERATED from sdlc-suite/agents/code-reviewer.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Code Reviewer
 
 ## 0. Identity & Mission

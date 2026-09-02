@@ -7,7 +7,7 @@ description: Identifying, rating, and tracking risk across a project — likelih
 
 ## Identify explicitly, don't let risk stay implicit
 
-A risk everyone privately knows about but no one has written down is a risk that will surprise someone eventually. Every material risk gets a line in `.Codex/memory/<project>/risks.md`: what it is, likelihood, impact, current mitigation status, owner.
+A risk everyone privately knows about but no one has written down is a risk that will surprise someone eventually. Every material risk gets a line in `.claude/memory/<project>/risks.md`: what it is, likelihood, impact, current mitigation status, owner.
 
 ## Rating
 

@@ -20,3 +20,8 @@
 # patterns also cannot cover an extensionless definition such as `kflow`.
 # sdlc-suite/tools/eol_check.py is the byte-level check that covers both gaps,
 # including untracked definitions git cannot see.
+
+# Extensionless files a pattern above cannot reach. `kflow` is an executable
+# entry point read by a shell; `.gitattributes` governs itself.
+kflow          text eol=lf
+.gitattributes text eol=lf

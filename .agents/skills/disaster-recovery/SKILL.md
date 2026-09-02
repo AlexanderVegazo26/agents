@@ -23,4 +23,4 @@ Disaster recovery covers loss of infrastructure/data at a scale beyond a single 
 
 ## Documentation
 
-DR procedures belong in `.Codex/memory/<project>/runbooks/`, written so someone unfamiliar with the system's internals could execute them under pressure — not written for the person who already knows how it all works.
+DR procedures belong in `.claude/memory/<project>/runbooks/`, written so someone unfamiliar with the system's internals could execute them under pressure — not written for the person who already knows how it all works.

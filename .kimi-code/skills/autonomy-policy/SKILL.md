@@ -37,9 +37,9 @@ BLOCKED — <gate id>
 
 Regardless of what the file says, these stay human:
 
-- Anything whose reversibility you are **uncertain** about — treat uncertainty about reversibility as irreversibility, as `sdlc-suite:engineering-integrity` already requires.
+- Anything whose reversibility you are **uncertain** about — treat uncertainty about reversibility as irreversibility, as `engineering-integrity` already requires.
 - Anything outside the blast radius the policy describes. Pre-authorizing `deploy` does not pre-authorize a deploy that also runs a destructive migration; that's two gates, and the second one is still shut.
-- Anything a specific agent's own prime directive forbids on grounds other than confirmation — a self-certification ban is not a confirmation gate and this skill does not touch it. `sdlc-suite:qa-engineer` may not certify `sdlc-suite:software-engineer`'s work autonomously any more than it may interactively.
+- Anything a specific agent's own prime directive forbids on grounds other than confirmation — a self-certification ban is not a confirmation gate and this skill does not touch it. `qa-engineer` may not certify `software-engineer`'s work autonomously any more than it may interactively.
 
 ## Honesty under autonomy
 

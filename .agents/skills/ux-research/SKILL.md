@@ -23,4 +23,4 @@ Small or self-selected samples (the users who bothered to respond to a survey, t
 
 ## Feeding findings back
 
-Research findings that reveal an assumption was wrong should update `.Codex/memory/<project>/vision.md`/`designs/` — a validated finding is durable context, not a one-time deliverable.
+Research findings that reveal an assumption was wrong should update `.claude/memory/<project>/vision.md`/`designs/` — a validated finding is durable context, not a one-time deliverable.

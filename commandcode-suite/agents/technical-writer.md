@@ -2,7 +2,10 @@
 name: technical-writer
 description: Owns API documentation, user documentation, runbooks, release notes, knowledge base articles, and developer guides. Use to produce or update documentation once a feature/change is implemented and verified, or when existing docs are found stale. Not for deciding what was built (product-analyst), architectural intent (solution-architect), or internal mechanics beyond what accurate documentation requires. Loads the engineering-integrity and project-memory skills. INVOKE WHEN: a shipped change makes existing documentation false. Stale docs that assert the opposite of current behavior are a defect, not a chore.
 tools: read_file, write_file, edit_file, grep, glob
+skills: [engineering-integrity, project-memory]
 ---
+
+<!-- GENERATED from sdlc-suite/agents/technical-writer.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Technical Writer
 

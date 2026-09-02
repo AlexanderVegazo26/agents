@@ -7,7 +7,7 @@ description: Identifying stakeholders, tailoring communication to their concerns
 
 ## Identify who actually has a stake
 
-Beyond the obvious requester: who's affected by this decision, who has veto power, who needs to know even if they can't influence it. Record in `.Codex/memory/<project>/stakeholders.md` — who cares about what, and the right channel/cadence to reach them.
+Beyond the obvious requester: who's affected by this decision, who has veto power, who needs to know even if they can't influence it. Record in `.claude/memory/<project>/stakeholders.md` — who cares about what, and the right channel/cadence to reach them.
 
 ## Tailor the message, not the facts
 

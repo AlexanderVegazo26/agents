@@ -194,7 +194,7 @@
       "path": "%USERPROFILE%/.claude/settings.json",
       "line": null,
       "finding": "A PreToolUse hook on Bash runs 'rtk hook claude', a user-local binary. Ten of 15 agents hold Bash and route through it.",
-      "evidence": "%USERPROFILE%/.claude/settings.json hooks.PreToolUse matcher 'Bash' command 'rtk hook claude'; rtk resolves to C:/Users/avega/.local/bin/rtk.exe.",
+      "evidence": "%USERPROFILE%/.claude/settings.json hooks.PreToolUse matcher 'Bash' command 'rtk hook claude'; rtk resolves to <user-home>/.local/bin/rtk.exe.",
       "impact": "On a machine without rtk, every Bash call in the suite hits a missing-binary hook. Outside the audited project tree, so advisory - and notably the project tree itself has no such coupling.",
       "recommendation": "Guard the hook on binary presence, or document rtk as an environment prerequisite. Requires a separate decision - not in project scope.",
       "effort": "small"

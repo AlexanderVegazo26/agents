@@ -23,4 +23,4 @@ Track a full funnel (not just the entry and final conversion point) so a drop-of
 
 ## Feeding back into product decisions
 
-Analytics exists to validate or falsify a stated hypothesis from `product-manager`'s roadmap reasoning — report against that hypothesis explicitly, not just as a general dashboard update, and feed the result into `.Codex/memory/<project>/vision.md`/`roadmap.md`.
+Analytics exists to validate or falsify a stated hypothesis from `product-manager`'s roadmap reasoning — report against that hypothesis explicitly, not just as a general dashboard update, and feed the result into `.claude/memory/<project>/vision.md`/`roadmap.md`.

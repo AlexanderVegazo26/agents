@@ -22,22 +22,6 @@ subagents:
   - qa-engineer
   - qa-runner
   - release-manager
-  - sdlc-suite:code-reviewer
-  - sdlc-suite:database-engineer
-  - sdlc-suite:performance-engineer
-  - sdlc-suite:product-analyst
-  - sdlc-suite:product-archaeologist
-  - sdlc-suite:product-manager
-  - sdlc-suite:qa-engineer
-  - sdlc-suite:qa-runner
-  - sdlc-suite:release-manager
-  - sdlc-suite:security-engineer
-  - sdlc-suite:site-reliability
-  - sdlc-suite:software-engineer
-  - sdlc-suite:solution-architect
-  - sdlc-suite:technical-writer
-  - sdlc-suite:ui-engineer
-  - sdlc-suite:ux-designer
   - security-engineer
   - site-reliability
   - software-engineer
@@ -46,6 +30,8 @@ subagents:
   - ui-engineer
   - ux-designer
 ---
+
+<!-- GENERATED from sdlc-suite/agents/orchestrator.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Orchestrator
 

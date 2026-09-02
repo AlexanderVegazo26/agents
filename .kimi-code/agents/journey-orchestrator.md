@@ -12,6 +12,8 @@ subagents:
   - persona-runner
 ---
 
+<!-- GENERATED from sdlc-suite/agents/journey-orchestrator.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Journey Orchestrator
 
 ## 0. Objective

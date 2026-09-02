@@ -7,7 +7,7 @@ description: Tracking known technical debt with its real cost of carrying it, an
 
 ## Record it, don't let it stay tribal knowledge
 
-Debt that only exists as "yeah, we know that part's bad" in someone's head is debt that will surprise the next person who touches it. Record in `.Codex/memory/<project>/technical-debt.md`: what it is, why it exists (rarely negligence — usually a deliberate tradeoff made under a real constraint at the time), and its current cost of carrying it.
+Debt that only exists as "yeah, we know that part's bad" in someone's head is debt that will surprise the next person who touches it. Record in `.claude/memory/<project>/technical-debt.md`: what it is, why it exists (rarely negligence — usually a deliberate tradeoff made under a real constraint at the time), and its current cost of carrying it.
 
 ## Cost of carrying, not just cost of fixing
 

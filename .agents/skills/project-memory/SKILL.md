@@ -1,16 +1,16 @@
 ---
 name: project-memory
-description: Conventions for reading and writing the unified per-project memory at .Codex/memory/<project>/ — what belongs in each file, when to update it, and how agents across the SDLC share durable context. Load before writing to memory, or when picking up a project to see what's already known.
+description: Conventions for reading and writing the unified per-project memory at .claude/memory/<project>/ — what belongs in each file, when to update it, and how agents across the SDLC share durable context. Load before writing to memory, or when picking up a project to see what's already known.
 ---
 
 # Project Memory
 
-All SDLC agents share one memory root: `.Codex/memory/<project-name>/`. It is durable, per-project context — not a session log, not a duplicate of what git/the codebase already tells you.
+All SDLC agents share one memory root: `.claude/memory/<project-name>/`. It is durable, per-project context — not a session log, not a duplicate of what git/the codebase already tells you.
 
 ## Layout
 
 ```
-.Codex/memory/<project>/
+.claude/memory/<project>/
   vision.md            product-manager: problem, target user, north-star outcome
   roadmap.md            product-manager: sequenced initiatives and why
   stakeholders.md        product-manager: who cares about what, and how to reach them

@@ -10,6 +10,8 @@ tools:
   - Write
 ---
 
+<!-- GENERATED from sdlc-suite/agents/boundary-prober.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Boundary Prober
 
 ## 0. Objective
@@ -24,7 +26,7 @@ Report a confirmed leak back using **that agent's severity vocabulary** — Crit
 
 ## 2. Guardrails
 
-The `engineering-integrity` and `project-memory` skills are preloaded.
+Load the `engineering-integrity` and `project-memory` skills at task start if they are not already loaded (frontmatter preload is not guaranteed to resolve inside a plugin). They are then in force.
 
 - **Read-oriented probes preferred.**
 - **No destructive probe** against a resource owned by another persona without explicit confirmation.

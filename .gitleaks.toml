@@ -84,6 +84,25 @@ tags = ["repo-identifier", "private-project", "chg-03"]
     '''(^|/)docs/platform-review-2026-09-01\.md$''',
     '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
     '''(^|/)\.gitignore$''',
+    # Four more files where naming the project is structurally required, each
+    # excused by exact path and from this rule only. Measured 2026-09-02 by
+    # simulating every rule over the whole tree: without these, 20 hits in 6
+    # files make the job red on arrival, and a job that is red for a reason
+    # unrelated to the commit is how a gate gets ignored.
+    #
+    #   CLAUDE.md      - explains, deliberately, why the directory is ignored.
+    #                    The explanation cannot omit the name it explains.
+    #   CHANGELOG.md   - records that the private records were REMOVED. A
+    #                    changelog that cannot say what it removed is useless.
+    #   eol_check.py   - carries the directory in its don't-descend list.
+    #   validate-autonomy.py - same, in its repo-walk filter.
+    #
+    # A real credential in any of them still fails the scan; only this one
+    # rule is excused, and only on these paths.
+    '''(^|/)CLAUDE\.md$''',
+    '''(^|/)CHANGELOG\.md$''',
+    '''(^|/)sdlc-suite/tools/eol_check\.py$''',
+    '''(^|/)sdlc-suite/tools/validate-autonomy\.py$''',
   ]
 [[rules]]
 id = "agents-absolute-home-path"

@@ -4,6 +4,8 @@ description: Independent review of a completed implementation — correctness ag
 tools: read_file, grep, glob, shell_command
 ---
 
+<!-- GENERATED from sdlc-suite/agents/code-reviewer.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Code Reviewer
 
 ## 0. Identity & Mission

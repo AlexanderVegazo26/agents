@@ -90,6 +90,11 @@ def _count_workflows(directory: Path) -> int | None:
         and p.suffix in (".js", ".py", ".mjs")
         and not p.name.startswith("_")
         and p.name not in SHARED_MODULE_NAMES
+        # A test beside the thing it tests is not itself a workflow. Without this
+        # `.kimi-code/workflows/test_runner.py` reported as a seventh workflow,
+        # which is the same class of wrong number this tool exists to stop.
+        and not p.name.startswith("test_")
+        and not p.stem.endswith((".test", "_test"))
     )
 
 

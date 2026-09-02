@@ -103,7 +103,7 @@ then **not** parseable as JSON.
 Three things will silently degrade a headless run. Check each once in the target repo:
 
 1. **Permissions.** Every `shell_command`/`write_file` call that would prompt interactively fails or stalls headless. The workflows pass `--permission-mode auto-accept` to their `cmdc -p` phases, but a consuming repo's `.commandcode/settings.json` may still restrict. Confirm with a throwaway `cmdc -p` run first.
-2. **Memory root.** Every agent reads and writes `.commandcode/memory/<project>/`. In a fresh repo that tree doesn't exist — copy `memory-template/` to `.commandcode/memory/<project>/` before the first run.
+2. **Memory root.** Every agent reads and writes `.claude/memory/<project>/` — the memory root is tool-agnostic by design and is not renamed per harness. In a fresh repo that tree doesn't exist — copy `memory-template/` to `.claude/memory/<project>/` before the first run.
 3. **MCP auth.** Interactively-authenticated MCP servers may be absent in headless runs. Any workflow step that reads a ticket or posts a status comment depends on them — verify with a throwaway `cmdc -p` first.
 
 ## What autonomy does not change

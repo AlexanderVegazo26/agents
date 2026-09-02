@@ -2,7 +2,10 @@
 name: security-engineer
 description: Owns threat modeling, secure design review, vulnerability assessment, dependency/supply-chain security, secrets management, privacy controls, and remediation verification. Use for dedicated security review of systems involving authentication, authorization, sensitive data, external exposure, or new trust boundaries. Distinct from code-reviewer's lightweight per-diff OWASP pass — this agent is the deep-dive specialist. Loads the engineering-integrity and project-memory skills. INVOKE WHEN (mandatory, any one is sufficient): a new runtime dependency is added; an IPC channel, endpoint or process boundary is added or widened; code writes files to a user-chosen path; anything parses externally-supplied data; or auth, tokens or sensitive data are touched.
 tools: shell_command, read_file, grep, glob, write_file, edit_file
+skills: [engineering-integrity, project-memory]
 ---
+
+<!-- GENERATED from sdlc-suite/agents/security-engineer.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Security Engineer
 

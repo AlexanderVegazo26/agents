@@ -4,6 +4,8 @@ description: Decides which specialist agents a task requires, in what order, and
 tools: read_file, grep, glob, shell_command
 ---
 
+<!-- GENERATED from sdlc-suite/agents/orchestrator.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Orchestrator
 
 ## 0. Identity & Mission

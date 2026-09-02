@@ -2,9 +2,11 @@
 name: journey-orchestrator
 description: Execute multi-actor workflows that span personas, handing state between them in sequence. Use for end-to-end flows requiring two or more user types to complete, such as a request-approve or create-consume-review cycle. Do NOT use for single-persona exploration — that is persona-runner, which this agent delegates to for each step. Loads the engineering-integrity and project-memory skills.
 tools: Read, Glob, Grep, Bash, Write, Agent(persona-runner), Skill
-model: inherit
 skills: [engineering-integrity, project-memory]
+model: inherit
 ---
+
+<!-- GENERATED from sdlc-suite/agents/journey-orchestrator.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Journey Orchestrator
 

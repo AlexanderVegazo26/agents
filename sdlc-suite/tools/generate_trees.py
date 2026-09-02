@@ -154,6 +154,22 @@ def denamespace(text: str) -> str:
     return text.replace(NS, "")
 
 
+def _read_lf(p: Path) -> str:
+    """Read a file's real bytes and normalise line endings to LF.
+
+    `read_bytes`, never `read_text`. Python's text mode universal-newline-
+    translates on read, so a CRLF file decodes identically to its LF twin — the
+    generator then reports it "unchanged" and leaves on disk exactly the bytes
+    that have silently unregistered agents in this repository before. It is the
+    same blind spot `git diff --no-index` has, and it is precisely the class of
+    defect this tool exists to close, so it must not have it itself.
+
+    Normalising here rather than only on write also means a CRLF *source* file
+    cannot propagate CRLF into six generated trees.
+    """
+    return p.read_bytes().decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+
+
 # --------------------------------------------------------------------------- #
 # Target definitions
 # --------------------------------------------------------------------------- #
@@ -177,6 +193,16 @@ class Target:
     local_skills: set[str] = field(default_factory=set)
     #: emit a `GENERATED` header comment into agent files
     header: bool = True
+    #: What to do with `Agent(x)` grants. Command Code's tool vocabulary has a
+    #: bare `agent` tool and no parameterised form, so `Agent(qa-runner)` is an
+    #: unknown tool there and its own validator rejects it. "drop" reproduces
+    #: what that harness's original converter did.
+    agent_grants: str = "keep"          # keep | drop
+    #: Claude `model:` value -> this harness's model id. A value mapping to None
+    #: is omitted entirely, which is how "inherit" means "follow the session".
+    model_map: dict[str, str | None] = field(default_factory=dict)
+    #: frontmatter key order; keys not listed are appended in source order
+    key_order: tuple = ("name", "description", "tools", "skills", "model")
 
 
 TARGETS = {
@@ -191,6 +217,11 @@ TARGETS = {
         "commandcode-suite", namespaced=True, agent_ext=".md", agent_format="markdown",
         tool_map={"Bash": "shell_command", "Read": "read_file", "Write": "write_file",
                   "Edit": "edit_file", "Grep": "grep", "Glob": "glob"},
+        # `Agent(x)` is not a Command Code tool name — `commandcode-suite/validate.py`
+        # rejects it as unknown. Its own converter dropped these grants; so do we.
+        agent_grants="drop",
+        # "inherit" is omitted so the agent follows the session model.
+        model_map={"inherit": None, "sonnet": "claude-sonnet-5"},
     ),
 
     # Kimi Code. Adds whenToUse and a subagents list; the six flow skills live
@@ -226,31 +257,62 @@ TARGETS = {
 # Emitters — each returns the exact bytes for one agent file
 # --------------------------------------------------------------------------- #
 
+def render_tools(front: dict, t: Target) -> str:
+    """Map, filter and dedupe the tool grants for one target.
+
+    Dedupe ALWAYS, not only when a tool_map applies. The canonical tree grants
+    both `Agent(qa-runner)` and `Agent(sdlc-suite:qa-runner)` so a plugin install
+    resolves either spelling; de-namespacing collapses them to one token, and
+    without dedupe every bare-name tree gets `Agent(qa-runner), Agent(qa-runner)`.
+    """
+    mapped: list[str] = []
+    for e in tool_entries(front):
+        base = re.sub(r"\(.*\)", "", e).strip()
+        if base == "Agent":
+            if t.agent_grants == "keep":
+                mapped.append(e)
+            continue
+        if not t.tool_map:
+            mapped.append(e)
+        elif base in t.tool_map:
+            mapped.append(t.tool_map[base])
+        # a tool this harness has no name for is dropped, as the converters did
+    return ", ".join(dict.fromkeys(mapped))
+
+
 def emit_markdown(name: str, front: dict, body: str, t: Target, src_rel: str) -> str:
-    keys = ["name", "description", "tools", "skills", "model"]
     lines = ["---"]
-    for k in keys:
+    for k in t.key_order:
         if k not in front:
             continue
         v = front[k]
-        if k == "tools" and t.tool_map:
-            mapped = []
-            for e in tool_entries(front):
-                base = re.sub(r"\(.*\)", "", e).strip()
-                if base == "Agent":
-                    mapped.append(e)
-                elif base in t.tool_map:
-                    mapped.append(t.tool_map[base])
-                elif not t.tool_map:
-                    mapped.append(e)
-            v = ", ".join(dict.fromkeys(mapped))
+        if k == "tools":
+            v = render_tools(front, t)
+            if not v:
+                # An agent that only delegates still needs something to delegate
+                # with; this mirrors the Command Code converter's own fallback.
+                if t.agent_grants == "drop" and any(
+                        e.startswith("Agent(") for e in tool_entries(front)):
+                    v = "agent"
+                else:
+                    continue
+        elif k == "model" and t.model_map:
+            if v not in t.model_map:
+                pass                       # unknown id: keep it verbatim
+            elif t.model_map[v] is None:
+                continue                   # e.g. "inherit" -> omit, follow session
+            else:
+                v = t.model_map[v]
         lines.append(f"{k}: {v}")
     for k in front:
-        if k not in keys:
+        if k not in t.key_order:
             lines.append(f"{k}: {front[k]}")
     lines.append("---")
     lines.append("")
     if t.header:
+        # In the BODY, not the frontmatter. Frontmatter here is fragile — CRLF in
+        # it once silently unregistered five agents — so nothing that can be kept
+        # out of it goes in. `verify-bodies.py` strips this line before comparing.
         lines.append(GENERATED_MD.format(src=src_rel))
         lines.append("")
     lines.append(body.strip())
@@ -319,7 +381,7 @@ EMITTERS = {"markdown": emit_markdown, "kimi": emit_kimi,
 # --------------------------------------------------------------------------- #
 
 def render_agent(md_path: Path, t: Target) -> str:
-    text = md_path.read_text(encoding="utf-8")
+    text = _read_lf(md_path)
     if not t.namespaced:
         text = denamespace(text)
     front, body = parse_frontmatter(text)
@@ -346,7 +408,7 @@ def desired_files(t: Target) -> dict[Path, str]:
             if not f.is_file():
                 continue
             rel = Path("skills") / f.relative_to(SRC_SKILLS)
-            raw = f.read_text(encoding="utf-8")
+            raw = _read_lf(f)
             out[rel] = raw if t.namespaced else denamespace(raw)
 
     return out
@@ -364,7 +426,12 @@ def existing_files(base: Path, t: Target) -> dict[Path, str]:
             if sub == "agents" and (t.agent_ext is None or f.suffix != t.agent_ext):
                 continue
             try:
-                out[f.relative_to(base)] = f.read_text(encoding="utf-8")
+                # read_bytes, NOT read_text: Python text mode universal-newline-
+                # translates on read, so a CRLF file compares equal to its LF twin and
+                # the generator reports it "unchanged" while leaving on disk exactly
+                # the bytes that have unregistered agents here before. Same blind spot
+                # `git diff --no-index` has.
+                out[f.relative_to(base)] = f.read_bytes().decode("utf-8")
             except UnicodeDecodeError:
                 out[f.relative_to(base)] = "\0<binary>"
     return out

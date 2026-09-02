@@ -1,6 +1,6 @@
 ---
 name: qa-techniques
-description: Core test-design techniques — equivalence partitioning, boundary value analysis, state transition testing, invariant-based testing, and metamorphic testing. Load when designing test cases for a feature, endpoint, or function, not just when running existing tests.
+description: Core test-design techniques — equivalence partitioning, boundary value analysis, state transition testing, invariant-based testing, and metamorphic testing — plus how to validate a new check by making it fail and how fixture shape creates blind spots. Load when designing test cases for a feature, endpoint, or function, not just when running existing tests.
 ---
 
 # QA Test-Design Techniques
@@ -47,6 +47,12 @@ Useful when there's no single correct output to assert against (ML models, searc
 
 - Example relations: doubling all prices should double the total; reversing input order shouldn't change a sum; adding a no-op filter shouldn't change result count; running twice with the same seed should give identical output.
 - Define the relation first, then generate input pairs that should satisfy it — a violation is a bug even without knowing what the "correct" output was.
+
+## Validating the test itself
+
+Every technique above generates a check; none of them proves the check works. A test written after a fix and only ever observed green is indistinguishable from one that asserts nothing, so before counting it as coverage, make it go red: revert the fix, disable the guard, or feed it the bad input — **one change at a time**, so you learn which assertion covers which defect rather than that the batch does something — then restore and confirm green. Record which assertion went red for which cause; that record is the evidence, not the green run. Common ways a check passes for the wrong reason: it inspects state the code already replaced (a re-rendered document, a reset fixture, a stale handle); the value it searches for was never present; a defensive layer elsewhere masks the defect independently; or it asserts on one encoding of a value while the defect appears in another. An assertion that cannot be made to fail is a finding about the test.
+
+**A fixture defines the blind spot.** This is EP applied to the *shape* of the input, not just its value: if every case in a fixture is the same element type, content type, document, or lifecycle stage, then any defect specific to the shapes left out passes silently, and the suite reports green over exactly the cases that mattered. When a check guards an invariant, vary the dimension the invariant is stated over, and deliberately include cases a platform or framework may already handle for you — those are the ones that hide whether your own code does anything at all.
 
 ## Applying these together
 

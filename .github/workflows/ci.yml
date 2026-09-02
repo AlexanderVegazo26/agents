@@ -121,46 +121,59 @@ jobs:
           done < "$RUNNER_TEMP/js.txt"
           exit "$failed"
 
+      - name: Runtime module tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The shared workflow modules have real test suites. They use no test
+          # framework — this repository has no package.json, so a framework would
+          # be a new runtime dependency for every adopter — and signal the result
+          # through the exit code.
+          #
+          # Each suite's assertions were shown to fail before the code they cover
+          # existed. Three of them encode defects found that way rather than by
+          # review: `\Z` matching a literal Z in a JS regex, JSON.stringify
+          # escaping the newlines a multiline match needed, and a breaker that
+          # counted retry attempts tripping on one agent's own designed policy.
+          for t in sdlc-suite/workflows/*.test.js; do
+            echo "--- $t"
+            node "$t"
+          done
+          echo "--- .kimi-code/workflows/test_runner.py"
+          python .kimi-code/workflows/test_runner.py
+
+      - name: Autonomy schema and its JS mirror agree
+        # Two implementations of one spec drift. This reads the gate names out of
+        # `_policy.js` rather than restating them, so it cannot pass by agreeing
+        # with a copy of itself.
+        run: python sdlc-suite/tools/validate-autonomy.py --selftest
+
       - name: commandcode-suite structure
         run: python commandcode-suite/validate.py
 
       - name: .kimi-code structure
         run: python .kimi-code/validate.py
 
+      # `commandcode-suite/verify-bodies.py` used to print "BODY MISMATCH: <file>"
+      # for each divergence and then exit 0 — wired plainly it was a permanently
+      # green step, the exact decorative gate rule 2 above exists to prevent.
+      # It now exits 1 on mismatch and 2 on a zero-file scan, and it compares
+      # bytes rather than universal-newline-translated text, so it is wired live.
+      # Proven capable of failing: appending one line to a generated agent body
+      # makes it exit 1 naming that file.
+      - name: commandcode-suite agent bodies match sdlc-suite
+        run: python commandcode-suite/verify-bodies.py
+
+      # Every tree but `sdlc-suite/` is generated. This is the check that makes
+      # editing the wrong copy an error instead of a silent no-op. Proven capable
+      # of failing: hand-editing one generated file makes it exit 1 naming the tree.
+      - name: Generated trees are in sync with sdlc-suite
+        run: python sdlc-suite/tools/generate_trees.py --check
+
       # ---------------------------------------------------------------------
-      # Not yet live. Each line below names why, and what makes it live.
+      # Not yet live.
       # ---------------------------------------------------------------------
-      #
-      # `commandcode-suite/verify-bodies.py` exists and runs, but it is not
-      # wired above and must not be wired as a bare `run:`. The script has no
-      # `sys.exit` and no `raise SystemExit` anywhere in it: it prints
-      # "BODY MISMATCH: <file>" for each divergence, prints a count, and then
-      # exits 0. Wired plainly it is a permanently green step — the exact
-      # class of decorative gate this file's header rule 2 exists to prevent.
-      # The wrapper below, not the script, is what makes it a gate.
-      #
-      # It is left commented because it is red today for a reason this change
-      # does not own: five agent bodies diverge between `sdlc-suite/agents/`
-      # and `commandcode-suite/agents/` (boundary-prober, journey-orchestrator,
-      # persona-discovery, persona-runner, product-archaeologist). CHG-09
-      # reconciles them. Uncomment once it has.
-      #
-      # - name: commandcode-suite agent bodies match sdlc-suite
-      #   shell: bash
-      #   run: |
-      #     set -euo pipefail
-      #     python commandcode-suite/verify-bodies.py > "$RUNNER_TEMP/vb.log"
-      #     cat "$RUNNER_TEMP/vb.log"
-      #     grep -q ' 0 body mismatches$' "$RUNNER_TEMP/vb.log"
-      #
-      # `sdlc-suite/tools/generate_trees.py --check` exists as of this change
-      # but reports 6 drifted trees, because `sdlc-suite/` is not yet the sole
-      # hand-edited source. CHG-09 makes it green. Note the filename uses an
-      # underscore; the platform review calls it `generate-trees.py`, which
-      # does not resolve.
-      #
-      # - name: Generated trees are in sync
-      #   run: python sdlc-suite/tools/generate_trees.py --check
       #
       # `sdlc-suite/tools/validate.py` does not exist in any form. CHG-08
       # introduces the repository-wide registry validator that replaces the

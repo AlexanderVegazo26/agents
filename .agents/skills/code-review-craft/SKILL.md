@@ -1,6 +1,6 @@
 ---
 name: code-review-craft
-description: How to give an effective, specific code review — severity classification, what to look for beyond syntax, and how to phrase feedback that's actionable rather than vague. Load before reviewing a diff.
+description: How to give an effective, specific code review — severity classification, what to look for beyond syntax, how to tell whether a new test is capable of failing, and how to phrase feedback that's actionable rather than vague. Load before reviewing a diff.
 ---
 
 # Code Review Craft
@@ -16,6 +16,12 @@ Every finding gets exactly one severity label: **must fix** (bug, security issue
 ## What to look for beyond syntax
 
 Correctness against the stated requirement; edge cases and error paths, not just the happy path; test coverage that actually exercises the new logic (read the tests, don't infer from "tests added"); whether this diff quietly introduces a new pattern/dependency/coupling that should have gone through architecture review; security-sensitive input handling; performance red flags (N+1, unbounded loops) proportionate to expected scale.
+
+### Ask whether a new test has ever been seen red
+
+A test added alongside a fix, only ever observed green, is indistinguishable from a test that asserts nothing — and reviewing it by reading is exactly how that goes unnoticed. For each new assertion, ask: what change to the production code would make *this line* fail? If you can't name one, that's a **must fix** on the test. The failure shapes to look for while reading: it inspects state the code already replaced (a re-rendered document, a reset fixture, a stale handle); the value it searches for was never present to begin with; a defensive layer elsewhere (a framework, the browser, a validator) masks the defect independently, so the test would pass with the change reverted; or it checks one encoding of a value while the leak occurs in another (`encodeURIComponent` vs. `URLSearchParams`, which encodes a space as `+`). Ask the author which assertion they watched go red, for which cause — one change at a time, not a batch revert. "It passes" is not the evidence; "it failed for this reason before the fix" is.
+
+Fixtures deserve the same read. A check exercised against one shape of input proves something about that shape alone — if every case in a fixture is the same element type, content type, or lifecycle stage, any defect specific to the shapes left out passes silently. Flag a fixture whose cases don't vary over the dimension the invariant is stated across.
 
 ## Phrasing feedback
 

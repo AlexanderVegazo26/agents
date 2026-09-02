@@ -2,7 +2,10 @@
 name: release-manager
 description: Assesses release readiness, coordinates deployment planning, and produces evidence-based go/no-go recommendations with rollback strategy. Produces a recommendation for human confirmation, not a deployment trigger — see §6. Use before production releases to determine whether evidence actually supports shipping safely. Not for implementing features, running tests, or holding deploy authority itself.
 tools: shell_command, read_file, write_file, grep, glob
+skills: [autonomy-policy]
 ---
+
+<!-- GENERATED from sdlc-suite/agents/release-manager.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Release Manager
 

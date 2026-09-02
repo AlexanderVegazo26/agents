@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Master sync script: mirror the canonical suite into every harness.
 
-Source of truth is sdlc-suite/ (the Claude Code plugin: 22 agents, 60 skills).
+Source of truth is sdlc-suite/ (the Claude Code plugin). Exact counts are not
+typed here — see `python sdlc-suite/tools/counts.py`, the single generated
+source for them; a count in a docstring is exactly the kind of prose assertion
+this repository has already watched go stale silently more than once.
 Every other harness tree is regenerated from it so all agents and all skills
 are present everywhere, stale files are pruned, and counts are derived rather
 than hardcoded.
@@ -86,6 +89,26 @@ def expected_skill_names():
     return sorted(p.name for p in SDLC_SKILLS.iterdir() if p.is_dir())
 
 
+def actual_agent_count(dest, ext):
+    """Count agent files a harness actually has on disk, not the source count.
+
+    `.kimi-code/` holds 66 skills against sdlc-suite's 60 (six workflow-launcher
+    skills exist only in that port) — reusing the source count here previously
+    printed a harness-wide number that was simply wrong for that one tree.
+    """
+    agent_dir = dest / "agents"
+    if not agent_dir.exists():
+        return 0
+    return sum(1 for p in agent_dir.glob(f"*{ext}"))
+
+
+def actual_skill_count(dest):
+    skill_dir = dest / "skills"
+    if not skill_dir.exists():
+        return 0
+    return sum(1 for p in skill_dir.iterdir() if p.is_dir())
+
+
 def verify_parity():
     """Every harness must contain every canonical agent and skill (minus kimi's
     explicit exclusions); anything stale must have been pruned by the sync."""
@@ -146,7 +169,13 @@ def main():
     print(f"[OK] All syncs completed successfully!")
     print(f"Source of truth: sdlc-suite/ ({n_agents} agents, {n_skills} skills)")
     for name, dest in HARNESSES.items():
-        print(f"  - {name}/agents/ ({n_agents} agents), {name}/skills/ ({n_skills} skills)")
+        # Measure each harness's own directory rather than assuming it matches
+        # the source counts — .kimi-code/ legitimately carries more skills than
+        # sdlc-suite/ does (its six workflow-launcher skills), and printing the
+        # source count here reported 60 for a tree that holds 66.
+        a_count = actual_agent_count(dest, AGENT_EXT[name])
+        s_count = actual_skill_count(dest)
+        print(f"  - {name}/agents/ ({a_count} agents), {name}/skills/ ({s_count} skills)")
 
     print("\nVerifying parity across all harnesses...")
     if not verify_parity():

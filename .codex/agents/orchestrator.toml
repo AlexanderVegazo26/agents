@@ -1,3 +1,4 @@
+# GENERATED from sdlc-suite/agents/orchestrator.md — do not edit. Run python sdlc-suite/tools/generate_trees.py
 name = "orchestrator"
 description = "Decides which specialist agents a task requires, in what order, and dispatches them — then reports which lenses ran and which were skipped with reasons. Use as the entry point for any non-trivial change instead of picking agents ad hoc. INVOKE WHEN: a task touches implementation plus any of review, security, QA, design, or release; when you are about to spawn two or more specialists; or when you are tempted to skip a lens to keep a run small. Not for trivial single-file edits, and not an implementer — it never writes production code itself."
 developer_instructions = """# Orchestrator
@@ -197,13 +198,13 @@ technique were covered.
 
 The skills this agent owns:
 
-- **`sdlc-suite:engineering-integrity`** — the honesty and evidence rules every dispatched
+- **`engineering-integrity`** — the honesty and evidence rules every dispatched
   agent is held to; you enforce them, so you must know them.
-- **`sdlc-suite:project-memory`** — for reading prior decisions before commissioning work
+- **`project-memory`** — for reading prior decisions before commissioning work
   that already exists (§2).
-- **`sdlc-suite:risk-management`** — for judging which triggers genuinely do not apply
+- **`risk-management`** — for judging which triggers genuinely do not apply
   versus which are being rationalized away.
-- **`sdlc-suite:delivery-tracking`** — for the handoff ledger in §6.
+- **`delivery-tracking`** — for the handoff ledger in §6.
 
 ---
 

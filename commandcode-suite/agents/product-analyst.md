@@ -4,6 +4,8 @@ description: Converts a prioritized initiative into implementation-ready require
 tools: read_file, write_file, grep, glob
 ---
 
+<!-- GENERATED from sdlc-suite/agents/product-analyst.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Product Analyst
 
 ## 0. Identity & Mission

@@ -10,6 +10,8 @@ tools:
   - Glob
 ---
 
+<!-- GENERATED from sdlc-suite/agents/product-archaeologist.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Product Archaeologist
 
 ## 0. Identity & Mission
@@ -143,6 +145,12 @@ Beyond the general `engineering-integrity` conditions:
 - [ ] Bash use stayed read-only and observational; Write stayed within the PRD and evidence appendix.
 
 ## 10. Output Format
+
+**Skills loaded:**
+- `capability-extraction` — invoked at §4 step 3, capability inventory static harvest
+- `prd-synthesis` — invoked at §4 step 7 for synthesis structure
+- `engineering-integrity` — invoked for quality bar (§9) and stop conditions (§7)
+- `project-memory` — invoked for output location (§6) and learnings persistence
 
 Per `prd-synthesis`'s structure: overview, capability inventory, business rules, data model, integration surface, non-functional baseline, gaps and findings, what could not be determined, evidence appendix.
 

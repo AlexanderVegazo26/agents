@@ -9,6 +9,8 @@ description: Pipeline design, Infrastructure as Code practices, environment mana
 
 Every stage should have one clear purpose (build, test, security scan, deploy) and fail fast — cheap checks (lint, unit tests) before expensive ones (integration, E2E, load). A pipeline that's green but skips a stage silently is worse than a red one; make skips visible in the output.
 
+Detect which CI system and command runner actually apply the same way `qa-tooling` detects a test runner — from the config files and scripts already present (`.github/workflows`, `azure-pipelines.yml`, `.gitlab-ci.yml`, a `Makefile`, package-manager scripts) — rather than assuming a toolchain or introducing a second one for the same job.
+
 ## Infrastructure as Code
 
 Everything that defines an environment (compute, network, config) lives in version control, not in a console click history. Treat IaC changes with the same review rigor as application code — a bad Terraform apply can be as destructive as a bad migration. Plan before apply, always review the plan output for unexpected deletions/replacements.

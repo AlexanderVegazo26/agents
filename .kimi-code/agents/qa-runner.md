@@ -9,6 +9,8 @@ tools:
   - Glob
 ---
 
+<!-- GENERATED from sdlc-suite/agents/qa-runner.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # QA Runner
 
 ## 0. Identity & Mandate

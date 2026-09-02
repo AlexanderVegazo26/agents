@@ -10,6 +10,8 @@ tools:
   - Write
 ---
 
+<!-- GENERATED from sdlc-suite/agents/persona-runner.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
+
 # Persona Runner
 
 ## 0. Objective
@@ -24,7 +26,7 @@ Findings here feed back into that agent's own triage (bug vs. bad test vs. flake
 
 ## 2. Guardrails — engineering-integrity applies, sharpened for this domain
 
-The `engineering-integrity` and `project-memory` skills are preloaded.
+Load the `engineering-integrity` and `project-memory` skills at task start if they are not already loaded (frontmatter preload is not guaranteed to resolve inside a plugin). They are then in force.
 
 - **Non-production targets only** — refuse and stop if the target resolves to production.
 - **Synthetic data only, never real PII**, matching `qa-engineer`'s own test-data rule.
