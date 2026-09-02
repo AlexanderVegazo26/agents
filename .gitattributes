@@ -1,3 +1,14 @@
+# Baseline: everything git detects as text is stored and checked out LF.
+#
+# The pins below used to be extension-by-extension, and the gaps kept moving:
+# first *.md only (while .toml/.json definitions were CRLF), then a longer list
+# (while .gitignore, .txt and .mjs were CRLF). An extension whitelist is the
+# wrong shape for this problem — it is a list of the cases someone remembered.
+# "text=auto" lets git decide what is text and skip real binaries.
+*  text=auto eol=lf
+
+# Explicit pins for the definition formats, kept after the baseline so the
+# intent stays readable and so "git check-attr" names a specific rule.
 # Agent and skill definitions are parsed by the harness; CRLF in frontmatter
 # has broken registration before. Keep them LF regardless of platform.
 *.md text eol=lf
