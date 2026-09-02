@@ -38,6 +38,14 @@ Counts above were verified by listing each directory on 2026-08-29, not carried 
 
 ## Status
 
-No licence file is present (verified: no `LICENSE`, `CONTRIBUTING.md`, or `.github/` at the repository root as of 2026-08-29). Until one is added, default copyright applies and others have no granted right to reuse this — adding a `LICENSE` is the owner's call, not something this document assumes.
+Licensed **MIT** — see `LICENSE`.
 
-There is no contribution policy, versioned release process, or roadmap in this repository. Their absence is stated rather than papered over.
+| | |
+|---|---|
+| Contribution policy | `CONTRIBUTING.md` — the nine registry invariants, the pre-PR checks, and the versioning rules |
+| Security reporting | `SECURITY.md` — GitHub private vulnerability reporting |
+| Release record | `CHANGELOG.md` — Keep a Changelog; agents and skills version independently of the plugin |
+| CI | `.github/workflows/ci.yml` — validators, count check, line-ending check, and `gitleaks`. Runs unmodified on a fork with no repository secret |
+
+There is no roadmap in this repository. That absence is stated rather than
+papered over.

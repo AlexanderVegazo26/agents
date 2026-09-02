@@ -70,3 +70,34 @@ desktop.ini
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+
+# --- Machine-local harness state -------------------------------------------
+# settings.json is per-machine for every harness, not only the .local.json form.
+# The rule above (`**/*.local.json`) was written for a filename that is not the
+# one in use, so .commandcode/settings.json was tracked and published one
+# machine's absolute paths, a stale pid, and a wildcard shell allowlist.
+.commandcode/settings.json
+.commandcode/taste/
+**/settings.json
+!.vscode/settings.json
+
+# --- Sibling worktrees and separate projects --------------------------------
+# nawi-vex is a git worktree of the nawi repo. The bare `nawi` rule above does
+# not match it, so one `git add -A` would have committed a second project
+# including its node_modules/ and a 265 KB lockfile.
+nawi*/
+
+# --- Run state ---------------------------------------------------------------
+# Per-run recorder output. Transient, per-machine, and regenerated every run.
+.claude/runs/
+
+# --- Learning loop instance data ---------------------------------------------
+# The denylist is instance data: it names this adopter's organisations,
+# projects and customers. Quarantine holds candidates that matched a redaction
+# class and must never be committed.
+redaction/denylist.txt
+learnings/quarantine/
+
+# --- Python build output ----------------------------------------------------
+__pycache__/
+*.pyc
