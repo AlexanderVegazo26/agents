@@ -20,7 +20,6 @@ TOOL_MAP = {
     "Grep": "grep",
     "Glob": "glob",
     "Agent": "spawn-agent",
-    "TaskCreate": "create-task",
     "TaskUpdate": "update-task",
     "Artifact": "artifact",
 }
@@ -119,7 +118,7 @@ def write_agent(name: str, front: dict, body: str):
     if body.strip():
         agent_def["body"] = body.strip()
 
-    out_path.write_text(json.dumps(agent_def, indent=2, ensure_ascii=False), encoding="utf-8")
+    out_path.write_text(json.dumps(agent_def, indent=2, ensure_ascii=False), encoding="utf-8", newline="\n")
 
 
 def main():

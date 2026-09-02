@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Common utilities for Kimi Code workflow scripts."""
+"""Common utilities for Kimi Code workflow scripts.
+
+NO WORKTREE ISOLATION HERE. The commandcode-suite port isolates each build
+agent in its own detached git worktree (`withWorktree` in
+../../commandcode-suite/workflows/_runner.js); this port has no equivalent,
+and none of the workflows here asks for one. So the three build agents that
+`sdlc-feature.py` launches concurrently through `parallel()` all write to the
+caller's single working tree at the same time. A whole-tree git operation by
+one builder acts on another's in-flight edits, and a shared check can go red
+for reasons belonging to a different agent.
+
+This is a known, accepted gap rather than an oversight — recorded here so it
+is not rediscovered as a surprise. Closing it means adding the helper AND
+wiring it into the build phase of sdlc-feature.py; adding the helper alone
+would leave dead code that nothing calls.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +25,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 
 # Location of the suite itself (resolved from this file, independent of cwd),
@@ -103,22 +118,47 @@ def agent(
 def parallel(
     tasks: Iterable[Callable[[], AgentResult]],
     max_workers: int | None = None,
+    labels: Sequence[str] | None = None,
 ) -> list[AgentResult]:
-    """Run agent tasks in parallel and return results in completion order."""
+    """Run agent tasks in parallel and return results in SUBMISSION order.
+
+    Submission order, not completion order: every caller in this suite zips the
+    return value against its own submission-ordered list (see the `zip(...)`
+    calls in sdlc-feature.py and independent-review.py), so a completion-ordered
+    return silently attributes each result to the wrong agent. Tasks still run
+    concurrently and are still collected as they complete — only the slot each
+    result lands in is fixed by submission index.
+
+    `labels` is optional and positional-parallel to `tasks`. It names the agent
+    behind each thunk so that a thunk raising outside `agent()` still produces
+    an attributable failure. Without it, a failed slot is named `task-<index>`,
+    which the caller can still map back to its own submission list. It is never
+    named "unknown": an unattributable failure cannot be counted against an
+    agent by any per-agent failure policy.
+    """
     tasks = list(tasks)
     if not tasks:
         return []
+    names = list(labels) if labels is not None else []
 
-    results: list[AgentResult] = []
+    results: list[AgentResult | None] = [None] * len(tasks)
     with ThreadPoolExecutor(max_workers=max_workers or len(tasks)) as executor:
         futures = {executor.submit(task): i for i, task in enumerate(tasks)}
         for future in as_completed(futures):
+            idx = futures[future]
             try:
-                results.append(future.result())
+                results[idx] = future.result()
             except Exception as exc:
-                idx = futures[future]
-                results.append(AgentResult("unknown", f"task-{idx}", "", False, str(exc)))
-    return results
+                name = names[idx] if idx < len(names) else f"task-{idx}"
+                results[idx] = AgentResult(name, name, "", False, str(exc))
+    unfilled = [i for i, r in enumerate(results) if r is None]
+    if unfilled:
+        # as_completed() yields every future exactly once, so this cannot
+        # happen. Raise rather than return a short list: silently dropping a
+        # slot would re-create the off-by-one mispairing in every caller that
+        # zips this return value against its own task list.
+        raise RuntimeError(f"parallel(): submission slots {unfilled} were never filled")
+    return results  # type: ignore[return-value]
 
 
 def pipeline(
@@ -138,7 +178,9 @@ def pipeline(
     if cross_check is None:
         return stage_results
 
-    # Cross-check each result as it completes (simulated by running after stage)
+    # Cross-check each result after the whole stage completes. parallel()
+    # returns in submission order, so this zip pairs each result with its
+    # own item.
     final: list[AgentResult | list[AgentResult]] = []
     for result, item in zip(stage_results, items):
         if result.success:

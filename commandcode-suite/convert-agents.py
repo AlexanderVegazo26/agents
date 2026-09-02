@@ -18,7 +18,6 @@ TOOL_MAP = {
     "Edit": "edit_file",
     "Grep": "grep",
     "Glob": "glob",
-    "TaskCreate": "task_create",
 }
 
 # Claude model id -> Command Code model catalog id (or None = follow session model)
@@ -131,7 +130,7 @@ def write_agent(name: str, front: dict, body: str):
     lines.append("")
     lines.append(body)
 
-    out_path.write_text("\n".join(lines), encoding="utf-8")
+    out_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     return subagents, model_key[1]
 
 

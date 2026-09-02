@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlexanderVegazo26/agents/sdlc-suite/autonomy.schema.json",
+  "title": "SDLC suite autonomy policy",
+  "description": "Validates autonomy.json. additionalProperties is false on every gate object on purpose: an unknown key must be an error, not a silent absence. A typo'd `deploi` reads as 'gate not present', and a gate not present is treated as not authorized — which fails safe on the act gates but silently revokes authorization on the decide gates, where five are meant to be ON. The policy would then block work it was authorized to do, and report that it was blocked, with no way to tell a typo from a deliberate lockdown.",
+  "type": "object",
+  "required": ["mode", "preAuthorized", "onBlocked", "escalation"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": { "type": "string" },
+    "mode": {
+      "enum": ["unattended", "interactive"],
+      "description": "unattended: gates are recorded and the run continues. interactive: a human is present to answer."
+    },
+    "preAuthorized": {
+      "type": "object",
+      "required": ["decide", "act"],
+      "additionalProperties": false,
+      "properties": {
+        "decide": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Gates whose output is a document. Safe to decide and record with reasoning.",
+          "properties": {
+            "$comment": { "type": "string" },
+            "roadmapCommit": { "type": "boolean" },
+            "prioritizationDecision": { "type": "boolean" },
+            "initiativeRejection": { "type": "boolean" },
+            "architectureDirectionChange": { "type": "boolean" },
+            "goNoGoClassification": { "type": "boolean" },
+            "defectFiling": { "type": "boolean" }
+          }
+        },
+        "act": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Gates with irreversible external effect. Default off. Turning one on is a real standing authorization.",
+          "properties": {
+            "$comment": { "type": "string" },
+            "deploy": { "type": "boolean" },
+            "destructiveMigration": { "type": "boolean" },
+            "productionConfigChange": { "type": "boolean" },
+            "incidentFailover": { "type": "boolean" },
+            "loadTestAgainstSharedEnv": { "type": "boolean" },
+            "externalDataSend": { "type": "boolean" },
+            "grantAccess": { "type": "boolean" },
+            "sharedComponentModification": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "onBlocked": {
+      "enum": ["record-and-continue", "halt"],
+      "description": "record-and-continue: emit a blocked-gate entry and carry on with everything that does not depend on the gate."
+    },
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "$comment": { "type": "string" },
+        "channel": {
+          "enum": ["return", "file", "both"],
+          "description": "Where blocked gates surface at end of run."
+        }
+      }
+    }
+  }
+}

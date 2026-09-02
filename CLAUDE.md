@@ -142,10 +142,25 @@ references (`sdlc-suite:requirements-craft`), so text edits are not always ident
 silently stopped registering — dispatch failed with "agent type not found" — and every
 one had CRLF in its frontmatter; normalising to LF restored them in the same session.
 The CRLF was never authored, git's autocrlf introduced it on checkout, which is what
-the "LF will be replaced by CRLF" warnings report. `.gitattributes` now pins `*.md
-text eol=lf`. Two hypotheses were falsified and should not be retried: description
-length (a 480-char broken one sat beside a 659-char working one) and the `INVOKE WHEN:`
-colon-space in unquoted YAML (nine carry it, five broke).
+the "LF will be replaced by CRLF" warnings report. Two hypotheses were falsified and
+should not be retried: description length (a 480-char broken one sat beside a 659-char
+working one) and the `INVOKE WHEN:` colon-space in unquoted YAML (nine carry it, five
+broke).
+
+`.gitattributes` pins `*.md`, and since 2026-09-02 also `*.toml`, `*.json`, `*.py`,
+`*.js`, `*.yaml` and `*.yml` — the extensions `.codex/agents/`, `.copilot/agents/` and
+the `exploration-charter` schema template use, every one of which sat CRLF in the
+working tree with an empty `attr/` because only `*.md` was ever claimed. **Treat that
+pin as half a mitigation.** It governs what git writes on checkout and what it stores
+on commit; it cannot reach the converters, which write to disk outside git entirely.
+Until 2026-09-02 all four `convert-agents.py` scripts wrote in Python's default text
+mode, so a single `python sync-all.py` on Windows re-emitted CRLF into every generated
+definition — measured at 88 of 88 regenerated files, with the CRLF landing in the
+frontmatter itself (`---\r\nname: ...`). Each converter now passes `newline="\n"`
+explicitly, which is the other half. Neither half covers an extensionless definition
+such as `kflow`, nor an untracked one git cannot see, so the check to trust is
+`python sdlc-suite/tools/eol_check.py --check`, which reads the bytes of every file in
+the definition trees rather than an extension list, the index, or `file -b`.
 
 Definitions are read fresh per invocation, so an edit takes effect without a restart —
 which also means a broken one breaks immediately.

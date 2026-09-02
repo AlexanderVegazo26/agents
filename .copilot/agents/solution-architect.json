@@ -4,7 +4,6 @@
   "whenToUse": "Owns system design decisions, architecture boundaries, technology evaluation, API contracts, architectural tradeoffs, ADRs, and non-functional requirement defi…",
   "tools": [
     "bash",
-    "create-task",
     "edit",
     "glob",
     "grep",

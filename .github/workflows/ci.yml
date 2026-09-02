@@ -1,0 +1,243 @@
+# Continuous integration for a repository whose deliverable is prompt-defined
+# agent definitions. There is no application and no unit-test suite, so the
+# checks below are what stands in for one.
+#
+# This workflow is designed to run unmodified on a fork with no repository
+# secret configured. It references no `secrets.*` at all — not even the
+# automatic `GITHUB_TOKEN`, because nothing here needs to call the API. The
+# only token in play is the one Actions injects for `actions/checkout`, and
+# `permissions:` below narrows it to read-only.
+#
+# Two rules govern what is allowed to be a live step here:
+#
+#   1. Only wire a command that exists. A step invoking a script that is not
+#      in the tree fails on arrival for a reason unrelated to the commit, and
+#      a CI file that does that trains people to ignore it. Steps for tools
+#      that are still being built are commented out below, each naming the
+#      change that introduces it.
+#
+#   2. A gate has to be capable of failing. Every live step here was run
+#      against a deliberately broken tree before it was committed, and the
+#      failure observed. One validator that exists — `verify-bodies.py` —
+#      is NOT wired live, because it prints its failures and then exits 0;
+#      see the commented block in the `validate` job for the detail.
+#
+# Third-party actions are pinned to a full commit SHA rather than a tag,
+# because a tag is mutable and a moved tag is a silent supply-chain change.
+# The tag each SHA corresponded to on 2026-09-02 is in the trailing comment;
+# re-resolve it before bumping, do not trust the comment.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only. Nothing in this workflow writes to the repository, comments on a
+# pull request, or publishes an artifact, so nothing needs more than this.
+permissions:
+  contents: read
+
+# A superseded run on the same ref is wasted compute and a slower signal.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Definitions and registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the working tree
+        # Default fetch-depth of 1 is deliberate: every check in this job reads
+        # the tree as it stands, not its history.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      - name: Documented counts match the tree
+        # Every README here has at some point asserted a count that later
+        # stopped being true. This is the check that stops that recurring.
+        run: python sdlc-suite/tools/counts.py --check
+
+      - name: Definitions are LF, measured on the bytes
+        # Five agents once silently stopped registering — dispatch failed with
+        # "agent type not found" — and every one had CRLF in its frontmatter.
+        #
+        # This asserts on `b"\r\n" in path.read_bytes()`, not on
+        # `git ls-files --eol` and not on `file -b`. The index attribute
+        # reports what git would store, not what is on disk, and `file -b`
+        # reports "JSON text data" for a CRLF JSON file. Only the bytes
+        # describe the case that actually reaches a harness.
+        run: python sdlc-suite/tools/eol_check.py --check
+
+      - name: Autonomy policy validates against its schema
+        run: python sdlc-suite/tools/validate-autonomy.py sdlc-suite/autonomy.json
+
+      - name: Workflow scripts parse
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # `find` writes to a file rather than a pipe into the loop, so that
+          # `set -o pipefail` can see find's own exit status. A pipeline
+          # reports only its last stage, which is how a scan that found
+          # nothing gets mistaken for a scan that passed.
+          find .claude/workflows \
+               sdlc-suite/workflows \
+               commandcode-suite/workflows \
+               .kimi-code/workflows \
+               -type f -name '*.js' | sort > "$RUNNER_TEMP/js.txt"
+
+          count=$(wc -l < "$RUNNER_TEMP/js.txt")
+          echo "found $count .js files under the four workflow trees"
+
+          # A glob that matches nothing exits 0 and looks identical to a clean
+          # run. If the trees are ever renamed or emptied, this check would
+          # silently stop checking anything — so zero files is a failure, not
+          # a pass. `.kimi-code/workflows` legitimately holds .py and no .js;
+          # the other three trees are why this number should never be zero.
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no .js files found under the workflow trees — the check has stopped checking anything"
+            exit 1
+          fi
+
+          failed=0
+          while IFS= read -r f; do
+            if ! node --check "$f"; then
+              echo "::error file=${f}::node --check failed"
+              failed=1
+            fi
+          done < "$RUNNER_TEMP/js.txt"
+          exit "$failed"
+
+      - name: commandcode-suite structure
+        run: python commandcode-suite/validate.py
+
+      - name: .kimi-code structure
+        run: python .kimi-code/validate.py
+
+      # ---------------------------------------------------------------------
+      # Not yet live. Each line below names why, and what makes it live.
+      # ---------------------------------------------------------------------
+      #
+      # `commandcode-suite/verify-bodies.py` exists and runs, but it is not
+      # wired above and must not be wired as a bare `run:`. The script has no
+      # `sys.exit` and no `raise SystemExit` anywhere in it: it prints
+      # "BODY MISMATCH: <file>" for each divergence, prints a count, and then
+      # exits 0. Wired plainly it is a permanently green step — the exact
+      # class of decorative gate this file's header rule 2 exists to prevent.
+      # The wrapper below, not the script, is what makes it a gate.
+      #
+      # It is left commented because it is red today for a reason this change
+      # does not own: five agent bodies diverge between `sdlc-suite/agents/`
+      # and `commandcode-suite/agents/` (boundary-prober, journey-orchestrator,
+      # persona-discovery, persona-runner, product-archaeologist). CHG-09
+      # reconciles them. Uncomment once it has.
+      #
+      # - name: commandcode-suite agent bodies match sdlc-suite
+      #   shell: bash
+      #   run: |
+      #     set -euo pipefail
+      #     python commandcode-suite/verify-bodies.py > "$RUNNER_TEMP/vb.log"
+      #     cat "$RUNNER_TEMP/vb.log"
+      #     grep -q ' 0 body mismatches$' "$RUNNER_TEMP/vb.log"
+      #
+      # `sdlc-suite/tools/generate_trees.py --check` exists as of this change
+      # but reports 6 drifted trees, because `sdlc-suite/` is not yet the sole
+      # hand-edited source. CHG-09 makes it green. Note the filename uses an
+      # underscore; the platform review calls it `generate-trees.py`, which
+      # does not resolve.
+      #
+      # - name: Generated trees are in sync
+      #   run: python sdlc-suite/tools/generate_trees.py --check
+      #
+      # `sdlc-suite/tools/validate.py` does not exist in any form. CHG-08
+      # introduces the repository-wide registry validator that replaces the
+      # two per-tree `validate.py` scripts wired above.
+      #
+      # - name: Registry structure (all trees)
+      #   run: python sdlc-suite/tools/validate.py --all-trees
+
+  secrets:
+    name: Secret and identifier scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the working tree
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install gitleaks
+        shell: bash
+        env:
+          # Pinned version plus the published SHA-256 of that exact asset. A
+          # release asset can be replaced; downloading and running an
+          # unverified binary in CI is how a pipeline gets compromised. The
+          # checksum is the thing that makes this safe, not the version pin.
+          GITLEAKS_VERSION: '8.28.0'
+          GITLEAKS_SHA256: 'a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb'
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --silent --show-error --fail --location --retry 3 \
+               --output "$RUNNER_TEMP/gitleaks.tar.gz" "$url"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check --strict -
+          # Extracted into RUNNER_TEMP, never the workspace, so the binary and
+          # the tarball are not themselves part of the tree being scanned.
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      # The binary is used directly rather than `gitleaks/gitleaks-action@v2`
+      # for two reasons. It can be run locally, so the config's rules and
+      # allowlists can each be proven to fire and to be excused before they
+      # are committed — an action cannot. And it needs no token whatsoever,
+      # which satisfies "runs on a fork with no secret" by construction.
+      # `--verbose` because without it a failing run prints only
+      # "leaks found: N" — no rule, no file, no line — which is not something
+      # a contributor can act on.
+      #
+      # `--redact` because this repository is public and so are its Actions
+      # logs. An unredacted finding would publish the exact secret the scan
+      # just caught, in a log that outlives the branch. Checked on
+      # gitleaks 8.28.0: with both flags set the output carries RuleID, File
+      # and Line, and the secret itself appears zero times.
+      - name: Scan the working tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/gitleaks" dir \
+            --config .gitleaks.toml \
+            --no-banner \
+            --redact \
+            --verbose \
+            --exit-code 1 \
+            .
+
+      # Deliberately a working-tree scan, not a history scan.
+      #
+      # `gitleaks git` would additionally catch a secret added in one commit
+      # of a pull request and removed in a later one — a real gap that this
+      # job does not close, and worth knowing about.
+      #
+      # It is not enabled because it would be red on arrival and could only be
+      # made green by a second history rewrite: the hardcoded home paths that
+      # CHG-04 has just removed are still present in earlier commits, and
+      # `.gitleaks.toml` would flag every one of them. The published history
+      # was already confirmed clean of credentials before this change, so the
+      # residual risk is the add-then-remove-within-one-PR case above.
+      #
+      # If the history is ever rewritten again, enable this and set
+      # `fetch-depth: 0` on the checkout step above. It still needs no secret.
+      #
+      # - name: Scan history
+      #   run: '"$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --no-banner --redact --exit-code 1 .'

@@ -4,7 +4,6 @@
   "whenToUse": "Leads production incident response, coordination, mitigation decisions, recovery validation, and post-incident improvement",
   "tools": [
     "bash",
-    "create-task",
     "glob",
     "grep",
     "read",

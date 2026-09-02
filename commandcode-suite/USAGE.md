@@ -28,7 +28,7 @@ Command Code discovers `.commandcode/agents/`, `.commandcode/skills/`, and `.com
 **Option C — run the workflows directly** from this repo, no install at all:
 
 ```bash
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/release-readiness.js" "release 2.4.0"
+node "<repo>/commandcode-suite/workflows/release-readiness.js" "release 2.4.0"
 ```
 
 The workflow scripts resolve their own paths relative to the suite directory, so they work from any `cwd`; run them against the target repo by `cd`-ing into it first.
@@ -60,10 +60,35 @@ A gate absent from the file is treated as not authorized. Uncertainty about reve
 
 ```bash
 cd /path/to/any/project
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/sdlc-feature.js" "Add CSV export to the reporting dashboard" 2>&1 | tee build.log
+node "<repo>/commandcode-suite/workflows/sdlc-feature.js" "Add CSV export to the reporting dashboard" 2>&1 | tee build.log
 ```
 
 Inside a session, say *"run the sdlc-feature workflow on 'Add CSV export…'"* — the session model matches the `commands/sdlc-feature.md` launcher and executes it.
+
+### Output streams
+
+Every workflow writes to **two** streams, and they carry different things:
+
+| Stream | Carries | Written by |
+|---|---|---|
+| **stdout** | the final JSON report — and nothing else | `console.log(JSON.stringify(…))` in each workflow script |
+| **stderr** | progress: `[workflow] …` lines and `=== PHASE: … ===` headers | `log()` and `phase()` in `_runner.js` |
+
+So **`2>/dev/null` gets you only the report**, and it is safe to pipe stdout straight into a parser:
+
+```bash
+node workflows/registry-audit.js 2>/dev/null | jq -e .findings
+```
+
+Dropping `2>/dev/null` also parses — the redirect just suppresses the progress
+lines rather than being required to make the report readable. Keep it that way:
+a `console.log` added to `_runner.js`, or a progress line added to a workflow
+with `console.log` instead of `log()`, silently breaks every consumer that pipes
+the report, and the only symptom is a parser error with no explanation.
+
+To keep both streams interleaved in one log, merge them explicitly — which is
+what the `2>&1 | tee build.log` example above does. Note that the merged file is
+then **not** parseable as JSON.
 
 ### Environment
 

@@ -36,22 +36,22 @@ The suite is self-contained and lives in this repo. Use it from any project by c
 
 ```bash
 # Full lifecycle (requirements → design → build → verify → readiness)
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/sdlc-feature.js" "Add CSV export to the reporting dashboard"
+node "<repo>/commandcode-suite/workflows/sdlc-feature.js" "Add CSV export to the reporting dashboard"
 
 # Four-lens independent review
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/independent-review.js" "the diff on feature/checkout-v2"
+node "<repo>/commandcode-suite/workflows/independent-review.js" "the diff on feature/checkout-v2"
 
 # Release gates → recommendation
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/release-readiness.js" "release 2.4.0"
+node "<repo>/commandcode-suite/workflows/release-readiness.js" "release 2.4.0"
 
 # Persona-based QA (requires a non-production target)
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/persona-qa-sweep.js" --target http://localhost:3000 --env staging
+node "<repo>/commandcode-suite/workflows/persona-qa-sweep.js" --target http://localhost:3000 --env staging
 
 # Reverse-engineer an undocumented system
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/system-archaeology.js" "the billing subsystem"
+node "<repo>/commandcode-suite/workflows/system-archaeology.js" "the billing subsystem"
 
 # Audit this registry
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/registry-audit.js"
+node "<repo>/commandcode-suite/workflows/registry-audit.js"
 ```
 
 Inside a Command Code session, invoke the same scripts via the launcher commands (`commands/*.md`) — the model runs the script and relays the result. See `USAGE.md` for install, cross-repo use, and unattended runs.

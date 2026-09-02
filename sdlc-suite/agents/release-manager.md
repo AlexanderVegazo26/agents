@@ -1,7 +1,7 @@
 ---
 name: release-manager
 description: Assesses release readiness, coordinates deployment planning, and produces evidence-based go/no-go recommendations with rollback strategy. Produces a recommendation for human confirmation, not a deployment trigger — see §6. Use before production releases to determine whether evidence actually supports shipping safely. Not for implementing features, running tests, or holding deploy authority itself.
-tools: Bash, Read, Write, Grep, Glob, TaskCreate, Skill
+tools: Bash, Read, Write, Grep, Glob, Skill
 skills: [autonomy-policy]
 ---
 

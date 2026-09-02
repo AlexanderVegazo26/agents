@@ -1,0 +1,116 @@
+# Gitleaks configuration for this repository.
+#
+# Two jobs. The first is the ordinary one: catch a credential before it is
+# committed, using the upstream default rules. The second is specific to this
+# repository. This tree was published after a history purge (CHG-01) and two
+# content sweeps (CHG-03 private design records, CHG-04 hardcoded home paths).
+# Those were one-time cleanups. The rules below turn them into invariants, so
+# the same class cannot come back in a later commit without CI saying so.
+#
+# Four things to know before editing. Each was measured against gitleaks
+# 8.28.0 on 2026-09-02, not assumed.
+#
+#   1. Never answer a false positive with `disabledRules`. Disabling is global
+#      and silent: the rule stops firing everywhere and nothing in a later diff
+#      shows that it did. A path-scoped allowlist is local, reviewable, and
+#      names the file it excuses. Every allowlist below is scoped by path.
+#
+#   2. Allowlists here are rule-level (`[[rules.allowlists]]`), never global
+#      (`[[allowlists]]` plus `targetRules`). This is not a style preference.
+#      With `[extend] useDefault = true` set, a global allowlist carrying
+#      `targetRules` parses without error and is then SILENTLY IGNORED - the
+#      rule fires on the very file the allowlist named. The rule-level form
+#      works. Both were run against the same fixture before this was written.
+#
+#   3. Custom rules deliberately carry no `keywords`. `keywords` is a
+#      lowercased pre-filter: a rule that has one only evaluates its regex on
+#      fragments containing it, so a wrong keyword disables the rule with no
+#      error at all. The scan is fast enough here without them.
+#
+#   4. Scope allowlists by EXACT FILENAME, never by directory. `docs/**` would
+#      mean the next document added there leaks silently, which is the failure
+#      this whole file exists to prevent. Adding a third excused file is a
+#      deliberate edit here with a stated reason, not a wildcard.
+#
+# Run locally with:
+#   gitleaks dir --config .gitleaks.toml --no-banner --redact .
+
+title = "agents - upstream defaults plus this repository's own identifiers"
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Repository identifier rules
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "agents-employer-name"
+description = "Employer name - this repository is public and unaffiliated; the author's employer does not belong in it"
+regex = '''(?i)\btapcheck\b'''
+tags = ["repo-identifier", "employer", "chg-01"]
+  [[rules.allowlists]]
+  description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
+  paths = [
+    '''(^|/)docs/platform-review-2026-09-01\.md$''',
+    '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
+  ]
+# A note on the obvious objection: this file names the identifier it defends
+# against, so the config itself publishes it. That is accepted here and only
+# here, for two reasons. The name is already present in `docs/` - the retained
+# platform review quotes it - so the rule adds no exposure the tree does not
+# already carry. And a rule kept out of the committed config would not run in
+# CI or on a fork at all, which is the worst of the three options.
+#
+# If you fork this for an organisation whose name is NOT otherwise in your
+# tree, do not simply substitute it here - that would introduce it. Leave this
+# rule out of the committed config and layer a private one instead:
+#
+#   .gitleaks.local.toml  ->  [extend] path = ".gitleaks.toml"  plus your rule
+#   scan with             ->  gitleaks dir --config .gitleaks.local.toml .
+#
+# and gitignore it. `.gitignore` already reserves `redaction/denylist.txt` for
+# exactly this class of adopter-specific instance data. Note `useDefault` and
+# `path` are mutually exclusive, so a layered config extends this file and
+# inherits the upstream defaults through it.
+[[rules]]
+id = "agents-private-project-name"
+description = "Private project codename - a separate unreleased repository these agents build against, not a component of this one"
+regex = '''(?i)\b(?:snagit[-_ ]?clone|snapforge|nawi(?:[-_]vex)?)\b'''
+tags = ["repo-identifier", "private-project", "chg-03"]
+  [[rules.allowlists]]
+  description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back. `.gitignore` is excused too: it cannot exclude a directory without naming it, which is the one place the literal is structurally required."
+  paths = [
+    '''(^|/)docs/platform-review-2026-09-01\.md$''',
+    '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
+    '''(^|/)\.gitignore$''',
+  ]
+[[rules]]
+id = "agents-absolute-home-path"
+description = "Absolute home directory path - machine-specific, unusable by anyone else, and it leaks a real account name"
+regex = '''(?i)(?:[a-z]:[\\/]{1,2}users[\\/]{1,2}|/users/|/home/)([a-z0-9._][a-z0-9._-]{0,62})'''
+secretGroup = 1
+tags = ["repo-identifier", "home-path", "chg-04"]
+  [[rules.allowlists]]
+  description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
+  paths = [
+    '''(^|/)docs/platform-review-2026-09-01\.md$''',
+    '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
+  ]
+  [[rules.allowlists]]
+  description = "Placeholder account names. CHG-04's fix replaces each real path with a placeholder plus a substitute-your-own-path sentence, so the rule must not fire on the fix itself. These regexes match the extracted account name (secretGroup 1), not the whole path. Delimiter-style placeholders (<you>, dollar-brace USER, percent USERPROFILE percent) need no entry and must not be given one: the account-name group starts [a-z0-9._], so the rule cannot produce them as a secret at all, and an entry for them would be an allowlist nothing reads. Verified 2026-09-02, gitleaks 8.28.0 - with this regex stripped, /home/username and /Users/you both fire; with it present, neither does."
+  regexTarget = "secret"
+  regexes = [
+    '''(?i)^(you|your|yourname|youruser|username|user|me|someone|example|placeholder|adopter|name|home)$''',
+  ]
+[[rules]]
+id = "agents-vex-requirement-id"
+description = "Requirement identifier from the private project's specification (DEC-VEX.1, FR-VEX.1-14, NFR-VEX.2, AE-VEX.2)"
+regex = '''\b[A-Za-z]{1,6}-VEX\.[0-9A-Za-z]'''
+tags = ["repo-identifier", "private-project", "chg-03"]
+  [[rules.allowlists]]
+  description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
+  paths = [
+    '''(^|/)docs/platform-review-2026-09-01\.md$''',
+    '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
+  ]

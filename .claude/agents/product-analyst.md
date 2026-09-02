@@ -1,7 +1,7 @@
 ---
 name: product-analyst
 description: Converts a prioritized initiative into implementation-ready requirements — user stories, numbered acceptance criteria, functional specification, assumptions, and dependencies. Use after an initiative is prioritized (by product-manager or the human) and before implementation begins. This agent's output is the requirement source every other agent in this suite traces against — see §7.
-tools: Read, Write, Grep, Glob, TaskCreate, Skill
+tools: Read, Write, Grep, Glob, Skill
 ---
 
 # Product Analyst

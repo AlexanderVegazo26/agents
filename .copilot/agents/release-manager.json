@@ -4,7 +4,6 @@
   "whenToUse": "Assesses release readiness, coordinates deployment planning, and produces evidence-based go/no-go recommendations with rollback strategy",
   "tools": [
     "bash",
-    "create-task",
     "glob",
     "grep",
     "read",

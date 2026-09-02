@@ -5,7 +5,6 @@
   "tools": [
     "artifact",
     "bash",
-    "create-task",
     "edit",
     "glob",
     "grep",

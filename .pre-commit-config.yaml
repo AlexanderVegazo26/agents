@@ -1,0 +1,78 @@
+# Local hooks, so the two failures that are most expensive to discover late
+# arrive before the push rather than after it.
+#
+#   pip install pre-commit && pre-commit install
+#
+# Run against everything once, which `pre-commit install` does not do:
+#
+#   pre-commit run --all-files
+#
+# A note on trust, because this file executes code on your machine.
+#
+# A `rev:` pointing at a tag is not a pin. A tag is mutable — whoever controls
+# the upstream repository can move `v8.28.0` to a different commit, and every
+# contributor who runs `pre-commit` afterwards silently executes the new code.
+# `rev:` below is therefore the full commit SHA that the tag pointed at when
+# this was written, which is immutable. The tag is recorded in the comment for
+# readability only; re-resolve it yourself before bumping rather than trusting
+# the comment.
+#
+# The second hook is `repo: local` with `language: system`. It downloads
+# nothing and builds nothing — it runs a script that is already in this tree
+# and that you can read.
+
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # ---------------------------------------------------------------------
+  # Secret and identifier scan, using the same .gitleaks.toml that CI uses.
+  #
+  # Gitleaks resolves `.gitleaks.toml` from the repository root on its own,
+  # so the rules and allowlists here are identical to the ones in CI. That
+  # matters: a local hook that scanned with different rules would give a
+  # clean result for a commit that CI then rejects, which is worse than no
+  # local hook at all.
+  #
+  # This hook scans STAGED CONTENT (`--staged`), not the working tree, so it
+  # sees exactly what the commit would contain.
+  #
+  # `language: golang` means pre-commit builds gitleaks from source the first
+  # time, which needs a Go toolchain installed. If you would rather use a
+  # gitleaks binary you already have on PATH, swap `id: gitleaks` for
+  # `id: gitleaks-system` — same entrypoint, no build step, but then the
+  # version is whatever you happen to have rather than the pinned one.
+  # ---------------------------------------------------------------------
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 4fb43823ef3d152d239e92d7d5cb04783b548062 # v8.28.0
+    hooks:
+      - id: gitleaks
+
+  # ---------------------------------------------------------------------
+  # Line endings, measured on the bytes.
+  #
+  # Five agents once silently stopped registering — dispatch failed with
+  # "agent type not found" — and every one had CRLF in its frontmatter.
+  # `.gitattributes` governs what git writes on checkout and stores on
+  # commit; it does not reach a converter script writing to disk outside
+  # git, which is how the CRLF got there in the first place.
+  #
+  # `pass_filenames: false` and `always_run: true` because the check is over
+  # the whole tree by design. Scoping it to the staged files would miss a
+  # file a converter rewrote as a side effect of the change being committed,
+  # which is precisely the failure mode.
+  #
+  # `language: system` is kept rather than the newer `unsupported` spelling,
+  # because `minimum_pre_commit_version` above is 3.5.0 and 3.x does not know
+  # the new name. pre-commit 4.x accepts `system` and translates it
+  # internally, so both work today — but upstream has that translation marked
+  # for removal, so if a future major stops accepting `system`, this is the
+  # line to change and the version floor to raise with it.
+  # ---------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: definitions-are-lf
+        name: Definitions are LF (bytes on disk, not the git index)
+        entry: python sdlc-suite/tools/eol_check.py --check
+        language: system
+        pass_filenames: false
+        always_run: true

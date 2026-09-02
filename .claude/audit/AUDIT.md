@@ -1,6 +1,6 @@
 # Registry Audit — `.claude` agent/skill suite
 
-Audited: 2026-08-04 · Root: `C:\Users\avega\Documents\personal\agents\.claude` · Read-only through Phase 5.
+Audited: 2026-08-04 · Root: `<repo>/.claude` · Read-only through Phase 5.
 
 > ## REMEDIATION STATUS — all 15 findings applied 2026-08-04
 >
@@ -171,7 +171,7 @@ At least **36 of 51** skills are named by no agent body; 21 of those are named b
 ### LOW
 
 #### `PORT-01` — User-global `Bash` hook depends on a user-local binary
-**Evidence:** `%USERPROFILE%\.claude\settings.json` registers `PreToolUse` matcher `Bash` → command `rtk hook claude`. `rtk` resolves to `C:\Users\avega\.local\bin\rtk.exe`. Ten of 15 agents hold `Bash`. **Impact:** on a second machine without `rtk`, every `Bash` call in the suite hits a missing-binary hook. Outside the audited tree, so advisory — but it is the registry's only genuine "breaks on a second machine" item, and it is *not* in the project tree, which is a point in the project's favor.
+**Evidence:** `%USERPROFILE%\.claude\settings.json` registers `PreToolUse` matcher `Bash` → command `rtk hook claude`. `rtk` resolves to `<user-home>/.local/bin/rtk`. Ten of 15 agents hold `Bash`. **Impact:** on a second machine without `rtk`, every `Bash` call in the suite hits a missing-binary hook. Outside the audited tree, so advisory — but it is the registry's only genuine "breaks on a second machine" item, and it is *not* in the project tree, which is a point in the project's favor.
 
 #### `SETTINGS-01` — Dangling MCP reference
 **Evidence:** `settings.local.json` sets `disabledMcpjsonServers: ["webmcp"]`; no `.mcp.json` exists anywhere under the repo. Harmless; remove for tidiness.

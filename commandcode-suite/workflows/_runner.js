@@ -12,7 +12,7 @@
  * so multi-line prompts with embedded quotes need no shell escaping.
  */
 
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
@@ -23,14 +23,21 @@ const AGENTS_DIR = path.join(SUITE_ROOT, 'agents')
 const DEFAULT_TIMEOUT_MS = Number(process.env.CMDC_AGENT_TIMEOUT_MS || 3600 * 1000)
 
 // ---------------------------------------------------------------------------
-// Logging
+// Logging — progress on stderr, report on stdout.
+//
+// The workflows print a machine-readable JSON report to stdout, and the
+// commands/*.md launchers tell the consumer to parse it. Progress lines
+// therefore must NOT share that stream: piping a workflow's stdout to a JSON
+// parser failed, because the report was preceded by the [workflow] and
+// === PHASE: === lines. Every progress write in this file goes to stderr;
+// there should be no console.log here at all. See USAGE.md, 'Output streams'.
 // ---------------------------------------------------------------------------
 function log(msg) {
-  console.log(`[workflow] ${msg}`)
+  console.error(`[workflow] ${msg}`)
 }
 
 function phase(name) {
-  console.log(`\n=== PHASE: ${name} ===`)
+  console.error(`\n=== PHASE: ${name} ===`)
 }
 
 // ---------------------------------------------------------------------------
@@ -254,29 +261,61 @@ async function pipeline(items, lensFn, refuteFn) {
 }
 
 // ---------------------------------------------------------------------------
-// Git worktree isolation for build phases (mirrors the original 'worktree'
-// isolation). Falls back to the current tree when not a git repo.
+// git — a real git subprocess.
+//
+// Deliberately NOT runCmdc: runCmdc spawns the `cmdc` LLM CLI, so handing it
+// git arguments can never succeed. That was the defect here — the repository
+// probe always failed, every build fell through to the caller's shared working
+// tree, and it said so with a plausible "not a git repository" that nobody
+// investigated. Isolation was inert while reporting a benign reason.
 // ---------------------------------------------------------------------------
-async function withWorktree(fn, { cwd = process.cwd() } = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cmdcode-suite-'))
-  const { code, out } = await runCmdc(['rev-parse', '--is-inside-work-tree'], { cwd })
-  const isGit = code === 0 && out.trim() === 'true'
+function runGit(args, cwd) {
+  return spawnSync('git', args, {
+    cwd: cwd || process.cwd(),
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Git worktree isolation for build phases (mirrors the original 'worktree'
+// isolation).
+//
+// Contract: `fn(dir, { isolated })`. The second argument tells the caller
+// whether isolation was real, so a phase artifact can record it rather than
+// asserting it. Outside a git repository the helper degrades to the shared
+// tree and says so; inside one, a failed `worktree add` THROWS rather than
+// degrading, because concurrent builders sharing one tree is exactly the
+// failure this helper exists to prevent.
+// ---------------------------------------------------------------------------
+async function withWorktree(fn, { cwd = process.cwd(), label = 'build' } = {}) {
+  const probe = runGit(['rev-parse', '--is-inside-work-tree'], cwd)
+  const isGit = probe.status === 0 && String(probe.stdout || '').trim() === 'true'
   if (!isGit) {
-    const result = await fn(cwd)
-    return { ...result, worktreeDir: null, note: 'not a git repo — build ran in the current working tree; review the diff before merging' }
+    log(`worktree isolation unavailable for ${label}: not a git repository (${cwd})`)
+    const result = await fn(cwd, { isolated: false })
+    return { ...result, worktreeDir: null, isolated: false, note: 'not a git repo — build ran in the current working tree; review the diff before merging' }
   }
+
+  // Created only once isolation is actually going to be attempted, so neither
+  // the degraded path nor the throw path leaks a temp directory.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cmdcode-suite-'))
   const worktreeDir = path.join(tmp, 'wt')
-  const add = await runCmdc(['worktree', 'add', '--detach', worktreeDir, 'HEAD'], { cwd })
-  if (add.code !== 0) {
-    const result = await fn(cwd)
-    return { ...result, worktreeDir: null, note: `git worktree add failed (${add.err.slice(0, 200)}) — build ran in the current tree; review the diff before merging` }
+  const add = runGit(['worktree', 'add', '--detach', worktreeDir, 'HEAD'], cwd)
+  if (add.status !== 0) {
+    fs.rmSync(tmp, { recursive: true, force: true })
+    const why = String(add.stderr || '').trim() || (add.error && add.error.message) || `git exited ${add.status}`
+    throw new Error(`worktree add failed for ${label}: ${why}`)
   }
+
   try {
-    const result = await fn(worktreeDir)
-    return { ...result, worktreeDir }
+    const result = await fn(worktreeDir, { isolated: true })
+    return { ...result, worktreeDir, isolated: true }
   } finally {
-    // Best-effort cleanup; a lingering worktree dir is harmless and documented.
-    await runCmdc(['worktree', 'remove', '--force', worktreeDir], { cwd }).catch(() => {})
+    // NOTE: this destroys the worktree, so anything the callback WROTE to disk
+    // is gone once withWorktree returns — only its return value survives.
+    runGit(['worktree', 'remove', '--force', worktreeDir], cwd)
     fs.rmSync(tmp, { recursive: true, force: true })
   }
 }
@@ -288,6 +327,7 @@ module.exports = {
   phase,
   runAgent,
   runCmdc,
+  runGit,
   loadAgent,
   parallel,
   pipeline,
