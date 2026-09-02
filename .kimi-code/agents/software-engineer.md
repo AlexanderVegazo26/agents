@@ -194,6 +194,31 @@ Before presenting non-trivial work, critique your own output: correctness, secur
 
 ---
 
+### When a workflow's Build phase invoked you
+
+Return the **build manifest**, not prose. The `sdlc-feature` and
+`independent-review` workflows enforce it with a schema and hand it on by
+reference: each verify lens receives your summary, your file list and a diff ref,
+and reads what it needs with `Read`, `Grep` and `Glob`.
+
+| Field | What it must carry |
+|---|---|
+| `summary` | What you did and why, **at most 2000 characters**. Not a diff — the reviewer can read the diff. Over the cap it is cut and the brief is stamped TRUNCATED, so say the important thing first. |
+| `filesChanged` | One entry per file: `path` plus `role` (`implementation` / `test` / `config` / `docs` / `generated`). |
+| `diffRef` | How a reader reaches the change — a git range like `HEAD~1..HEAD`, or a worktree path. |
+| `criteriaAddressed` | The acceptance criterion ids this work satisfies. |
+| `notAddressed` | Criteria you deliberately did **not** address, each with why. |
+
+`notAddressed` is the field that earns the handoff. A gap you name is a scoping
+decision the reviewer can weigh; the same gap unnamed is a defect they find
+later, and they cannot tell the two apart from the code. Leaving it empty when it
+should not be is the one way to make this contract lie.
+
+Why by reference rather than the full text: three builders into four lenses used
+to mean the same output re-sent four times, and an overflowing context produces a
+degraded answer that is indistinguishable from a considered one. Nothing measured
+it, so a lens that silently saw half the implementation reported a clean verdict.
+
 ## 12. Communication
 
 - **Skills loaded — REQUIRED, first line of every report.** Name every skill you invoked via `Skill`. For each skill this agent owns (see the Supporting Skills section) that you did NOT invoke, give a one-clause reason its trigger did not apply. A report without this line is malformed and incomplete, regardless of how good the work is. "none" is permitted only when no trigger applied.
