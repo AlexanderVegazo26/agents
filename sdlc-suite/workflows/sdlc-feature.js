@@ -78,7 +78,34 @@ function resolvedPath(v) {
 function runtimeDirOf(v) {
   const p = resolvedPath(v)
   if (!p || p.includes('..')) return null
+  // Reject UNC and protocol-relative roots. Security review demonstrated that
+  // a `\\host\share\workflows` or `//host/share/workflows` value passed the
+  // `..`-and-tail check, and `path.join` preserves a UNC prefix intact — so on
+  // Windows the bridge would `require` `_policy.js` over SMB, and the gate table
+  // it returns is prefixed to every downstream agent prompt. The platform's own
+  // modules never live on a share, so this rejects no legitimate value.
+  //
+  // This validates SHAPE only. A vm-sandboxed script has no `process`, no `fs`
+  // and no plugin root, so it has no trusted anchor and cannot check LOCATION.
+  // That limit is real: the durable fix is for the command layer to pass
+  // `runtimeDir` explicitly instead of letting one argument select two things.
+  if (/^(\\\\|\/\/)/.test(p)) return null
   return /[\\/]workflows[\\/]?$/.test(p) ? p.replace(/[\\/]+$/, '') : null
+}
+
+// `resume` names a directory the recorder reads phase artifacts out of, and
+// those artifacts are replayed into downstream prompts carrying the authority of
+// "this is what your own earlier phases produced". Security review showed
+// `../../../outside/planted` resolving to an attacker-authored run whose
+// acceptance criteria were then adopted wholesale, and a manifest-supplied
+// `artifact` path reading an arbitrary JSON file into agent context. A run id is
+// a single path segment; anything else is rejected here, and `_state.js`
+// enforces containment independently on its side.
+function resumeIdOf(v) {
+  const p = resolvedPath(v)
+  if (!p) return null
+  if (p.includes('..') || p.includes('/') || p.includes('\\')) return null
+  return p
 }
 
 const POLICY_PATH = resolvedPath(args?.policy)

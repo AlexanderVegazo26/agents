@@ -106,6 +106,65 @@ test('the per-builder summary cap is ANNOUNCED, never applied silently', () => {
   assert.ok(r.text.includes('backend'), 'the marker names which builder was cut')
 })
 
+test('THE budget invariant: chars <= cap, across the dimension it is stated over', () => {
+  // This assertion used to exist only on the 40-file fixture, where the marker
+  // stays small, `room` is comfortably positive, and the `clamp(body, 0)` path is
+  // never reached — so the module could violate its central contract while the
+  // suite stayed green. `qa-techniques`: a fixture defines the test's blind spot,
+  // so vary the dimension the invariant is stated over. That dimension is FILE
+  // COUNT, not summary size.
+  //
+  // Measured against the pre-fix code: 900 files / performance returned 19,236
+  // chars against a 16,000 cap while reporting `truncated: true`.
+  for (const lens of Object.keys(b.LENS_BUDGETS)) {
+    for (const nFiles of [0, 1, 40, 200, 900, 4000]) {
+      for (const sumLen of [10, 1_000, 200_000]) {
+        const m = {
+          label: 'backend', summary: 'x'.repeat(sumLen), diffRef: 'HEAD~1..HEAD',
+          filesChanged: Array.from({ length: nFiles },
+            (_, i) => ({ path: `src/some/deeper/path/backend-${i}.ts`, role: 'implementation' })),
+          criteriaAddressed: ['AC-1'],
+        }
+        const r = b.buildBrief({ manifests: [m], lens, criteria: 'AC-1 export as CSV' })
+        assert.ok(r.chars <= b.LENS_BUDGETS[lens],
+          `${lens} / ${nFiles} files / ${sumLen}-char summary: ${r.chars} > ${b.LENS_BUDGETS[lens]}`)
+      }
+    }
+  }
+})
+
+test('a cut is always announced — no combination truncates silently', () => {
+  for (const nFiles of [0, 1, 900]) {
+    for (const sumLen of [10, 200_000]) {
+      const m = {
+        label: 'backend', summary: 'x'.repeat(sumLen), filesChanged:
+          Array.from({ length: nFiles }, (_, i) => ({ path: `src/f${i}.ts`, role: 'implementation' })),
+        criteriaAddressed: [],
+      }
+      const full = b.buildBrief({ manifests: [m], lens: 'qa' })
+      // If anything was dropped, the marker must be present. The converse — a
+      // marker with nothing dropped — would be noise, and is covered by the
+      // "a small brief is not truncated" case above.
+      if (full.truncated) {
+        assert.ok(full.text.includes('TRUNCATED'),
+          `${nFiles} files / ${sumLen} chars: truncated but no marker`)
+      }
+    }
+  }
+})
+
+test('clamp handles n <= 1 — the negative-index slice that caused the overrun', () => {
+  // `s.slice(0, n - 1)` with n = 0 is `s.slice(0, -1)`: everything but the last
+  // character, not an empty string. That single expression is why the budget
+  // silently failed to apply.
+  const r = b.buildBrief({
+    manifests: [{ label: 'x', summary: 'y'.repeat(5_000), filesChanged: [], criteriaAddressed: [] }],
+    lens: 'performance', criteria: 'z'.repeat(15_900), budget: 16_000,
+  })
+  assert.ok(r.chars <= 16_000 || r.overBudget,
+    'either it fits, or overBudget says plainly that the cap was unsatisfiable')
+})
+
 test('the file list is dropped BEFORE any summary is cut', () => {
   // A lens can recover a file list with Glob. It cannot recover a builder's
   // reasoning from anywhere, so reasoning is the last thing to go.

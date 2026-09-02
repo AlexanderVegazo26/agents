@@ -84,42 +84,32 @@ jobs:
       - name: Autonomy policy validates against its schema
         run: python sdlc-suite/tools/validate-autonomy.py sdlc-suite/autonomy.json
 
-      - name: Workflow scripts parse
-        shell: bash
+      - name: Workflow scripts compile
+        # NOT `node --check`. Measured on Node v26.1.0: it exits 0 on a dropped
+        # brace, an unterminated string, an unterminated block comment, top-level
+        # await and blatant garbage — for every file here — because each begins
+        # `export const meta = {`, which triggers ESM detection and defers the
+        # parse. It was wired as this job's only syntax gate for two trees and
+        # was inert on all of them. Independent review caught it by running it
+        # against a deliberately broken file, which is what rule 2 in this
+        # header requires and what did not happen the first time.
+        #
+        # `syncheck.mjs` compiles via the host's own path instead, detects the
+        # CommonJS dialect that commandcode-suite uses, and carries a --selftest
+        # that proves it can fail before any green result from it is trusted.
         run: |
-          set -euo pipefail
+          node sdlc-suite/tools/syncheck.mjs --selftest
+          node sdlc-suite/tools/syncheck.mjs             sdlc-suite/workflows .claude/workflows commandcode-suite/workflows
 
-          # `find` writes to a file rather than a pipe into the loop, so that
-          # `set -o pipefail` can see find's own exit status. A pipeline
-          # reports only its last stage, which is how a scan that found
-          # nothing gets mistaken for a scan that passed.
-          find .claude/workflows \
-               sdlc-suite/workflows \
-               commandcode-suite/workflows \
-               .kimi-code/workflows \
-               -type f -name '*.js' | sort > "$RUNNER_TEMP/js.txt"
-
-          count=$(wc -l < "$RUNNER_TEMP/js.txt")
-          echo "found $count .js files under the four workflow trees"
-
-          # A glob that matches nothing exits 0 and looks identical to a clean
-          # run. If the trees are ever renamed or emptied, this check would
-          # silently stop checking anything — so zero files is a failure, not
-          # a pass. `.kimi-code/workflows` legitimately holds .py and no .js;
-          # the other three trees are why this number should never be zero.
-          if [ "$count" -eq 0 ]; then
-            echo "::error::no .js files found under the workflow trees — the check has stopped checking anything"
-            exit 1
-          fi
-
-          failed=0
-          while IFS= read -r f; do
-            if ! node --check "$f"; then
-              echo "::error file=${f}::node --check failed"
-              failed=1
-            fi
-          done < "$RUNNER_TEMP/js.txt"
-          exit "$failed"
+      - name: Runtime wiring, per workflow tree
+        # `_wiring.test.js` defaults to `sdlc-suite/workflows` and accepts
+        # `--src`. CI never passed it, so the suite reported 60/60 green while
+        # `.claude/workflows` — the live tree for bare-name invocation here —
+        # carried none of the CHG-16..22 wiring for six commits. Both trees are
+        # named explicitly; a tree absent from this list is a tree nothing checks.
+        run: |
+          node sdlc-suite/workflows/_wiring.test.js --src sdlc-suite/workflows
+          node sdlc-suite/workflows/_wiring.test.js --src .claude/workflows
 
       - name: Runtime module tests
         shell: bash

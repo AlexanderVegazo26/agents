@@ -57,6 +57,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC_AGENTS = ROOT / "sdlc-suite" / "agents"
 SRC_SKILLS = ROOT / "sdlc-suite" / "skills"
+SRC_WORKFLOWS = ROOT / "sdlc-suite" / "workflows"
 
 NS = "sdlc-suite:"
 
@@ -205,12 +206,16 @@ class Target:
     #: `version` sits second, matching where the source carries it, so the
     #: Markdown trees are byte-comparable against sdlc-suite/ line for line.
     key_order: tuple = ("name", "version", "description", "tools", "skills", "model")
+    #: also generate `workflows/*.js`. True only where the tree is a straight
+    #: de-namespaced copy of the canonical scripts — see desired_files().
+    workflows: bool = False
 
 
 TARGETS = {
     # The live Claude Code project tree. Bare names; same Markdown shape as the
     # source, so the only transform is de-namespacing.
-    ".claude": Target(".claude", namespaced=False, agent_ext=".md", agent_format="markdown"),
+    ".claude": Target(".claude", namespaced=False, agent_ext=".md", agent_format="markdown",
+                      workflows=True),
 
     # Command Code. Keeps the namespace — it is the one port whose references are
     # already namespaced, and changing that is a behavioural decision, not a
@@ -426,12 +431,36 @@ def desired_files(t: Target) -> dict[Path, str]:
             raw = _read_lf(f)
             out[rel] = raw if t.namespaced else denamespace(raw)
 
+    # Workflow scripts, for the targets that are a straight de-namespaced copy.
+    #
+    # This was left out originally, and independent review found the cost by
+    # measurement: the CHG-16..22 runtime wiring landed in `sdlc-suite/workflows/`
+    # only, `.claude/workflows/` stayed byte-identical to its pre-change state
+    # through six commits, and NO gate in the repository noticed — appending a
+    # line to a generated workflow passed all seven checks. `.claude/` is the
+    # live tree for bare-name invocation in this repository, so the two copies
+    # silently did different things, which is precisely what CLAUDE.md exists to
+    # prevent.
+    #
+    # Only `.claude/` opts in. `commandcode-suite/workflows/` and
+    # `.kimi-code/workflows/` are NOT copies — they target different runtimes
+    # (a `cmdc` subprocess runner and Python respectively) and are genuinely
+    # hand-maintained. Generating them from these scripts would be wrong, and
+    # saying so here is better than a whitelist that quietly omits them.
+    if t.workflows:
+        for f in sorted(SRC_WORKFLOWS.glob("*.js")):
+            if f.name.endswith(".test.js"):
+                continue        # suites stay with the canonical tree
+            raw = _read_lf(f)
+            out[Path("workflows") / f.name] = raw if t.namespaced else denamespace(raw)
+
     return out
 
 
 def existing_files(base: Path, t: Target) -> dict[Path, str]:
     out: dict[Path, str] = {}
-    for sub in ("agents", "skills"):
+    subs = ["agents", "skills"] + (["workflows"] if t.workflows else [])
+    for sub in subs:
         d = base / sub
         if not d.is_dir():
             continue
@@ -439,6 +468,8 @@ def existing_files(base: Path, t: Target) -> dict[Path, str]:
             if not f.is_file():
                 continue
             if sub == "agents" and (t.agent_ext is None or f.suffix != t.agent_ext):
+                continue
+            if sub == "workflows" and (f.suffix != ".js" or f.name.endswith(".test.js")):
                 continue
             try:
                 # read_bytes, NOT read_text: Python text mode universal-newline-

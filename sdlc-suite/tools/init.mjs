@@ -163,7 +163,19 @@ function show(p) {
  * path, so it is validated by allowlist and rejected rather than sanitized.
  * `..`, separators, absolute forms, NUL and Windows drive letters all fail here.
  */
+const RESERVED_WINDOWS = new Set([
+  'con', 'prn', 'aux', 'nul',
+  ...Array.from({ length: 9 }, (_, i) => `com${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `lpt${i + 1}`),
+])
+
 function validateProject(name) {
+  // Windows reserved device names pass every other check and then fail at
+  // mkdir with an opaque error instead of the clean message the other
+  // rejections get. Cheap to name explicitly.
+  if (typeof name === 'string' && RESERVED_WINDOWS.has(name.toLowerCase().split('.')[0])) {
+    return `"${name}" is a reserved device name on Windows`
+  }
   if (typeof name !== 'string' || name.length === 0) return 'a project name is required'
   if (name.length > 64) return `project name is ${name.length} characters; maximum is 64`
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {

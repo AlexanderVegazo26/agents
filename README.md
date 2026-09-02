@@ -14,9 +14,9 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 |---|---|
 | `CLAUDE.md` | This repository's instance configuration. Points at `sdlc-suite/ROUTING.md`. |
 | [`sdlc-suite/ROUTING.md`](sdlc-suite/ROUTING.md) | **The routing policy.** Read this first — it's what makes the trigger table fire for a caller, not just for `orchestrator`. |
-| `.claude/agents/`, `.claude/skills/`, `.claude/workflows/` | **Live** definitions backing the bare names (`qa-engineer`) when working in this repository. Generated from `sdlc-suite/`. |
+| `.claude/agents/`, `.claude/skills/`, `.claude/workflows/` | **Live** definitions backing the bare names (`qa-engineer`) when working in this repository. Generated from `sdlc-suite/` — agents, skills and workflows all three. |
 | `sdlc-suite/` | **The canonical, hand-edited tree.** Packaged as a Claude Code plugin, backing `sdlc-suite:*` names, published through `.claude-plugin/marketplace.json`. Has its own [README](sdlc-suite/README.md) and `USAGE.md`. |
-| `commandcode-suite/`, `.kimi-code/`, `.codex/`, `.copilot/`, `.agents/` | Ports of the same material to other harnesses, generated from `sdlc-suite/` by `sdlc-suite/tools/generate_trees.py`. **Not invocable from Claude Code** — stated by the maintainer; not independently exercised here. |
+| `commandcode-suite/`, `.kimi-code/`, `.codex/`, `.copilot/`, `.agents/` | Ports to other harnesses. Their `agents/` and `skills/` are generated from `sdlc-suite/`; their runners, commands and workflow scripts are hand-maintained, because those target different runtimes. **Not invocable from Claude Code** — stated by the maintainer; not independently exercised here. |
 | `.claude/audit/` | The registry's own audit report and remediation record. Not shipped with the plugin. |
 
 <!-- counts:start -->
@@ -46,7 +46,9 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 
 ## Two things worth knowing before you use this
 
-**The duplication is a hazard, not just redundancy.** The same agents exist in several trees. Editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the only hand-edited tree; `.claude/`, `commandcode-suite/`, `.kimi-code/`, `.copilot/` and `.codex/` are all generated from it by `sdlc-suite/tools/generate_trees.py`, and a hand edit to any of them is silently overwritten on the next generation run. `.agents/` ships skills only, with no agents directory at all — that is deliberate, not a gap.
+**The duplication is a hazard, not just redundancy.** The same agents exist in several trees, and editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the hand-edited source; the `agents/` and `skills/` of every other tree are generated from it, as is `.claude/workflows/`, and a hand edit to any of those is silently overwritten. `.agents/` ships skills only, with no agents directory — deliberate, not a gap.
+
+The scope is worth knowing precisely, because getting it wrong has already cost something here: `commandcode-suite/workflows/`, `.kimi-code/workflows/`, the per-harness runners and every README are **not** generated. A change to a workflow script has to be made in three places by hand. See `CLAUDE.md` for the table and `CONTRIBUTING.md` for what CI checks.
 
 **The examples are load-bearing, not illustrative.** This material was developed against a real application, in a separate repository, over real reviews and real failures. Where an agent says "this is how a test lies to you", that is a defect someone shipped past, not a hypothetical.
 

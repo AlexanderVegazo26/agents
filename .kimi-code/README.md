@@ -23,7 +23,7 @@ This directory contains the `.claude/` SDLC Agent Suite converted to the current
 └── validate.py          # Structural sanity check
 ```
 
-The 60 domain skills are mirrored from `.claude/skills/` because the current Kimi Code only auto-discovers `.kimi-code/skills/` and `.agents/skills/`, not `.claude/skills/`. The 6 flow skills were rebuilt from `.claude/workflows/*.js`. Shared per-project memory remains in `.claude/memory/` (see `.kimi-code/memory/README.md`).
+The 60 domain skills are generated from `sdlc-suite/skills/` (the canonical source; they were mirrored from `.claude/skills/` before that tree itself became generated) because the current Kimi Code only auto-discovers `.kimi-code/skills/` and `.agents/skills/`, not `.claude/skills/`. The 6 flow skills were rebuilt from the canonical workflow scripts and are local to this port — the generator is told never to prune them. Shared per-project memory remains in `.claude/memory/` (see `.kimi-code/memory/README.md`).
 
 ## Quick start
 
@@ -98,18 +98,24 @@ See `.kimi-code/workflows/README.md` for details.
 
 ## Keeping everything in sync
 
-If you edit the source `.claude/` suite:
+**Do not edit this tree.** Its `agents/` and `skills/` are generated from
+`sdlc-suite/`, the single hand-edited source. An edit here raises no error and is
+overwritten on the next run.
 
 ```bash
-# After editing .claude/agents/*.md
-python .kimi-code/convert-agents.py
-
-# After editing or adding .claude/skills/
-python .kimi-code/sync-skills.py
-
-# Optional sanity check
-python .kimi-code/validate.py
+python sdlc-suite/tools/generate_trees.py            # regenerate every tree
+python sdlc-suite/tools/generate_trees.py --check    # what CI runs
 ```
+
+The old per-tree scripts (`convert-agents.py`, `sync-skills.py`, and the
+top-level `sync-all.py`, which now refuses to run) are superseded. They predate
+the `version:` frontmatter field and would strip it from every generated agent,
+and they do not apply the per-target namespace transform — neither failure
+raises an error.
+
+`workflows/*.py` is the exception: it targets a different runtime and is **not**
+generated. A change to a workflow has to be ported here by hand, and nothing
+checks that it was.
 
 ## Note on subagent nesting
 

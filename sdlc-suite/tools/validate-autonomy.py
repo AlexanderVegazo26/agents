@@ -120,11 +120,24 @@ def validate(policy, schema: dict) -> list[str]:
 def summarise(policy: dict, schema: dict) -> str:
     d = policy.get("preAuthorized", {}).get("decide", {})
     a = policy.get("preAuthorized", {}).get("act", {})
-    nd = len(_allowed(schema, "preAuthorized", "decide"))
-    na = len(_allowed(schema, "preAuthorized", "act"))
+    # Count what the FILE has, not what the schema allows. These used to be
+    # schema constants, so deleting a gate printed "6 decide gates (4
+    # authorized)" over a file holding five — reading as "a gate was turned
+    # off" rather than "a gate is gone". Review found it by deletion.
+    nd = sum(1 for k in d if k != "$comment")
+    na = sum(1 for k in a if k != "$comment")
+    expect_d = len(_allowed(schema, "preAuthorized", "decide"))
+    expect_a = len(_allowed(schema, "preAuthorized", "act"))
     don = sum(1 for k, v in d.items() if k != "$comment" and v is True)
     aon = sum(1 for k, v in a.items() if k != "$comment" and v is True)
-    return f"{nd} decide gates ({don} authorized), {na} act gates ({aon} authorized)"
+    missing = []
+    if nd != expect_d:
+        missing.append(f"{expect_d - nd} decide gate(s) absent")
+    if na != expect_a:
+        missing.append(f"{expect_a - na} act gate(s) absent")
+    note = f" — {'; '.join(missing)}, treated as NOT authorized" if missing else ""
+    return (f"{nd} of {expect_d} decide gates ({don} authorized), "
+            f"{na} of {expect_a} act gates ({aon} authorized){note}")
 
 
 def selftest(schema: dict) -> int:

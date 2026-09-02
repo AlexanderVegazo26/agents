@@ -53,6 +53,18 @@ DEFAULT_ROOTS = [
 # Root-level files that are part of the tooling and equally able to break.
 DEFAULT_FILES = ["kflow", "sync-all.py", ".gitattributes", "CLAUDE.md"]
 
+# Also scanned. Independent review found these uncovered by injecting CRLF into
+# each in turn and watching this tool exit 0 every time. .gitattributes pins them
+# for a git-managed checkout, but this tool is the byte-level backstop that
+# exists precisely because writers bypass git and untracked files never reach
+# the index. A CRLF ci.yml is a plausible YAML-parser failure this is positioned
+# to catch and did not.
+DEFAULT_ROOTS += [".github", "docs"]
+DEFAULT_FILES += [
+    ".pre-commit-config.yaml", ".gitleaks.toml", "README.md",
+    "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md",
+]
+
 # Never descend into these. nawi / nawi-vex / snagit-clone are separate
 # repositories; the rest hold generated or vendored bytes, not definitions.
 SKIP_DIRS = {
@@ -61,13 +73,40 @@ SKIP_DIRS = {
 }
 
 
-def is_binary(data: bytes) -> bool:
-    """A NUL byte in the first 8 KiB is the usual binary tell.
+# Extensions that are definitions by construction. A NUL in one of these is a
+# defect in the file, never evidence that it is a binary payload.
+TEXT_SUFFIXES = {
+    ".md", ".py", ".js", ".mjs", ".cjs", ".json", ".toml", ".yaml", ".yml",
+    ".txt", ".sh", ".ts",
+}
 
-    CRLF occurs by coincidence inside binary payloads, so asserting on it
-    without this guard reports compiled artefacts as line-ending defects.
+
+def is_binary(path: Path, data: bytes) -> bool:
+    """A NUL byte is the usual binary tell — but not in a definition file.
+
+    Two things this had wrong, both found by independent review, and both of the
+    exact class this tool exists to catch:
+
+    1. It scanned only the first 8 KiB, and a NUL there made the whole file
+       invisible. A fully-CRLF agent definition with a NUL at byte 100 passed
+       with exit 0, while the identical file without the NUL failed. The run
+       printed "1 binary skipped" and still exited 0, so CI passed — a gate
+       reporting success while doing nothing.
+
+    2. It is not hypothetical. `sdlc-suite/workflows/_policy.js` carries a
+       deliberate NUL at offset 12364 as a dedupe-key delimiter. A shorter file,
+       or that delimiter moving earlier, drops a real source file into the
+       skipped set — and `git ls-files --eol` already reports that file as
+       `w/-text`, meaning git itself treats it as binary and never applies
+       `eol=lf` to it.
+
+    So a known definition extension is never skipped: it is scanned for CRLF
+    regardless of what else it contains. Everything else keeps the NUL
+    heuristic, now over the whole file rather than a window.
     """
-    return b"\0" in data[:8192]
+    if path.suffix.lower() in TEXT_SUFFIXES:
+        return False
+    return b"\0" in data
 
 
 def iter_files(root: Path):
@@ -98,7 +137,7 @@ def scan(roots):
             except OSError as exc:
                 print("warning: cannot read {}: {}".format(path, exc), file=sys.stderr)
                 continue
-            if is_binary(data):
+            if is_binary(path, data):
                 skipped_binary += 1
                 continue
             scanned += 1

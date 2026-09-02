@@ -172,12 +172,28 @@ One root, `.claude/memory/<project>/`, shared by every agent, with per-file owne
 
 ## Keeping everything in sync
 
-If you edit the source `.claude/` suite, regenerate the port:
+**Do not edit this tree.** Its `agents/` and `skills/` are generated from
+`sdlc-suite/`, the single hand-edited source. An edit here raises no error and is
+overwritten on the next run.
 
 ```bash
-python commandcode-suite/convert-agents.py   # regenerate agents/ from sdlc-suite/agents/
-python commandcode-suite/verify-bodies.py    # confirm bodies are verbatim
-python commandcode-suite/validate.py         # structural sanity check
+python sdlc-suite/tools/generate_trees.py            # regenerate every tree
+python sdlc-suite/tools/generate_trees.py --check    # what CI runs
+```
+
+The old per-tree scripts (`convert-agents.py`, `sync-skills.py`, and the
+top-level `sync-all.py`, which now refuses to run) are superseded. They predate
+the `version:` frontmatter field and would strip it from every generated agent,
+and they do not apply the per-target namespace transform — neither failure
+raises an error.
+
+`workflows/` and `commands/` are the exception: they target Command Code's own
+runner and are **not** generated. A change there has to be made by hand, and
+nothing checks that it was.
+
+```bash
+python commandcode-suite/verify-bodies.py   # agent bodies match sdlc-suite verbatim
+python commandcode-suite/validate.py        # structural sanity check
 ```
 
 ## Registry health

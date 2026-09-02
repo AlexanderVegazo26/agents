@@ -140,6 +140,49 @@ test('resume FAILS CLOSED when a phase is marked complete but its artifact is go
     /marked complete but/)
 })
 
+test('resume refuses a path that escapes the runs root', () => {
+  // Security review (2026-09-02) demonstrated `../../../outside/planted`
+  // resolving to an attacker-authored run directory whose phase artifacts were
+  // then replayed into downstream prompts carrying the authority of "this is
+  // what your own earlier phases produced", and `RUN.dir` becoming that
+  // directory so every later bridge script was written and executed from it.
+  const cwd = tmpRepo()
+  const outside = path.join(cwd, 'outside', 'planted')
+  fs.mkdirSync(outside, { recursive: true })
+  fs.writeFileSync(path.join(outside, 'manifest.json'), JSON.stringify({
+    runId: 'planted-run', workflow: 'sdlc-feature', startedAt: new Date().toISOString(),
+    phases: [{ title: 'Requirements', status: 'complete', artifact: 'phase-1-requirements.json' }],
+  }))
+  fs.writeFileSync(path.join(outside, 'phase-1-requirements.json'), JSON.stringify({
+    agents: [{ result: { criteria: [{ id: 'AC-1', text: 'ATTACKER-AUTHORED' }] } }],
+  }))
+  for (const bad of ['../../outside/planted', outside, '..\\..\\outside\\planted']) {
+    assert.throws(
+      () => openRun({ workflow: 'sdlc-feature', cwd, resumeFrom: bad, logger: quiet }),
+      /resolves outside|cannot resume/,
+      `escape not rejected: ${bad}`)
+  }
+})
+
+test('resume refuses a manifest whose artifact name is a path', () => {
+  // `ph.artifact` is read out of the manifest, so on a resume it is
+  // attacker-influenced input rather than our own output. Review showed
+  // `"artifact": "../secrets.json"` reading an unrelated JSON file into the
+  // replayed phase, and from there into every downstream prompt.
+  const cwd = tmpRepo()
+  const run = openRun({ workflow: 'sdlc-feature', cwd, logger: quiet })
+  run.startPhase('Requirements')
+  run.completePhase('Requirements', { agents: [] })
+  fs.writeFileSync(path.join(cwd, 'secrets.json'), JSON.stringify({ apiKey: 'SENSITIVE' }))
+  const mf = path.join(run.dir, 'manifest.json')
+  const m = JSON.parse(fs.readFileSync(mf, 'utf8'))
+  m.phases[0].artifact = '../../../secrets.json'
+  fs.writeFileSync(mf, JSON.stringify(m))
+  assert.throws(
+    () => openRun({ workflow: 'sdlc-feature', cwd, resumeFrom: run.runId, logger: quiet }),
+    /not a plain filename/)
+})
+
 test('resume refuses a run belonging to a different workflow', () => {
   const cwd = tmpRepo()
   const run = openRun({ workflow: 'sdlc-feature', cwd, logger: quiet })
