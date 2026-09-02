@@ -52,8 +52,6 @@ tags = ["repo-identifier", "employer", "chg-01"]
   [[rules.allowlists]]
   description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
   paths = [
-    '''(^|/)docs/platform-review-2026-09-01\.md$''',
-    '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
   ]
 # A note on the obvious objection: this file names the identifier it defends
 # against, so the config itself publishes it. That is accepted here and only
@@ -79,7 +77,11 @@ description = "Private project codename - a separate unreleased repository these
 regex = '''(?i)\b(?:snagit[-_ ]?clone|snapforge|nawi(?:[-_]vex)?)\b'''
 tags = ["repo-identifier", "private-project", "chg-03"]
   [[rules.allowlists]]
-  description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back. `.gitignore` is excused too: it cannot exclude a directory without naming it, which is the one place the literal is structurally required."
+  description = "Only the two names that are ALREADY public, and only in the documents that must discuss them. Independent review caught the earlier version of this allowlist excusing the whole review document from every identifier rule - which would have published the employer name, the author's email, both home paths, the product codename and the requirement-id taxonomy, in the commit titled 'make the repository publishable', with the scanner told to stay quiet. Measured on origin/main before deciding: nawi appears in 4 files and snagit-clone in 3, deliberately, because .gitignore cannot exclude a directory without naming it and CLAUDE.md explains why it is excluded. snapforge appeared in 0 and the *-VEX.* requirement ids in 0, so those were REDACTED from the documents instead of excused here. The distinction is the point: excuse what is already public, redact what is not."
+  regexTarget = "match"
+  regexes = [
+    '''(?i)^(?:snagit[-_ ]?clone|nawi(?:[-_]vex)?)$''',
+  ]
   paths = [
     '''(^|/)docs/platform-review-2026-09-01\.md$''',
     '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
@@ -113,8 +115,6 @@ tags = ["repo-identifier", "home-path", "chg-04"]
   [[rules.allowlists]]
   description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
   paths = [
-    '''(^|/)docs/platform-review-2026-09-01\.md$''',
-    '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
   ]
   [[rules.allowlists]]
   description = "Placeholder account names. CHG-04's fix replaces each real path with a placeholder plus a substitute-your-own-path sentence, so the rule must not fire on the fix itself. These regexes match the extracted account name (secretGroup 1), not the whole path. Delimiter-style placeholders (<you>, dollar-brace USER, percent USERPROFILE percent) need no entry and must not be given one: the account-name group starts [a-z0-9._], so the rule cannot produce them as a secret at all, and an entry for them would be an allowlist nothing reads. Verified 2026-09-02, gitleaks 8.28.0 - with this regex stripped, /home/username and /Users/you both fire; with it present, neither does."
@@ -130,6 +130,4 @@ tags = ["repo-identifier", "private-project", "chg-03"]
   [[rules.allowlists]]
   description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
   paths = [
-    '''(^|/)docs/platform-review-2026-09-01\.md$''',
-    '''(^|/)docs/platform-review-2026-09-01-corrections\.md$''',
   ]

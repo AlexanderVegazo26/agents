@@ -1,5 +1,17 @@
 # Platform review — `agents`
 
+> **Identifiers in this document are redacted.** The employer name, the
+> author's email, and both machines' home-directory paths are replaced with
+> placeholders (`<employer>`, `<author>`, `<user-home>`, `<user>`). Nothing
+> analytical depends on the literal strings.
+>
+> This repository is public, and removing exactly those identifiers is the
+> point of CHG-01, CHG-03 and CHG-04 — which this document specifies.
+> Publishing the document that specifies the removal with the strings intact
+> would have undone it, and `docs/` was untracked before this branch, so
+> this would have been their first appearance on a remote.
+
+
 **Date:** 2026-09-01
 **Scope:** the whole repository except `nawi/`, `snagit-clone/` and `nawi-vex/`, which are separate projects.
 **Mode:** read-only audit. The only file this review created is this one.
@@ -62,7 +74,7 @@ One **run**: a single workflow invocation over one input string — an initiativ
 - **Claude Code plugin format.** `sdlc-suite/.claude-plugin/plugin.json:3` declares `"version": "1.0.3"`; `.claude-plugin/marketplace.json:14` repeats it. No minimum harness version is declared anywhere.
 - **Node**, for the JS workflows and the Command Code runner. No `package.json`, therefore no version floor and no dependencies.
 - **Python**, for the Kimi workflows and every sync and validate script. The tracked `.kimi-code/workflows/__pycache__/*.cpython-314.pyc` implies 3.14 was used. No `requirements.txt`; `sync-all.py:29` shells out with `sys.executable`.
-- **Windows**, in practice. Around 25 sites hardcode `C:/Users/avega/…`, and `.kimi-code/workflows/runner.py:31` probes for `kimi.exe`.
+- **Windows**, in practice. Around 25 sites hardcode `<user-home>/…`, and `.kimi-code/workflows/runner.py:31` probes for `kimi.exe`.
 - **Git**, for the worktree isolation the build phase claims.
 
 ### Where documentation and tree disagree
@@ -677,7 +689,7 @@ Depends on:  none
 ```
 
 **Current state**
-`git for-each-ref` returns two refs that no branch reaches: `refs/original/refs/heads/chore/untrack-snagit-clone-submodule` and `refs/tags/backup-pre-email-rewrite`, both pointing at `01440bf`. Eight commits are reachable only from there — `01440bf`, `97ba5fc`, `7ee918e`, `1fcecde`, `8057b06`, `f1108bc`, `b8bb157`, `ef7fe76` — and every one carries `Alexander Rodriguez <alexander.rodriguez@tapcheck.com>` as **both** author and committer. `git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u` returns exactly two identities, the employer one and `AlexanderVegazo26 <avegazorodriguez@gmail.com>`. A `filter-branch` rewrote the identity and left its own backup in place, which is what `refs/original/` is. `git ls-remote origin` returns only `HEAD` and `refs/heads/main` at `1f988ab`: no tags and no `refs/original`, so today this is local-only.
+`git for-each-ref` returns two refs that no branch reaches: `refs/original/refs/heads/chore/untrack-snagit-clone-submodule` and `refs/tags/backup-pre-email-rewrite`, both pointing at `01440bf`. Eight commits are reachable only from there — `01440bf`, `97ba5fc`, `7ee918e`, `1fcecde`, `8057b06`, `f1108bc`, `b8bb157`, `ef7fe76` — and every one carries `Alexander Rodriguez <<author>@<employer>.com>` as **both** author and committer. `git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u` returns exactly two identities, the employer one and `AlexanderVegazo26 <<owner>@<mail>.com>`. A `filter-branch` rewrote the identity and left its own backup in place, which is what `refs/original/` is. `git ls-remote origin` returns only `HEAD` and `refs/heads/main` at `1f988ab`: no tags and no `refs/original`, so today this is local-only.
 
 **Why it must change**
 The exposure is one command away, and they are commands people run without thinking. `git push --tags` publishes the tag. `git push --mirror` publishes both refs. Copying the directory, or publishing a `.git` bundle, carries them too. Deleting a file would not help here: the commits are whole objects with the identity in their headers, and the working tree is irrelevant.
@@ -696,7 +708,7 @@ Nothing in the working tree. Two refs deleted from `.git`, reflog expired, unrea
 **Verification**
 ```
 $ git log --all --format='%ae%n%ce' | sort -u
-avegazorodriguez@gmail.com
+<owner>@<mail>.com
 $ git for-each-ref | grep -E 'original|backup'
 $ git rev-list --all | wc -l
 15
@@ -720,7 +732,7 @@ Depends on:  none
 ```
 
 **Current state**
-`.commandcode/settings.json` is tracked. It holds `permissions.allow` with 33 entries, `deny: []`, `defaultMode: "default"`. Five entries exceed 500 characters, the longest is 912, and five name a private project by name. It contains one machine's absolute paths, a stale process id (`Get-Process -Id 35688`), broad wildcard grants (`Shell(mkdir:*)`, `Shell(cp:*)`, `Shell(git:*)`, bare `powershell`), and the full product brief of an unreleased application pasted verbatim into four separate shell-command grants. `.gitignore:36-37` has `**/settings.local.json` and `**/*.local.json`; neither matches `settings.json`, so the exclusion the author clearly intended does not apply. Seven Python bytecode files under `.kimi-code/workflows/__pycache__/` are also tracked, and `.gitignore` contains no `__pycache__` or `*.pyc` rule. `.commandcode/taste/taste.md` is tracked and records the author's tooling preferences with confidence scores. `nawi-vex/` is untracked but **not ignored**: `git check-ignore -v nawi-vex` exits 1, and `nawi-vex/.git` is a file reading `gitdir: C:/Users/avega/Documents/personal/agents/nawi/.git/worktrees/nawi-vex`.
+`.commandcode/settings.json` is tracked. It holds `permissions.allow` with 33 entries, `deny: []`, `defaultMode: "default"`. Five entries exceed 500 characters, the longest is 912, and five name a private project by name. It contains one machine's absolute paths, a stale process id (`Get-Process -Id 35688`), broad wildcard grants (`Shell(mkdir:*)`, `Shell(cp:*)`, `Shell(git:*)`, bare `powershell`), and the full product brief of an unreleased application pasted verbatim into four separate shell-command grants. `.gitignore:36-37` has `**/settings.local.json` and `**/*.local.json`; neither matches `settings.json`, so the exclusion the author clearly intended does not apply. Seven Python bytecode files under `.kimi-code/workflows/__pycache__/` are also tracked, and `.gitignore` contains no `__pycache__` or `*.pyc` rule. `.commandcode/taste/taste.md` is tracked and records the author's tooling preferences with confidence scores. `nawi-vex/` is untracked but **not ignored**: `git check-ignore -v nawi-vex` exits 1, and `nawi-vex/.git` is a file reading `gitdir: <user-home>/Documents/personal/agents/nawi/.git/worktrees/nawi-vex`.
 
 **Why it must change**
 Two concrete failures. First, one `git add -A` commits an entire second project including its `node_modules/` and a 265 KB lockfile, because nothing ignores `nawi-vex/`. Second, `.commandcode/settings.json` publishes an unreleased product's full specification and a wildcard shell allowlist that reads as a suggestion to a future adopter — a file whose entire purpose is machine-local, published because the ignore rule was written for a filename that is not the one in use.
@@ -778,7 +790,7 @@ Depends on:  CHG-02
 ```
 
 **Current state**
-Two tracked files under `.claude/memory/snagit-clone/` hold real design output for an unreleased application. `designs/ux-baseline-v1.md:1-3` names the project and cites its internal spec path. `decisions/ADR-0001-video-export-pipeline.md` is a ~220-line architecture decision record naming a dependency choice, a measured non-functional requirement, and roughly fifty requirement identifiers of the form `DEC-VEX.1`, `FR-VEX.1-14`, `NFR-VEX.2`, `AE-VEX.2`. The directory name itself is the project's pre-rename codename. These are the only two files in the memory tree; every other memory artifact in the repository is an empty stub.
+Two tracked files under `.claude/memory/snagit-clone/` hold real design output for an unreleased application. `designs/ux-baseline-v1.md:1-3` names the project and cites its internal spec path. `decisions/ADR-0001-video-export-pipeline.md` is a ~220-line architecture decision record naming a dependency choice, a measured non-functional requirement, and roughly fifty requirement identifiers of the form `DEC-<PROJ>.1`, `FR-<PROJ>.1-14`, `NFR-<PROJ>.2`, `AE-<PROJ>.2`. The directory name itself is the project's pre-rename codename. These are the only two files in the memory tree; every other memory artifact in the repository is an empty stub.
 
 **Why it must change**
 The repository is going public, and this is the only real content in a directory whose stated purpose is to hold durable per-project context. A reader learns the architecture, the dependency choices and the requirement taxonomy of an application that has not shipped. It is also the wrong example to ship: an adopter opening `.claude/memory/` should see the shape of the convention, not one project's decisions.
@@ -811,7 +823,7 @@ Keep the header fields exactly as the real ADR had them — date, status, owner,
 
 **Verification**
 ```
-$ git grep -ilE 'snagit|snapforge|VEX' -- ':!docs' ':!.gitignore' ':!CLAUDE.md'
+$ git grep -ilE 'snagit|<product>|<PROJ>' -- ':!docs' ':!.gitignore' ':!CLAUDE.md'
 $ ls .claude/memory
 README.md
 ```
@@ -834,7 +846,7 @@ Depends on:  none
 ```
 
 **Current state**
-Twenty-nine occurrences across twelve tracked files embed one machine's home directory. `git grep -nI -E 'C:[/\\]+Users[/\\]+avega'` reports: `.claude/audit/AUDIT.md:3,174`; `.claude/audit/findings.json:183`; `.kimi-code/GLOBAL-SETUP.md:12,18,22,50,51`; `.kimi-code/workflows/README.md:46`; `commandcode-suite/README.md:39,42,45,48,51,54`; `commandcode-suite/USAGE.md:31,63`; and lines 9 and 14 of all six `commandcode-suite/commands/*.md`. Separately, `commandcode-suite/workflows/_diag-requirements.js:33` embeds an unreleased product's brief as a diagnostic fixture, and that file is one of only two extra files in that workflows directory.
+Twenty-nine occurrences across twelve tracked files embed one machine's home directory. `git grep -nI -E 'C:[/\\]+Users[/\\]+<user>'` reports: `.claude/audit/AUDIT.md:3,174`; `.claude/audit/findings.json:183`; `.kimi-code/GLOBAL-SETUP.md:12,18,22,50,51`; `.kimi-code/workflows/README.md:46`; `commandcode-suite/README.md:39,42,45,48,51,54`; `commandcode-suite/USAGE.md:31,63`; and lines 9 and 14 of all six `commandcode-suite/commands/*.md`. Separately, `commandcode-suite/workflows/_diag-requirements.js:33` embeds an unreleased product's brief as a diagnostic fixture, and that file is one of only two extra files in that workflows directory.
 
 **Why it must change**
 These are not merely cosmetic. The twelve `commandcode-suite/commands/*.md` sites are the **command definitions themselves**: an adopter who installs that suite gets six slash commands that shell out to a directory on somebody else's laptop and fail with a path error. The six `commandcode-suite/README.md` lines are the only runnable examples that tree offers, and none of them runs for anyone else. So the leak and the breakage are the same defect.
@@ -1024,7 +1036,7 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
 ```
-`.gitleaks.toml` extends the default rules with this repository's own identifiers: the employer name, the private project names, the author's home path, and `*-VEX.*` requirement ids. That is what turns CHG-01, CHG-03 and CHG-04 into invariants instead of one-time cleanups. Also `.github/ISSUE_TEMPLATE/bug.yml` and `feature.yml`, `.github/PULL_REQUEST_TEMPLATE.md` carrying the CONTRIBUTING checklist plus the learning-PR checklist from Phase 3, and GitHub's private vulnerability reporting enabled to back `SECURITY.md`.
+`.gitleaks.toml` extends the default rules with this repository's own identifiers: the employer name, the private project names, the author's home path, and `*-<PROJ>.*` requirement ids. That is what turns CHG-01, CHG-03 and CHG-04 into invariants instead of one-time cleanups. Also `.github/ISSUE_TEMPLATE/bug.yml` and `feature.yml`, `.github/PULL_REQUEST_TEMPLATE.md` carrying the CONTRIBUTING checklist plus the learning-PR checklist from Phase 3, and GitHub's private vulnerability reporting enabled to back `SECURITY.md`.
 
 **Files touched**
 - created `.github/workflows/ci.yml`, `.gitleaks.toml`, `.github/ISSUE_TEMPLATE/bug.yml`, `.github/ISSUE_TEMPLATE/feature.yml`, `.github/PULL_REQUEST_TEMPLATE.md`
@@ -1927,9 +1939,9 @@ CHG-23 creates a mechanism that writes files derived from runs against private r
 **Tier 1, literal denylist** — `redaction/denylist.txt`, one entry per line, case-insensitive, gitignored so the list itself is instance data:
 ```
 # Organisations, projects, customers, hosts. One per line.
-tapcheck
+<employer>
 snagit-clone
-snapforge
+<product>
 nawi
 ```
 A match **drops** the candidate, incrementing a counted reason. Dropping is right for tier 1 because these are known-private strings and there is no benign reason for one to appear in a cross-project heuristic.
@@ -2172,12 +2184,12 @@ git grep -nIE '(api[_-]?key|secret|token|password|passwd)["'\'']?[[:space:]]*[:=
 git grep -nIE '<the same high-signal set>' $(git rev-list --all) -- ':!nawi' ':!snagit-clone'
 
 # Internal identifiers
-git grep -ilE 'tapcheck|dev\.azure\.com|visualstudio\.com|atlassian\.net|\.internal|\.corp' -- ':!nawi' ':!nawi-vex'
-git grep -nI -E 'C:[/\\]+Users[/\\]+avega' -- ':!nawi' ':!nawi-vex'
-git grep -cI -E 'C:[/\\]+Users[/\\]+avega' -- ':!nawi' ':!nawi-vex' | awk -F: '{s+=$NF;n++} END{print s" hits in "n" files"}'
-git grep -iE 'snagit|snapforge|nawi|VEX' -- ':!nawi' ':!nawi-vex'
-git log --all --format='%h|%s' | grep -iE 'snapforge|snagit|nawi'
-git log --all --format='%h %s%n%b' | grep -inE 'snapforge|snagit|nawi|tapcheck'
+git grep -ilE '<employer>|dev\.azure\.com|visualstudio\.com|atlassian\.net|\.internal|\.corp' -- ':!nawi' ':!nawi-vex'
+git grep -nI -E 'C:[/\\]+Users[/\\]+<user>' -- ':!nawi' ':!nawi-vex'
+git grep -cI -E 'C:[/\\]+Users[/\\]+<user>' -- ':!nawi' ':!nawi-vex' | awk -F: '{s+=$NF;n++} END{print s" hits in "n" files"}'
+git grep -iE 'snagit|<product>|nawi|<PROJ>' -- ':!nawi' ':!nawi-vex'
+git log --all --format='%h|%s' | grep -iE '<product>|snagit|nawi'
+git log --all --format='%h %s%n%b' | grep -inE '<product>|snagit|nawi|<employer>'
 
 # Tracked-but-shouldn't
 git ls-files | grep -iE 'pycache|\.pyc$|local\.json|\.env|\.log$|node_modules|\.key$|\.pem$'
@@ -2200,15 +2212,15 @@ Severity here is about publication, not engineering.
 
 | # | Category | Finding | Location | Severity |
 |---|---|---|---|---|
-| 1 | Identity | `Alexander Rodriguez <alexander.rodriguez@tapcheck.com>` as author **and** committer on 8 commits reachable only from `refs/original/refs/heads/chore/untrack-snagit-clone-submodule` and tag `backup-pre-email-rewrite`, both at `01440bf` | history: `01440bf`, `97ba5fc`, `7ee918e`, `1fcecde`, `8057b06`, `f1108bc`, `b8bb157`, `ef7fe76` | **blocking** |
+| 1 | Identity | `Alexander Rodriguez <<author>@<employer>.com>` as author **and** committer on 8 commits reachable only from `refs/original/refs/heads/chore/untrack-snagit-clone-submodule` and tag `backup-pre-email-rewrite`, both at `01440bf` | history: `01440bf`, `97ba5fc`, `7ee918e`, `1fcecde`, `8057b06`, `f1108bc`, `b8bb157`, `ef7fe76` | **blocking** |
 | 2 | Legal | No `LICENSE`. Default copyright applies; nobody may reuse, fork or contribute. `README.md:41` states this accurately | repository root | **blocking** |
 | 3 | Untracked project | `nawi-vex/` is a git worktree of a separate repository, untracked and **not ignored** — `git check-ignore -v nawi-vex` exits 1. `.gitignore:12` has bare `nawi`, which does not match `nawi-vex`. Contains `node_modules/`, `out/`, `src/`, a 265 KB lockfile | working tree root | **blocking** |
 | 4 | Machine config | `.commandcode/settings.json` tracked. 33 `allow` entries; 5 exceed 500 chars, longest 912; 5 name a private project. Holds absolute paths, a stale process id, wildcard shell grants, and an unreleased product's full brief in four entries. `.gitignore:36-37` matches `settings.local.json` and `*.local.json`, neither of which is this filename | `.commandcode/settings.json` | **blocking** |
-| 5 | Private project data | Real ADR for an unreleased application: dependency decision, a measured non-functional requirement, ~50 identifiers of the form `DEC-VEX.1`, `FR-VEX.1-14`, `NFR-VEX.2` | `.claude/memory/snagit-clone/decisions/ADR-0001-video-export-pipeline.md` | high |
+| 5 | Private project data | Real ADR for an unreleased application: dependency decision, a measured non-functional requirement, ~50 identifiers of the form `DEC-<PROJ>.1`, `FR-<PROJ>.1-14`, `NFR-<PROJ>.2` | `.claude/memory/snagit-clone/decisions/ADR-0001-video-export-pipeline.md` | high |
 | 6 | Private project data | Real UX baseline naming the project and citing its internal spec path | `.claude/memory/snagit-clone/designs/ux-baseline-v1.md:1-3` | high |
 | 7 | Personal path | 29 occurrences of one machine's home directory across 12 files. Twelve of them are in the six `commandcode-suite/commands/*.md` command definitions themselves (lines 9 and 14 of each), so those commands cannot run for anyone else | see CHG-04 for the full list | high |
 | 8 | Private project data | An unreleased product's brief embedded as a diagnostic fixture | `commandcode-suite/workflows/_diag-requirements.js:33` | high |
-| 9 | Commit messages | Internal project names in subjects on `main`: `dd3c5ee` and `36a3fdd` name "the SnapForge build"; `88b3dbd` names `snagit-clone` in its subject and five times in its body. Four more in the pre-rewrite set | history, `main` | medium |
+| 9 | Commit messages | Internal project names in subjects on `main`: `dd3c5ee` and `36a3fdd` name "the <product> build"; `88b3dbd` names `snagit-clone` in its subject and five times in its body. Four more in the pre-rewrite set | history, `main` | medium |
 | 10 | Preference store | `.commandcode/taste/taste.md` tracked — the author's tooling preferences with confidence scores. Not sensitive, but it is personal telemetry rather than platform content | `.commandcode/taste/taste.md` | medium |
 | 11 | Build artifacts | 7 tracked `.pyc` files; `.gitignore` has no `__pycache__` or `*.pyc` rule | `.kimi-code/workflows/__pycache__/` | medium |
 | 12 | Attribution | Author's real name in two manifests. Deliberate and appropriate for an owner attribution; noted only so the decision is explicit | `.claude-plugin/marketplace.json:2,4`, `sdlc-suite/.claude-plugin/plugin.json:6` | low |
@@ -2217,7 +2229,7 @@ Severity here is about publication, not engineering.
 | 15 | False positive | ~50 hits for `password`, `secret`, `token`, `api key` are agent guidance prose about how to test and secure such things. No values | agent files, all trees | — |
 | 16 | False positive | 11 `localhost:3000` / `localhost:8080` are generic example targets | READMEs, two workflow scripts, `kflow:9-10` | — |
 
-**No credential was found.** Zero hits, in the tracked tree and across all 23 commits, for `sk-ant-`, `ghp_`, `gho_`, `github_pat_`, `AKIA[0-9A-Z]{16}`, `xox[bap]-`, `-----BEGIN`, JWT-shaped `eyJ…`, `InstrumentationKey=`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and assignment-shaped `(key|secret|token|password) = "<literal>"`. No `.env`, `*.pem`, `*.key`, `*.p12` or `*.pfx` is tracked. No `tapcheck`, `dev.azure.com`, `atlassian.net`, `.internal` or `.corp` appears in any file's **content**; the employer string exists only in commit metadata.
+**No credential was found.** Zero hits, in the tracked tree and across all 23 commits, for `sk-ant-`, `ghp_`, `gho_`, `github_pat_`, `AKIA[0-9A-Z]{16}`, `xox[bap]-`, `-----BEGIN`, JWT-shaped `eyJ…`, `InstrumentationKey=`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and assignment-shaped `(key|secret|token|password) = "<literal>"`. No `.env`, `*.pem`, `*.key`, `*.p12` or `*.pfx` is tracked. No `<employer>`, `dev.azure.com`, `atlassian.net`, `.internal` or `.corp` appears in any file's **content**; the employer string exists only in commit metadata.
 
 ### History-only findings
 
@@ -2225,7 +2237,7 @@ Severity here is about publication, not engineering.
 |---|---|
 | The employer identity on 8 commits (finding 1) | It is in the commit headers, not in any file. No working-tree change removes it. The required action is deleting both refs, expiring the reflog, and pruning — CHG-01. Until `gc` runs, the objects remain reachable from the reflog even after the refs are deleted |
 | `snagit-clone` gitlink deleted in `88b3dbd` and `1fcecde` | `git log --all --diff-filter=D --name-only` returns exactly one path, `snagit-clone`, and it was a **gitlink (mode 160000)** with no `.gitmodules`. No file content from that project ever entered this object store. This is the one history item that needs nothing |
-| Commit subjects naming "SnapForge" and `snagit-clone` (finding 9) | Rewriting them means rewriting `main`, which invalidates every existing clone and the published `1f988ab`. Given the names are also explained deliberately in `.gitignore:6-14` and `CLAUDE.md:153`, the proportionate action is to accept them and make the explanation accurate, not to rewrite history a second time |
+| Commit subjects naming "<product>" and `snagit-clone` (finding 9) | Rewriting them means rewriting `main`, which invalidates every existing clone and the published `1f988ab`. Given the names are also explained deliberately in `.gitignore:6-14` and `CLAUDE.md:153`, the proportionate action is to accept them and make the explanation accurate, not to rewrite history a second time |
 
 **Mitigating and not to be relied on:** `git ls-remote origin` returns only `HEAD` and `refs/heads/main` at `1f988ab` — no tags, no `refs/original`. Finding 1 is local-only today. It becomes public on `git push --tags`, `git push --mirror`, or any copy of the `.git` directory.
 
@@ -2351,7 +2363,7 @@ They are the largest gain per unit of effort because they cost hours rather than
 - **Not maintain six harness ports.** They are the single largest source of drift, `.copilot/`, `.codex/` and `.agents/` have **no runner at all**, and `.commandcode/taste/taste.md` suggests one user. `CHG-09` makes them generated, which is the cheap fix; the better one is deleting `.copilot/`, `.codex/` and `.agents/` outright and keeping `.kimi-code/` and `commandcode-suite/` only while they are actually used. That is a Phase 7 question because it turns on facts only the owner has.
 - **Not push C1 or C2 to level 4.** Self-tuning context budgets and learned retry policies are not justified by a repository whose runs number in the dozens per month. Level 3 — survives interruption, classifies failures, escalates by a defined path — is the right ceiling.
 - **Not auto-merge learnings, ever.** The pull-request gate is the design, not a limitation to be relaxed later. `CHG-25`'s injected fault 3 exists to prove the ceiling holds.
-- **Not rewrite `main` to scrub "SnapForge" from two commit subjects.** It invalidates every clone and the published head, to remove two words that `.gitignore:6-14` and `CLAUDE.md:153` already explain deliberately. Disproportionate.
+- **Not rewrite `main` to scrub "<product>" from two commit subjects.** It invalidates every clone and the published head, to remove two words that `.gitignore:6-14` and `CLAUDE.md:153` already explain deliberately. Disproportionate.
 - **Not add agents or skills.** The registry has zero orphans and zero dangling references, all 59 skills are reached, and `qa-tooling/SKILL.md:40` handles its external dependencies correctly. The defects are in the runtime and the distribution, not the roster. The prior audit reached the same conclusion for the same reason (`.claude/audit/remediation-plan.md:121-126`) and it still holds.
 - **Not replace the `Workflow` runtime, the schemas, or the refutation pipeline.** They work. `CHG-20` changes what crosses the interfaces, not the interfaces.
 

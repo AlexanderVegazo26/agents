@@ -1,5 +1,17 @@
 # Corrections to `platform-review-2026-09-01.md`
 
+> **Identifiers in this document are redacted.** The employer name, the
+> author's email, and both machines' home-directory paths are replaced with
+> placeholders (`<employer>`, `<author>`, `<user-home>`, `<user>`). Nothing
+> analytical depends on the literal strings.
+>
+> This repository is public, and removing exactly those identifiers is the
+> point of CHG-01, CHG-03 and CHG-04 — which this document specifies.
+> Publishing the document that specifies the removal with the strings intact
+> would have undone it, and `docs/` was untracked before this branch, so
+> this would have been their first appearance on a remote.
+
+
 **Date:** 2026-09-02
 **Measured at:** commit `1f988ab` on `main` — one commit ahead of the `d5cf491`
 the review audited. That commit changed 173 files.
@@ -18,7 +30,7 @@ dozen places. Verdicts: 1 already fixed, 12 premises hold exactly, 13 partly sta
 
 **Q1 — what is in the published history?** Settled. `git fetch origin` was run.
 `origin/main` is `1f988ab`, 16 commits, and `git log --format='%ae%n%ce' origin/main | sort -u`
-returns only `avegazorodriguez@gmail.com`. No secrets and no `tapcheck`,
+returns only `<owner>@<mail>.com`. No secrets and no `<employer>`,
 `atlassian.net` or `dev.azure.com` strings in remote content. **CHG-01 is
 sufficient; the remote needs no rewrite.**
 
@@ -215,11 +227,11 @@ eight cases and gets switched off.
 `1f988ab` rewrote `.kimi-code/GLOBAL-SETUP.md` from a Windows guide to a macOS
 one. It did not remove the hardcoded-home class from that file — it **substituted
 a macOS hardcoded home and added the owner's real name** at `:40` and `:41`:
-`/Users/alexandervegazo/Documents/Documents - Alexander's MacBook Pro/personal/agents/.kimi-code/{agents,skills}`.
+`/Users/<user>/Documents/Documents - Alexander's MacBook Pro/personal/agents/.kimi-code/{agents,skills}`.
 Note the **curly apostrophe (U+2019)** — a straight-quote pattern will not match
-it. `C:\Users\avega` survives at `:230`.
+it. `<user-home>` survives at `:230`.
 
-So an `avega`-only sweep now leaves a second real username leaking. Use
+So an `<user>`-only sweep now leaves a second real username leaking. Use
 `C:[/\\]+Users|/Users/[A-Za-z]|/home/[a-z]`. Those two lines are TOML config
 values (`extra_agent_dirs`, `extra_skill_dirs`), so the fix is a placeholder plus
 a substitute-your-own-path sentence, not `$HOME` — most TOML readers will not
