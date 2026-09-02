@@ -22,6 +22,28 @@ as a README that asserts a stale count.
   written into a marked block in each README, never typed into prose.
 - `sdlc-suite/memory-template/example/decisions/ADR-0001-example.md` — a
   deliberately fictional worked example of the ADR shape.
+- A `version:` field on all 22 agents and all 60 skills, at `1.0.0`. The
+  generated trees carry it in their own dialect: `version = "1.0.0"` in
+  `.codex/agents/*.toml`, a `"version"` key in `.copilot/agents/*.json`,
+  frontmatter elsewhere. Until now the only version in the repository was the
+  plugin's, so a report that an agent behaved differently from its
+  documentation could not be pinned to a revision of it.
+- `sdlc-suite/tools/bump.py` — reads the diff, proposes an increment per the
+  `CONTRIBUTING.md` policy, and gates on the part of that policy which is
+  mechanically checkable: a changed body must move its version, a changed
+  `tools:` grant must move the MAJOR, and the plugin cannot be bumped past
+  definitions that did not move. `--selftest` drives every rule to red and back
+  to green with no git and no filesystem.
+- `.claude-plugin/marketplace.json` is now generated from
+  `sdlc-suite/.claude-plugin/plugin.json` by `bump.py --marketplace`. The two
+  files carried the plugin version separately and were bumped by hand, and
+  `sdlc-suite/USAGE.md` explains what a stale one costs: installing snapshots
+  the plugin into a versioned cache directory, so the version is the only thing
+  that moves a fix to a consumer.
+- Three CI steps in a new `versioning` job — `bump.py --selftest`,
+  `bump.py --marketplace --check` and `bump.py --check`. It is the only job
+  checked out with history, because comparing a body against the base branch
+  needs it.
 
 ### Removed
 

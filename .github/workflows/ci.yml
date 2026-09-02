@@ -182,6 +182,78 @@ jobs:
       # - name: Registry structure (all trees)
       #   run: python sdlc-suite/tools/validate.py --all-trees
 
+  versioning:
+    name: Versions and release manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the working tree with history
+        # `fetch-depth: 0`, unlike the `validate` job above, whose depth of 1 is
+        # deliberate because every check in it reads the tree as it stands. This
+        # job has to compare an agent body against the base branch, so it needs
+        # history. That difference is the whole reason this is a separate job
+        # rather than three more steps up there.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Version rules can still fail
+        # Wiring `bump.py --check` is only worth anything while its rules are
+        # alive. This drives each one to red and back to green against synthetic
+        # before/after pairs, with no git and no filesystem, so it also runs
+        # meaningfully on a push where the diff is empty.
+        #
+        # Proven capable of failing: replacing the `version-not-moved` branch
+        # with `if False:` makes it exit 1 naming the two cases that stopped
+        # firing, and it returns to 0 when the branch is restored.
+        run: python sdlc-suite/tools/bump.py --selftest
+
+      - name: marketplace.json matches plugin.json
+        # The plugin version lived in `plugin.json` and in `marketplace.json`
+        # and was bumped by hand in both. `plugin.json` is now the single
+        # source; `marketplace.json` is generated from it, keeping its own
+        # description and keywords, which legitimately differ.
+        #
+        # Proven capable of failing: setting `marketplace.json` to 1.0.2 against
+        # `plugin.json` 1.0.3 exits 1 and prints both. The first draft of the
+        # renderer skipped a plugin entry whose manifest it could not resolve
+        # and so reported "in sync" over exactly that desync — an unresolvable
+        # entry is now an error, which is why this step is trusted at all.
+        run: python sdlc-suite/tools/bump.py --marketplace --check
+
+      - name: Versions move with content
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          # On a pull request the comparison is against the base branch, since
+          # the question is what this change did to an agent or skill body.
+          #
+          # On a push to main there is no base branch, the working tree equals
+          # HEAD, and the diff is therefore empty. That is a pass, and not a
+          # vacuous one: the tree-state rules still run on every artifact —
+          # each carries a well-formed `version:`, and the plugin's MAJOR is at
+          # least the highest artifact MAJOR.
+          if [ -n "${BASE_REF:-}" ]; then
+            # Fetched by refspec rather than assumed to exist already under a
+            # remote-tracking name. A base that does not resolve exits 2 with a
+            # message naming the ref — that is the "fails for a reason unrelated
+            # to the commit" case rule 1 at the top of this file warns about, so
+            # it is made unambiguous rather than left to a stack trace.
+            git fetch --no-tags --quiet origin \
+              "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            python sdlc-suite/tools/bump.py --check --base "origin/${BASE_REF}"
+          else
+            python sdlc-suite/tools/bump.py --check
+          fi
+
   secrets:
     name: Secret and identifier scan
     runs-on: ubuntu-latest

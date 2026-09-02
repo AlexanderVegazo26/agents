@@ -1,5 +1,6 @@
 ---
 name: api-versioning
+version: 1.0.0
 description: Strategies for versioning an API contract as it evolves — when a change is breaking, versioning schemes, and sunset policy for old versions. Load when an API change might affect existing consumers. Do NOT use for designing the contract's shape in the first place (that is `sdlc-suite:api-design`) or for non-API compatibility such as data formats, config, and CLI behavior (that is `sdlc-suite:backward-compatibility`).
 ---
 

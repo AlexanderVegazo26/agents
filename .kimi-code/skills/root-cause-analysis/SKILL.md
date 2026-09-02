@@ -1,5 +1,6 @@
 ---
 name: root-cause-analysis
+version: 1.0.0
 description: Five-whys and fishbone technique for finding the systemic cause behind an incident or defect, plus blameless postmortem structure. Load after an incident is mitigated, or when investigating a recurring defect pattern.
 ---
 

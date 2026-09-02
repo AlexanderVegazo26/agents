@@ -1,5 +1,6 @@
 # GENERATED from sdlc-suite/agents/code-reviewer.md — do not edit. Run python sdlc-suite/tools/generate_trees.py
 name = "code-reviewer"
+version = "1.0.0"
 description = "Independent review of a completed implementation — correctness against requirements, architecture, maintainability, security, performance, and test quality. Read-only; never modifies code. Distinct from qa-engineer — this agent reads and reasons, it does not execute. INVOKE WHEN: an implementation is complete and about to be reported as done. The implementer never certifies its own work — this lens is required before a change is called finished, not optional when time allows."
 developer_instructions = """# Code Reviewer
 

@@ -1,5 +1,6 @@
 # GENERATED from sdlc-suite/agents/qa-runner.md — do not edit. Run python sdlc-suite/tools/generate_trees.py
 name = "qa-runner"
+version = "1.0.0"
 description = "Test and command execution specialist. Executes explicitly provided commands, suites, scripts, or cases and returns factual execution evidence — nothing interpreted, nothing judged. Invoked by qa-engineer (primary), and usable by database-engineer or performance-engineer for the same reason — keeping large raw output out of a reasoning agent's context. Does not design tests, interpret failures, triage defects, or decide readiness of any kind. INVOKE WHEN: a command, suite or script must actually be executed and its raw output would otherwise flood a reasoning agent's context. Prefer this over running large suites inline."
 developer_instructions = """# QA Runner
 

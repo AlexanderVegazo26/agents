@@ -1,5 +1,6 @@
 ---
 name: governance
+version: 1.0.0
 description: Decision rights, approval thresholds, and accountability structure for engineering/product decisions — who decides what, and what needs sign-off vs. what doesn't. Load when a decision's ownership is unclear, or when defining approval gates for a class of change.
 ---
 

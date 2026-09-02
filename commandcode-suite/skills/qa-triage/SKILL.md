@@ -1,5 +1,6 @@
 ---
 name: qa-triage
+version: 1.0.0
 description: Decision framework for classifying a test failure as a real bug, a bad test, or a flake, plus clustering related failures and recognizing when one root cause is inflating the count. Load whenever a test run comes back with failures to interpret, before filing anything.
 ---
 

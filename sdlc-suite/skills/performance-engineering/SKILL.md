@@ -1,5 +1,6 @@
 ---
 name: performance-engineering
+version: 1.0.0
 description: Load/stress/scalability testing technique and tool selection — how to define a target, find the actual breaking point, and profile-driven tuning. Load when planning or executing performance validation work. Do NOT use for projecting future infrastructure needs from growth estimates — that is `sdlc-suite:capacity-planning` — or for ongoing production monitoring, which is `sdlc-suite:observability-design`.
 ---
 

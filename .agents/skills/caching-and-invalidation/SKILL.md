@@ -1,5 +1,6 @@
 ---
 name: caching-and-invalidation
+version: 1.0.0
 description: Cache invalidation strategies and staleness failure modes — what to actually check for stale reads, read-your-own-writes violations, cache stampedes, and multi-layer inconsistency. Use whenever software-engineer or database-engineer introduces a cache layer, and whenever qa-engineer or site-reliability investigates a staleness or consistency issue involving one. Do NOT use for cross-service consistency models or replication lag as a distributed-design question — that is `distributed-systems`.
 ---
 

@@ -17,6 +17,40 @@ This script only calls the per-harness converters; the conversion logic lives
 in those scripts so each harness can be regenerated independently.
 """
 
+# ---------------------------------------------------------------------------
+# SUPERSEDED. Kept only so an existing muscle-memory invocation fails loudly
+# instead of quietly damaging the tree.
+#
+# `sdlc-suite/tools/generate_trees.py` replaced this on 2026-09-02. The four
+# `convert-agents.py` scripts this file calls predate the `version:` frontmatter
+# field and know nothing about it, so ONE run of this script strips the version
+# from every agent in `.codex/`, `.copilot/`, `.kimi-code/` and
+# `commandcode-suite/`. They also do not de-namespace, so they would push
+# `sdlc-suite:`-prefixed references into three trees that resolve bare names.
+#
+# Neither failure raises an error. Both are exactly the silent-damage class the
+# generator exists to prevent, which is why this refuses rather than warns.
+# ---------------------------------------------------------------------------
+import os as _os
+import sys as _sys
+
+for _line in (
+    "sync-all.py is superseded and refuses to run.",
+    "",
+    "  Use: python sdlc-suite/tools/generate_trees.py",
+    "       python sdlc-suite/tools/generate_trees.py --check",
+    "",
+    "Why: the convert-agents.py scripts this calls predate the version: field",
+    "and would strip it from every generated agent, and they do not apply the",
+    "per-target namespace transform. Neither failure raises an error.",
+    "",
+    "Set SYNC_ALL_I_KNOW_THIS_IS_SUPERSEDED=1 to run it anyway.",
+):
+    print(_line, file=_sys.stderr)
+
+if not _os.environ.get("SYNC_ALL_I_KNOW_THIS_IS_SUPERSEDED"):
+    raise SystemExit(2)
+
 from pathlib import Path
 import subprocess
 import sys

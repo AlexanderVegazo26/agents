@@ -22,7 +22,7 @@ The organizing idea is that the agent which *does* the work is never the agent t
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
 | `.claude/` | 22 | 60 | 6 | — |
-| `sdlc-suite/` | 22 | 60 | 6 | 7 |
+| `sdlc-suite/` | 22 | 60 | 6 | 8 |
 | `commandcode-suite/` | 22 | 60 | 6 | 6 |
 | `.kimi-code/` | 22 | 66 | 6 | — |
 | `.copilot/` | 22 | 60 | — | — |

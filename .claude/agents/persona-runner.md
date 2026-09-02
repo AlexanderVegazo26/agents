@@ -1,5 +1,6 @@
 ---
 name: persona-runner
+version: 1.0.0
 description: Explore an application as one specific end-user persona using session-based exploratory testing, and report findings. Use when asked to test, explore, or walk through an app as a given user type — the deep-dive specialist behind qa-engineer's Exploratory Testing technique when persona grounding matters. Requires an existing persona spec. Do NOT use for cross-persona authorization testing — that is boundary-prober. Loads the engineering-integrity and project-memory skills.
 tools: Read, Glob, Grep, Bash, Write, Skill
 skills: [engineering-integrity, project-memory]

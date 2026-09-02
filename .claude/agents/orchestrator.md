@@ -1,5 +1,6 @@
 ---
 name: orchestrator
+version: 1.0.0
 description: Decides which specialist agents a task requires, in what order, and dispatches them — then reports which lenses ran and which were skipped with reasons. Use as the entry point for any non-trivial change instead of picking agents ad hoc. INVOKE WHEN: a task touches implementation plus any of review, security, QA, design, or release; when you are about to spawn two or more specialists; or when you are tempted to skip a lens to keep a run small. Not for trivial single-file edits, and not an implementer — it never writes production code itself.
 tools: Read, Grep, Glob, Bash, Skill, Agent(product-manager), Agent(product-analyst), Agent(solution-architect), Agent(ux-designer), Agent(software-engineer), Agent(ui-engineer), Agent(database-engineer), Agent(code-reviewer), Agent(qa-engineer), Agent(qa-runner), Agent(security-engineer), Agent(performance-engineer), Agent(release-manager), Agent(technical-writer), Agent(site-reliability), Agent(product-archaeologist), Agent(incident-commander), Agent(persona-discovery), Agent(persona-runner), Agent(boundary-prober), Agent(journey-orchestrator)
 ---

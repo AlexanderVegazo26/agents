@@ -1,5 +1,6 @@
 ---
 name: requirements-craft
+version: 1.0.0
 description: Elicitation and specification technique for turning a vague ask into testable requirements — user story structure, acceptance criteria patterns, and ambiguity detection. Load when writing or reviewing requirements, before design or implementation starts.
 ---
 

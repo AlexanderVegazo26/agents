@@ -1,5 +1,6 @@
 ---
 name: compliance
+version: 1.0.0
 description: Recognizing when a regulatory or contractual regime applies (GDPR/HIPAA/PCI/SOC2-class) and what that implies for a design or review. Load when a project touches regulated data or industries, or when a requirement is silent on an applicable regime.
 ---
 

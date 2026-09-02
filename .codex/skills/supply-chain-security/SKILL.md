@@ -1,5 +1,6 @@
 ---
 name: supply-chain-security
+version: 1.0.0
 description: Protecting the software supply chain — build provenance, artifact signing, CI/CD pipeline hardening, and third-party risk beyond direct dependency vulnerabilities. Load when reviewing pipeline security or evaluating risk from build/publish infrastructure.
 ---
 

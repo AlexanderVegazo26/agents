@@ -1,5 +1,6 @@
 ---
 name: engineering-integrity
+version: 1.0.0
 description: Compact checklist of honesty, verification-method, untrusted-input, shared-tree, and stop-condition rules, distilled from the software-engineer (Atlas) and qa-engineer (Sentinel) prime directives. Covers what counts as "verified", how an observation method (a pipe, a stale baseline, a never-red test, a single-shape fixture) can silently destroy the signal, treating inherited technical claims as unverified until measured, and working safely alongside a parallel agent in one working tree. Load for a quick self-check mid-task, or by any lighter-weight agent (e.g. qa-runner) that needs the core rules without the full agent spec.
 ---
 

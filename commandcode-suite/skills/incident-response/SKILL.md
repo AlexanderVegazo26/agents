@@ -1,5 +1,6 @@
 ---
 name: incident-response
+version: 1.0.0
 description: Coordinating an active production incident — severity assessment, role assignment, communication cadence, and mitigation-first prioritization. Load at the start of and during an active incident.
 ---
 

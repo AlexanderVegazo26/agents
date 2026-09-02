@@ -1,5 +1,6 @@
 ---
 name: backward-compatibility
+version: 1.0.0
 description: Preserving compatibility for existing consumers/data/config across a change — beyond API versioning, covering data format, config, and behavioral compatibility. Load when a change could affect anything already depending on current behavior. Do NOT use for explicit API contract versioning schemes and sunset policy — that is `api-versioning`; this skill covers everything else something might depend on.
 ---
 

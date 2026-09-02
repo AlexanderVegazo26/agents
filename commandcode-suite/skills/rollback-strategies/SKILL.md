@@ -1,5 +1,6 @@
 ---
 name: rollback-strategies
+version: 1.0.0
 description: Designing and validating a real path back to the previous good state — for code deploys, schema changes, and configuration. Load when planning a release or reviewing whether a change is actually reversible.
 ---
 

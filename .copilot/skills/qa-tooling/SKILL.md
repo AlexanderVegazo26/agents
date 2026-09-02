@@ -1,5 +1,6 @@
 ---
 name: qa-tooling
+version: 1.0.0
 description: Tool selection matrix, stack-detection heuristics, how to invoke a runner without losing its exit status, and a contract-testing checklist for QA work. Load when deciding what tool/framework to use for a given test type, when invoking one, or when picking up an unfamiliar codebase and needing to figure out what's already in place.
 ---
 

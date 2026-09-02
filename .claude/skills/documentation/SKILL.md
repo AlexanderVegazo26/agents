@@ -1,5 +1,6 @@
 ---
 name: documentation
+version: 1.0.0
 description: Structure and formatting conventions for technical documentation — task-oriented writing, runbook layout, and keeping docs accurate over time. Load for the mechanics of how a doc should be shaped. Do NOT use as a substitute for the `technical-writer` agent, which owns authorship, audience decisions, and verifying that every behavioral claim matches the actual system — this skill covers conventions, that agent covers whether the content is true.
 ---
 

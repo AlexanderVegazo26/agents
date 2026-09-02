@@ -94,9 +94,27 @@ then **not** parseable as JSON.
 
 | Variable | Effect | Default |
 |---|---|---|
+| `SUITE_ROOT` | Directory holding this suite. Every `commands/*.md` launcher line resolves the workflow script through it | none — the launchers fail fast without it |
 | `CMDC_BIN` | Path to the Command Code executable (node entry, exe, etc.) | auto-detected (npm package bin, native exe, then PATH `cmdc`) |
 | `CMDC_MODEL` | Pin a model for all workflow phases (any `/model` id) | session/inherit |
 | `CMDC_AGENT_TIMEOUT_MS` | Per-phase timeout | 3600000 |
+
+`SUITE_ROOT` is only needed by the `commands/*.md` launchers. Export it once:
+
+```bash
+export SUITE_ROOT=/path/to/agents/commandcode-suite
+```
+
+Each launcher spells it `${SUITE_ROOT:?set SUITE_ROOT to the directory holding
+commandcode-suite}`, so an unset variable fails immediately and names itself
+rather than resolving to `/workflows/…` and reporting "file not found" from a
+path nobody chose.
+
+Running a workflow script directly (Option C above) does **not** need it: the
+scripts resolve their own location — `_runner.js` sets its own `SUITE_ROOT`
+from `__dirname` — so `node "<repo>/commandcode-suite/workflows/sdlc-feature.js" …`
+works with the variable unset. It is the launcher text, not the script, that
+depends on the environment.
 
 ### Before you trust an unattended run
 

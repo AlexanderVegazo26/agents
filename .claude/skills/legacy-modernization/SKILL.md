@@ -1,5 +1,6 @@
 ---
 name: legacy-modernization
+version: 1.0.0
 description: Strategy for evolving or replacing a legacy system safely — strangler-fig pattern, incremental migration, and when a full rewrite is actually justified. Load when planning modernization of an aging system or component.
 ---
 

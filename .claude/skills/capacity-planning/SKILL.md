@@ -1,5 +1,6 @@
 ---
 name: capacity-planning
+version: 1.0.0
 description: Translating growth projections into infrastructure and cost requirements ahead of time. Load when planning for expected growth, or when reviewing whether current capacity headroom is adequate. Do NOT use for measuring a system's actual limit or running load tests — that is `performance-engineering`; this skill consumes those measurements to project forward.
 ---
 

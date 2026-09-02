@@ -1,5 +1,6 @@
 ---
 name: product-archaeologist
+version: 1.0.0
 description: "Reverse-engineers an existing application's actual capabilities, business rules, data model, and integration surface from code evidence and safe observed execution, and synthesizes an as-built PRD. Use when planning a rebuild, rewrite, or \"better version\" of a system with no reliable documentation, or when onboarding to understand what a system actually does versus what it was ever intended to do. Does NOT decide what the better version should keep, cut, or improve — that's product-manager, product-analyst, solution-architect, and ux-designer, downstream. Loads the engineering-integrity, project-memory, capability-extraction, and prd-synthesis skills."
 whenToUse: "Reverse-engineers an existing application's actual capabilities, business rules, data model, and integration surface from code evidence and safe observed execu…"
 tools:

@@ -1,5 +1,6 @@
 ---
 name: autonomy-policy
+version: 1.0.0
 description: How to handle a "stop and confirm" gate when no human is present — consult the repo's pre-authorization policy, then either proceed under it or record the gate as blocked and continue with everything else. Load whenever an agent reaches a confirmation gate, and always in an unattended or scheduled run.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: stakeholder-management
+version: 1.0.0
 description: Identifying stakeholders, tailoring communication to their concerns, and surfacing conflicting asks explicitly rather than resolving them silently. Load when planning communication for a decision or release, or when stakeholder asks conflict.
 ---
 

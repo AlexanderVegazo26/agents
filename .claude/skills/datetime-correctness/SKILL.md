@@ -1,5 +1,6 @@
 ---
 name: datetime-correctness
+version: 1.0.0
 description: Timezone, DST, and date-arithmetic failure modes — UTC-storage discipline, spring-forward gaps, fall-back ambiguity, epoch/ISO serialization pitfalls, and month/year boundary arithmetic. Use whenever software-engineer handles dates or times across timezones or storage boundaries, and whenever qa-engineer designs boundary or invariant tests touching time. Do NOT use for locale formatting, currency, RTL layout, or translation completeness — those are localization concerns, not datetime correctness.
 ---
 

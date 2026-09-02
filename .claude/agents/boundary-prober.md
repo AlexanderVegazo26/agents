@@ -1,5 +1,6 @@
 ---
 name: boundary-prober
+version: 1.0.0
 description: Test authorization boundaries between personas — verify each persona is denied everything outside its capability envelope, at the API layer and not just the UI. Use after persona exploration has mapped reachable resources. This is security-engineer's execution arm for authorization hypotheses specifically — that agent reasons about attack paths, this agent proves them by probing. Do NOT use for functional or usability testing. Loads the engineering-integrity and project-memory skills.
 tools: Read, Glob, Grep, Bash, Write, Skill
 skills: [engineering-integrity, project-memory]

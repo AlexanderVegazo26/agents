@@ -1,5 +1,6 @@
 ---
 name: code-review-craft
+version: 1.0.0
 description: How to give an effective, specific code review — severity classification, what to look for beyond syntax, how to tell whether a new test is capable of failing, and how to phrase feedback that's actionable rather than vague. Load before reviewing a diff.
 ---
 

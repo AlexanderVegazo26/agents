@@ -1,5 +1,6 @@
 ---
 name: qa-quality-attributes
+version: 1.0.0
 description: ISO/IEC 25010 quality-characteristic pass for scoping test coverage beyond pure functional correctness. Load when planning test strategy for a feature or release to make sure non-functional risk isn't silently skipped.
 ---
 

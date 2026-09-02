@@ -1,5 +1,6 @@
 ---
 name: observability-design
+version: 1.0.0
 description: Designing logs, metrics, and traces so a production failure can actually be diagnosed — what to instrument, what makes an alert actionable, and correlation across services. Load when building a new service or reviewing whether a change has adequate observability.
 ---
 

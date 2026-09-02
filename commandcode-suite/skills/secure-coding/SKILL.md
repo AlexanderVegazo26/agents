@@ -1,5 +1,6 @@
 ---
 name: secure-coding
+version: 1.0.0
 description: OWASP-class secure coding practices — input validation, output encoding, auth/authz patterns, and common vulnerability classes to check for in any code touching user input or sensitive operations. Load when writing or reviewing code that handles input, auth, or sensitive data.
 ---
 

@@ -146,7 +146,21 @@ return {
   asBuiltPrd: prd,
   crossCheckFindings: mismatches,
   downstreamHandoff: handoff,
-  writtenTo: ['.claude/discovery/prd.md', '.claude/discovery/evidence-matrix.md'],
+  // NOT a list of files that exist. It is what the PRD agent was ASKED to
+  // write, reported as an unverified claim rather than as an observation.
+  //
+  // This field used to be a hardcoded list literal, unconditioned on anything:
+  // a positive assertion that two artifacts had been produced, emitted
+  // identically whether or not they had. That is the "artifacts over
+  // assertions" failure the routing policy names.
+  //
+  // The canonical `sdlc-suite/workflows/system-archaeology.js` now checks the
+  // filesystem and reports observed paths plus `claimedNotFound`. This port
+  // does not carry that wiring yet, so it states the weaker true thing instead
+  // of the stronger false one.
+  writtenToVerified: false,
+  writtenToClaimed: ['.claude/discovery/prd.md', '.claude/discovery/evidence-matrix.md'],
+  writtenTo: [],
   note:
     'EVIDENCE ONLY. This workflow deliberately produces no recommendation about what a rebuild should keep, cut, or improve — that is product-manager, product-analyst, solution-architect, and ux-designer, downstream, with a human confirming prioritization.',
 }

@@ -1,5 +1,6 @@
 ---
 name: accessibility
+version: 1.0.0
 description: WCAG 2.2-aligned accessibility practices — keyboard navigation, screen reader support, color contrast, and how to audit for conformance. Load whenever designing, implementing, or reviewing anything user-facing.
 ---
 

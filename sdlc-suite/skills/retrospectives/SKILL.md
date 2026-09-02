@@ -1,5 +1,6 @@
 ---
 name: retrospectives
+version: 1.0.0
 description: Running a retrospective that produces real, tracked changes in behavior — structure, psychological safety, and turning takeaways into lessons-learned rather than a document that's filed and forgotten. Load at the end of a project phase, release, or incident cycle.
 ---
 

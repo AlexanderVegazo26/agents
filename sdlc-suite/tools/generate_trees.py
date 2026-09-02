@@ -201,8 +201,10 @@ class Target:
     #: Claude `model:` value -> this harness's model id. A value mapping to None
     #: is omitted entirely, which is how "inherit" means "follow the session".
     model_map: dict[str, str | None] = field(default_factory=dict)
-    #: frontmatter key order; keys not listed are appended in source order
-    key_order: tuple = ("name", "description", "tools", "skills", "model")
+    #: frontmatter key order; keys not listed are appended in source order.
+    #: `version` sits second, matching where the source carries it, so the
+    #: Markdown trees are byte-comparable against sdlc-suite/ line for line.
+    key_order: tuple = ("name", "version", "description", "tools", "skills", "model")
 
 
 TARGETS = {
@@ -327,8 +329,11 @@ def emit_kimi(name: str, front: dict, body: str, t: Target, src_rel: str) -> str
              for e in entries
              if re.sub(r"\(.*\)", "", e).strip() in t.tool_map]
     subs = subagents(entries)
-    lines = ["---", f"name: {name}", f"description: {yaml_dq(desc)}",
-             f"whenToUse: {yaml_dq(when_to_use(desc))}"]
+    lines = ["---", f"name: {name}"]
+    if front.get("version"):
+        lines.append(f"version: {front['version']}")
+    lines += [f"description: {yaml_dq(desc)}",
+              f"whenToUse: {yaml_dq(when_to_use(desc))}"]
     if tools:
         lines.append("tools:")
         lines += [f"  - {x}" for x in dict.fromkeys(tools)]
@@ -348,9 +353,14 @@ def emit_json(name: str, front: dict, body: str, t: Target, src_rel: str) -> str
     d: dict = {
         "_generated": f"from {src_rel} by sdlc-suite/tools/generate_trees.py — do not edit",
         "name": name,
-        "description": desc,
-        "whenToUse": when_to_use(desc),
     }
+    # A JSON object, not frontmatter: emitting `version: 1.0.0` here the way the
+    # Markdown trees do would produce an unparseable file rather than a visible
+    # error, which is the whole reason the dialect is handled per emitter.
+    if front.get("version"):
+        d["version"] = front["version"]
+    d["description"] = desc
+    d["whenToUse"] = when_to_use(desc)
     if tools:
         d["tools"] = list(dict.fromkeys(tools))
     subs = subagents(entries)
@@ -363,10 +373,15 @@ def emit_json(name: str, front: dict, body: str, t: Target, src_rel: str) -> str
 
 def emit_toml(name: str, front: dict, body: str, t: Target, src_rel: str) -> str:
     desc = front.get("description", "").replace("\n", " ").strip()
+    # TOML wants `version = "1.0.0"`. A bare `1.0.0` is not a TOML value at all,
+    # and `version: 1.0.0` is not TOML syntax — the same field, a third spelling.
+    version = (f'version = "{toml_dq(front["version"])}"\n'
+               if front.get("version") else "")
     return (
         f'# GENERATED from {src_rel} — do not edit. '
         f'Run python sdlc-suite/tools/generate_trees.py\n'
         f'name = "{toml_dq(name)}"\n'
+        f'{version}'
         f'description = "{toml_dq(desc)}"\n'
         f'developer_instructions = """{body.strip()}"""\n'
     )

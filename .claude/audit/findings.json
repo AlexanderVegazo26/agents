@@ -1,9 +1,16 @@
 {
+  "_historical": "**Historical record — not a current statement about this registry.** This audit was run on 2026-08-04 against a 15-agent / 51-skill registry. The tree has since grown and been restructured; the counts, file paths and section numbers below describe the registry as it stood then. No code reads this directory. It is kept because the reasoning is worth having, and because one of its resolutions was later shown to be wrong (see `findings.json`, the TaskCreate entry) — which is itself the most useful thing in it. For current counts see the generated table in `.claude/README.md`.",
   "audit": {
     "date": "2026-08-04",
     "root": ".claude",
     "scope": "agents (15), skills (51), memory (1), settings (1); user-global tree inventoried for precedence only",
-    "totals": { "blocker": 1, "high": 4, "medium": 7, "low": 3, "all": 15 },
+    "totals": {
+      "blocker": 1,
+      "high": 4,
+      "medium": 7,
+      "low": 3,
+      "all": 15
+    },
     "dissolved_on_verification": [
       {
         "claim": "No agent declares the Skill tool, so 'Load the <skill> skill' directives are unsatisfiable",
@@ -247,8 +254,15 @@
     },
     "process_note": "The first PATH-01 pass used Get-Content -Raw + WriteAllText, which in PowerShell 5.1 read UTF-8 as cp1252 and double-encoded every em-dash and section sign in 16 files. Caught on the next read, reversed via cp1252 round-trip, verified 0 mojibake remaining. All later edits used the editor rather than shell rewrites. Future bulk edits of this tree must not round-trip through Get-Content -Raw.",
     "added_this_session_not_audit_findings": {
-      "agents": ["persona-discovery", "persona-runner", "boundary-prober", "journey-orchestrator"],
-      "skills": ["exploration-charter (with personas-schema-template.yaml sibling - the registry's first progressive-disclosure reference file)"],
+      "agents": [
+        "persona-discovery",
+        "persona-runner",
+        "boundary-prober",
+        "journey-orchestrator"
+      ],
+      "skills": [
+        "exploration-charter (with personas-schema-template.yaml sibling - the registry's first progressive-disclosure reference file)"
+      ],
       "audit_fixes_applied_pre_install": [
         "bare memory/<project>/ path corrected to .claude/memory/<project>/ (PATH-01)",
         "tools: Task corrected to scoped Agent(persona-runner) - bare Task is not a valid tool name, and the scoping is the DELEG-01 lesson",

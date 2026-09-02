@@ -1,5 +1,6 @@
 ---
 name: cicd-and-infrastructure
+version: 1.0.0
 description: Pipeline design, Infrastructure as Code practices, environment management, deployment strategies, and environment promotion. Load when building/changing a CI/CD pipeline, writing IaC, or planning how a change moves from dev to production.
 ---
 

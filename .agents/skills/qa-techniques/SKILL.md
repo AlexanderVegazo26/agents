@@ -1,5 +1,6 @@
 ---
 name: qa-techniques
+version: 1.0.0
 description: Core test-design techniques — equivalence partitioning, boundary value analysis, state transition testing, invariant-based testing, and metamorphic testing — plus how to validate a new check by making it fail and how fixture shape creates blind spots. Load when designing test cases for a feature, endpoint, or function, not just when running existing tests.
 ---
 

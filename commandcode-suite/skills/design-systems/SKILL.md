@@ -1,5 +1,6 @@
 ---
 name: design-systems
+version: 1.0.0
 description: Using and evolving a shared design system — component reuse discipline, and when a new pattern is actually warranted vs. a one-off. Load when designing anything that could reuse or extend existing components.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: performance-engineer
+version: 1.0.0
 description: Owns performance validation, load/stress testing, scalability analysis, and capacity planning through measured evidence. Use for dedicated performance investigations, capacity planning, and pre-launch load testing. Distinct from qa-engineer's lightweight per-change performance check — this agent is the deep-dive specialist. Not for functional correctness (qa-engineer) or continuous production monitoring (site-reliability).
 tools: Bash, Read, Write, Grep, Glob, Agent(qa-runner), Skill
 skills: [autonomy-policy]

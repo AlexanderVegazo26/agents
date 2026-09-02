@@ -1,5 +1,7 @@
 # Registry Audit — `.claude` agent/skill suite
 
+> **Historical record — not a current statement about this registry.** This audit was run on 2026-08-04 against a 15-agent / 51-skill registry. The tree has since grown and been restructured; the counts, file paths and section numbers below describe the registry as it stood then. No code reads this directory. It is kept because the reasoning is worth having, and because one of its resolutions was later shown to be wrong (see `findings.json`, the TaskCreate entry) — which is itself the most useful thing in it. For current counts see the generated table in `.claude/README.md`.
+
 Audited: 2026-08-04 · Root: `<repo>/.claude` · Read-only through Phase 5.
 
 > ## REMEDIATION STATUS — all 15 findings applied 2026-08-04

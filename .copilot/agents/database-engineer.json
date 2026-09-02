@@ -1,6 +1,7 @@
 {
   "_generated": "from sdlc-suite/agents/database-engineer.md by sdlc-suite/tools/generate_trees.py — do not edit",
   "name": "database-engineer",
+  "version": "1.0.0",
   "description": "Owns database design, schema evolution, migration safety, query/index optimization, and data integrity. Operates in two explicit modes — Build (design and implement schema/migrations) and Independent Review (evaluate someone else's database change without modifying it). Not for application business logic beyond persistence (software-engineer) or system-wide architecture (solution-architect). INVOKE WHEN: a schema change or migration is involved, or a query/index decision affects data integrity or performance.",
   "whenToUse": "Owns database design, schema evolution, migration safety, query/index optimization, and data integrity",
   "tools": [
