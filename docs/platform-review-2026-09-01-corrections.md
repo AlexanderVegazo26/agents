@@ -26,6 +26,42 @@ dozen places. Verdicts: 1 already fixed, 12 premises hold exactly, 13 partly sta
 
 ---
 
+## Superseded after implementation
+
+**Phase 5 finding 3 — `nawi-vex/` untracked and not ignored — is resolved by
+removal, not only by an ignore rule.** It was a linked git *worktree* of the
+`nawi` repository (`nawi-vex/.git` was a file pointing into
+`nawi/.git/worktrees/nawi-vex`), 623 MB on disk, checked out on branch
+`vex-consolidation`.
+
+Checked before removing it, because deleting a worktree directory is the kind of
+thing that quietly destroys work:
+
+- the worktree was **clean** — zero modified, zero untracked beyond build output,
+  so it held nothing that was not already committed;
+- its branch was **2 commits ahead of `nawi`'s `main`** and `main` was 0 behind —
+  a 3,820-line video-export feature;
+- those commits live in `nawi/.git`, which is the *common* git directory, so
+  `git worktree remove` deregisters the checkout and **cannot** delete the branch.
+
+So it was removed with `git worktree remove` rather than `rm -rf` (which would
+have left a stale registration), and `vex-consolidation` is intact at `418025b`.
+No merge was performed: `nawi`'s working tree has 59 uncommitted modified files,
+6 of which collide with files the fast-forward would touch, and resolving that is
+the owner's call about their own project, not a side effect of this cleanup.
+
+The `nawi*/` ignore rule stays. The directory that motivated it is gone, but the
+next sibling worktree would be just as invisible.
+
+**The pre-rename product codename is gone from the tree.** The project is `nawi`;
+that name was redacted from the review documents and dropped from the
+`.gitleaks.toml` pattern, because a literal-match rule is the only thing that
+would still have been publishing it. It survives in two commit *subjects* on
+`main` (`dd3c5ee`, `36a3fdd`), which are already published — see this review's own
+reasoning for why rewriting `main` over two words is disproportionate.
+
+---
+
 ## Resolved open questions (Phase 7)
 
 **Q1 — what is in the published history?** Settled. `git fetch origin` was run.

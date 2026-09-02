@@ -3,15 +3,19 @@
 # outputs it produces (out/, release/, test-results/) are ignored there, not
 # here, so this file no longer duplicates them.
 
-# --- nawi ------------------------------------------------------------
-# It was recorded as a gitlink (mode 160000) with no .gitmodules and no remote,
-# so cloning this repo produced an empty, unpopulatable directory. It is a
-# genuinely separate project — its own history, its own branches — that these
-# agents build against, not a component of this one. Untracked deliberately:
-# `git rm --cached nawi`. Its repository is intact on disk.
-nawi
-# Same directory, pre-rename name — until the rename lands, both must be ignored.
-snagit-clone/
+# --- nawi ---------------------------------------------------------------
+# `nawi/` is a separate repository — its own history, its own branches — that
+# these agents build against. It is not a component of this one. It was once
+# recorded here as a gitlink (mode 160000) with no .gitmodules and no remote, so
+# cloning this repo produced an empty, unpopulatable directory; `git rm --cached`
+# fixed that and it stays untracked deliberately. Its repository is intact on disk.
+#
+# The trailing `/` and the `*` both matter. `nawi` alone does not match a sibling
+# like `nawi-vex`, and one such directory — a linked worktree of this same repo,
+# 623 MB of it — was untracked but NOT ignored, so a single `git add -A` would
+# have committed a second project including its node_modules. That worktree has
+# since been removed; the pattern stays because the next one would be silent too.
+nawi*/
 
 # --- Agent runtime artifacts -------------------------------------------------
 # Worktrees created by the Workflow tool for isolated agent builds. They are
@@ -80,12 +84,6 @@ desktop.ini
 .commandcode/taste/
 **/settings.json
 !.vscode/settings.json
-
-# --- Sibling worktrees and separate projects --------------------------------
-# nawi-vex is a git worktree of the nawi repo. The bare `nawi` rule above does
-# not match it, so one `git add -A` would have committed a second project
-# including its node_modules/ and a 265 KB lockfile.
-nawi*/
 
 # --- Run state ---------------------------------------------------------------
 # Per-run recorder output. Transient, per-machine, and regenerated every run.

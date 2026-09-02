@@ -66,5 +66,5 @@ or `file -b`.
 Definitions are read fresh per invocation, so an edit takes effect without a restart —
 which also means a broken one breaks immediately.
 
-`nawi/` (still named `snagit-clone/` on disk until the rename lands — both are ignored) is a separate repository these agents build against — deliberately
+`nawi/` is a separate repository these agents build against — deliberately
 untracked here, with its own history and branches.
