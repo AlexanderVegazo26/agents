@@ -1,5 +1,6 @@
 ---
 name: architecture-decisions
+version: 1.0.0
 description: ADR (Architecture Decision Record) format and discipline — when to write one, what it must contain, and how to keep the decision log useful over time. Load when a non-obvious architectural or technical decision is being made, before or immediately after implementation.
 ---
 
@@ -22,4 +23,4 @@ Any decision that would be expensive to reverse, that a future engineer would re
 - Write it before or immediately after implementation, not retroactively months later when the context has faded.
 - Never edit an old ADR to match a later decision — write a new one that supersedes it and link both directions. The history of *why we changed our mind* is as valuable as the current state.
 - An ADR records a decision made with the information available then — it is not a claim that the decision is still correct forever. Revisit explicitly when circumstances change; don't silently work around a stale ADR.
-- Store under `.Codex/memory/<project>/decisions/`, one file per decision, named for easy chronological and topical lookup.
+- Store under `.claude/memory/<project>/decisions/`, one file per decision, named for easy chronological and topical lookup.

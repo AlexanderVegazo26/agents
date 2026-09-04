@@ -1,0 +1,231 @@
+# Retirement: stamp what still recurs, then retire what has not.
+#
+# Separate from `distil.yml` on purpose. A retirement is a different judgement
+# from an addition — "is this still true?" rather than "is this worth keeping?"
+# — and riding along in a pull request someone opened to review new candidates
+# is how a retirement gets merged without being read.
+#
+# ---------------------------------------------------------------------------
+# MANUAL ONLY, DELIBERATELY. There is no `schedule:` here.
+# ---------------------------------------------------------------------------
+#
+# Same two preconditions as `distil.yml`, and one of its own:
+#
+#   1. Branch protection exists on the default branch. Until it does, "the job
+#      cannot reach the default branch" is a property of this file's own good
+#      behaviour, and this file is editable.
+#   2. A month of real run data exists. Retiring against an empty run store is
+#      actively harmful here in a way it is not in `distil.yml`: with no
+#      outcomes to read, `--stamp` confirms nothing, and everything older than
+#      180 days is retired on the next pass. A schedule enabled before there is
+#      run data would quietly empty the directory.
+#   3. There is something to retire. The first entry cannot be 180 days stale
+#      until 180 days after the first merge.
+#
+# Two settings must also be in place, or the job fails AFTER pushing and leaves
+# an orphaned branch: "Allow GitHub Actions to create and approve pull requests"
+# must be on, and the `learnings` label must exist — `gh pr create --label` on a
+# missing label is an error, not a warning.
+#
+# When all three hold, uncomment the two lines below.
+#
+#   schedule:
+#     - cron: '0 7 1 * *'        # 07:00 UTC on the 1st of each month
+#
+# ---------------------------------------------------------------------------
+# Decay is by recurrence, not by calendar
+# ---------------------------------------------------------------------------
+#
+# The order of the two steps below is the whole property, and reversing them
+# would leave a calendar policy wearing a recurrence policy's name:
+#
+#   --stamp   sets `lastConfirmed` on every learning whose signature appeared in
+#             two or more distinct runs. It reads the entire run store, not the
+#             window after `.last-distil`, so it is idempotent and independent
+#             of whatever `distil.yml` last did.
+#   --retire  moves anything still unconfirmed for 180 days to
+#             `learnings/retired/`.
+#
+# Run alone, `--retire` would retire everything at 180 days whether or not it is
+# still true. Staleness is detected by ABSENCE OF RECURRENCE, and the stamp is
+# what makes absence mean anything.
+#
+# `--stamp` is also the ONLY edit this platform ever makes to an existing
+# learning, and it rewrites exactly one line: the `lastConfirmed:` date. The
+# design says both "never edits an existing learning" and "a recurrence updates
+# only `lastConfirmed`"; those cannot both hold literally, and this is where the
+# carve-out lives — in the retirement pull request, where a reviewer is already
+# reading the file. `distil.yml` never invokes it.
+#
+# Note that `--retire` skips any learning whose `lastConfirmed` is not a plain
+# date rather than treating it as infinitely old. Retiring on an unparseable
+# field would remove a learning by accident, and a hand-edited file is exactly
+# where that field goes wrong.
+
+name: decay
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Report only; move nothing and open no pull request'
+        type: boolean
+        default: false
+      days:
+        description: 'Retire entries unconfirmed for this many days'
+        type: string
+        default: '180'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: decay
+  cancel-in-progress: false
+
+jobs:
+  decay:
+    name: Stamp recurrence, retire the rest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pinned to the same full commit SHAs as `ci.yml` and `distil.yml`. A tag
+      # is mutable; a moved tag is a silent supply-chain change.
+      - name: Check out the working tree
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      # `distil.py` refuses to start at all without a working redactor, in every
+      # mode including this one. That is a deliberately uniform invariant rather
+      # than a per-mode judgement: `--stamp` writes only a date and `--retire`
+      # only moves a file, so neither needs the filter today, but a mode that
+      # can run without it is a bypass waiting for the next person who adds a
+      # field to it.
+      - name: The redactor is alive
+        run: python sdlc-suite/tools/redact.py --selftest
+
+      - name: Stamp recurrence, then retire
+        id: decay
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          DAYS: ${{ inputs.days }}
+        run: |
+          set -euo pipefail
+
+          args=(--stamp --retire --retire-days "${DAYS}" --pr-body "$RUNNER_TEMP/pr-body.md")
+          if [ "${DRY_RUN}" != "true" ]; then
+            args+=(--emit)
+          fi
+
+          # Captured, not piped: a pipeline reports the exit status of its last
+          # stage, so `| tee` would report tee's success whatever this did.
+          set +e
+          python sdlc-suite/tools/distil.py "${args[@]}"
+          code=$?
+          set -e
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::distil.py --stamp --retire exited ${code}"
+            exit "$code"
+          fi
+
+      - name: Anything to propose?
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A stamp rewrites one line of a tracked file and a retirement renames
+          # one, so `git status` over `learnings/` is the honest question here —
+          # unlike `distil.yml`, where the output is a new file in a known
+          # directory. `--porcelain` is the machine-readable form and does not
+          # change between git versions the way the human output does.
+          if [ -n "$(git status --porcelain -- learnings/)" ]; then
+            git status --porcelain -- learnings/
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "nothing recurred and nothing is stale — no pull request"
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push a branch and open a pull request
+        if: steps.gate.outputs.any == 'true' && inputs.dry-run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          branch="learnings/retire-$(date -u +%Y%m%d-%H%M%S)"
+          git switch -c "$branch"
+
+          # Only `learnings/`, and only the tracked parts of it: `-A` here is
+          # scoped to that pathspec so a rename is staged as a rename, which is
+          # what makes the retirement readable as a move in the diff rather than
+          # as a delete plus an add.
+          git add -A learnings/
+
+          # Fail closed if anything outside `learnings/` was staged. `.last-distil`
+          # and `quarantine/` are gitignored so neither can appear here, but the
+          # guard is what makes that a checked fact rather than an assumption.
+          if git diff --cached --name-only | grep -qv '^learnings/'; then
+            echo "::error::something outside learnings/ is staged:"
+            git diff --cached --name-only
+            exit 1
+          fi
+
+          n=$(git diff --cached --name-only | wc -l)
+          git -c user.name='distiller' \
+              -c user.email='distiller@users.noreply.github.com' \
+              commit -m "learnings: decay pass over ${n} file(s)"
+          git push -u origin HEAD
+
+          {
+            echo "Automated decay pass. **Merging is the ratification** —"
+            echo "nothing in this loop can reach the default branch."
+            echo
+            echo "Two distinct kinds of change may appear below, and they are"
+            echo "reviewed differently:"
+            echo
+            echo '- **A `lastConfirmed` date moved forward.** The signature'
+            echo '  recurred across two or more distinct runs. This is the only'
+            echo '  edit this platform ever makes to an existing learning, and it'
+            echo '  changes exactly one line. Check that the line is the only'
+            echo '  thing that changed.'
+            echo '- **A file moved to `learnings/retired/`.** It has not recurred'
+            echo "  for ${DAYS} days. Nothing is deleted; move it back by hand if"
+            echo '  it is still true and simply has not been exercised.'
+            echo
+            echo '### Distiller report'
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/pr-body.md"
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+
+          gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$branch" \
+            --title "learnings: decay pass (${n} file(s))" \
+            --body-file "$RUNNER_TEMP/body.md" \
+            --label learnings
+
+      - name: Report
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### decay"
+            echo
+            echo "- exit code: \`${{ steps.decay.outputs.code }}\`"
+            echo "- changes to propose: \`${{ steps.gate.outputs.any }}\`"
+            echo "- retire threshold: \`${{ inputs.days }}\` days"
+            echo "- dry run: \`${{ inputs.dry-run }}\`"
+            echo
+            echo "Nothing to retire is a normal outcome and exits 0."
+          } >> "$GITHUB_STEP_SUMMARY"

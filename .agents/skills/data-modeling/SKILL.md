@@ -1,5 +1,6 @@
 ---
 name: data-modeling
+version: 1.0.0
 description: Schema design, migration safety, query optimization, and index strategy for relational and non-relational data stores. Load when designing a schema, planning a migration, or investigating slow queries.
 ---
 

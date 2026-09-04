@@ -1,5 +1,6 @@
 ---
 name: ux-research
+version: 1.0.0
 description: Grounding design decisions in actual user behavior — research methods, evidence quality, and how to state a design assumption when research isn't available. Load before or during design work, especially when a design choice is non-obvious.
 ---
 

@@ -1,0 +1,50 @@
+# Tier 1 of the learning-loop redactor. Copy this file to
+# `redaction/denylist.txt` and replace every line below with your own strings.
+#
+#   cp redaction/denylist.example.txt redaction/denylist.txt
+#
+# `redaction/denylist.txt` is gitignored and must stay that way. The list itself
+# is instance data: it names your employer, your unreleased projects, your
+# customers and your hosts, so committing it would publish exactly the strings
+# it exists to keep unpublished. That is why this example ships with
+# placeholders and no real name -- an example file that carried real names would
+# be the leak it is meant to prevent.
+#
+# How a match is treated
+# ----------------------
+# One entry per line. Matching is case-insensitive and by SUBSTRING, so
+# `example-employer` also catches `example-employer-api` and
+# `ExampleEmployerPortal`. A candidate containing any entry is DROPPED, not
+# quarantined: these are strings you have declared private, and there is no
+# benign reason for one to appear in a cross-project heuristic.
+#
+# Blank lines and lines beginning with `#` are ignored. A blank entry is ignored
+# too, deliberately -- the empty string is a substring of every text, so one
+# stray blank line would otherwise drop every candidate forever and leave a loop
+# that looks permanently clean.
+#
+# What NOT to put here
+# --------------------
+# Absolute home paths, email addresses, private IPs, internal hostnames, ticket
+# identifiers and high-entropy strings are already covered by the compiled regex
+# classes in `sdlc-suite/tools/redact.py`. Those are not configurable on
+# purpose, so that no edit to a file can weaken them. This list is only for
+# literal names a regex cannot know about.
+#
+# Keep entries at three characters or more. A one- or two-character entry is a
+# substring of almost everything and will silently drop the whole corpus.
+
+# --- Organisations and employers -------------------------------------------
+example-employer
+example-holdings
+
+# --- Unreleased or internal project codenames ------------------------------
+internal-codename
+project-placeholder
+
+# --- Customers and partners ------------------------------------------------
+example-customer
+
+# --- Hosts and internal service names not caught by the regex classes ------
+# (anything ending .internal, .corp, .local or .lan is already a regex class)
+buildhost-placeholder

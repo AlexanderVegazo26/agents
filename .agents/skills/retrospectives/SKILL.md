@@ -1,5 +1,6 @@
 ---
 name: retrospectives
+version: 1.0.0
 description: Running a retrospective that produces real, tracked changes in behavior — structure, psychological safety, and turning takeaways into lessons-learned rather than a document that's filed and forgotten. Load at the end of a project phase, release, or incident cycle.
 ---
 
@@ -19,7 +20,7 @@ People only surface the real, uncomfortable findings (a shortcut that almost cau
 
 ## Turning takeaways into lessons learned
 
-Every actionable takeaway needs an owner and a tracked follow-up, same as an incident action item — an insight with no owner decays back into "yeah, we all kind of know that" within a month. Persist genuinely durable lessons to `.Codex/memory/<project>/lessons-learned.md`, cross-referenced with the source event (release, incident, project phase).
+Every actionable takeaway needs an owner and a tracked follow-up, same as an incident action item — an insight with no owner decays back into "yeah, we all kind of know that" within a month. Persist genuinely durable lessons to `.claude/memory/<project>/lessons-learned.md`, cross-referenced with the source event (release, incident, project phase).
 
 ## Closing the loop
 

@@ -1,10 +1,13 @@
 ---
 name: persona-discovery
+version: 1.0.0
 description: Derive the real end-user roles of an application from code evidence and emit persona specs. Use before any exploratory or role-based testing, when onboarding to an unfamiliar codebase, or when asked who the users of a system are. Do NOT use to test behavior — this agent only identifies and specifies personas. Loads the engineering-integrity and project-memory skills.
 tools: Read, Glob, Grep, Write, Skill
-model: inherit
 skills: [engineering-integrity, project-memory]
+model: inherit
 ---
+
+<!-- GENERATED from sdlc-suite/agents/persona-discovery.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Persona Discovery
 
@@ -14,7 +17,7 @@ Produce `.claude/personas/*.yaml` describing every distinct end-user role the ap
 
 ## 1. Hard rule
 
-The `engineering-integrity` and `project-memory` skills are preloaded — their evidence-over-claims and never-invent rules apply here without restatement. Domain-specific sharpening: **you infer personas from the codebase.** You do not infer them from the product category, the repo name, or your own expectations of what an app like this has. A persona with no `path:line` provenance does not get written.
+Load the `engineering-integrity` and `project-memory` skills at task start if they are not already loaded (frontmatter preload is not guaranteed to resolve inside a plugin). They are then in force — their evidence-over-claims and never-invent rules apply here without restatement. Domain-specific sharpening: **you infer personas from the codebase.** You do not infer them from the product category, the repo name, or your own expectations of what an app like this has. A persona with no `path:line` provenance does not get written.
 
 ## 2. Relationship to `product-analyst`
 
@@ -62,7 +65,7 @@ That agent maps capabilities to personas once both have run — feed it your con
 
 6. **Cross-check against `product-analyst`.** Note any implemented persona with no corresponding product requirement, and any specified persona with no implementation trace. Both are findings, listed in `INDEX.md`, not silently resolved.
 
-7. **Emit** one YAML file per persona conforming to the schema at `.claude/skills/exploration-charter/personas-schema-template.yaml`, plus `.claude/personas/INDEX.md`: the roster, the evidence matrix (persona × source type), unresolved ambiguities, `product-analyst` cross-check findings, and coverage gaps.
+7. **Emit** one YAML file per persona conforming to `personas-schema-template.yaml`, which ships with the `exploration-charter` skill (load the skill to read it — do not construct a path to it, since where the skill lives differs between a project install and a plugin install), plus `.claude/personas/INDEX.md`: the roster, the evidence matrix (persona × source type), unresolved ambiguities, `product-analyst` cross-check findings, and coverage gaps.
 
 ## 5. Boundaries with the Rest of the Suite
 

@@ -1,5 +1,6 @@
 ---
 name: exploration-charter
+version: 1.0.0
 description: Format and conventions for exploratory test charters and session reports — writing or reviewing a persona exploration session, generating charters from persona jobs, and triaging session findings into work items. Also holds the persona spec schema. Used by persona-runner, boundary-prober, and journey-orchestrator. Do NOT use for test-case design technique (that is qa-techniques) or for deciding whether a failure is a bug vs. a flake (that is qa-triage).
 ---
 

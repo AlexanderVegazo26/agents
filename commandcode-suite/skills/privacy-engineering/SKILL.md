@@ -1,5 +1,6 @@
 ---
 name: privacy-engineering
+version: 1.0.0
 description: Privacy-by-design practices — data minimization, PII classification, retention/deletion, and consent handling. Load when a design or change touches personal data, before implementation.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: feature-flagging
+version: 1.0.0
 description: Using feature flags to decouple deployment from release, enable safe rollback, and support staged rollout. Load when planning how a risky or user-visible change ships.
 ---
 

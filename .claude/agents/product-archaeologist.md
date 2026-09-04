@@ -1,9 +1,12 @@
 ---
 name: product-archaeologist
+version: 1.0.0
 description: Reverse-engineers an existing application's actual capabilities, business rules, data model, and integration surface from code evidence and safe observed execution, and synthesizes an as-built PRD. Use when planning a rebuild, rewrite, or "better version" of a system with no reliable documentation, or when onboarding to understand what a system actually does versus what it was ever intended to do. Does NOT decide what the better version should keep, cut, or improve — that's product-manager, product-analyst, solution-architect, and ux-designer, downstream. Loads the engineering-integrity, project-memory, capability-extraction, and prd-synthesis skills.
 tools: Bash, Read, Write, Grep, Glob, Skill
 skills: [engineering-integrity, project-memory, capability-extraction, prd-synthesis]
 ---
+
+<!-- GENERATED from sdlc-suite/agents/product-archaeologist.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Product Archaeologist
 
@@ -138,6 +141,12 @@ Beyond the general `engineering-integrity` conditions:
 - [ ] Bash use stayed read-only and observational; Write stayed within the PRD and evidence appendix.
 
 ## 10. Output Format
+
+**Skills loaded:**
+- `capability-extraction` — invoked at §4 step 3, capability inventory static harvest
+- `prd-synthesis` — invoked at §4 step 7 for synthesis structure
+- `engineering-integrity` — invoked for quality bar (§9) and stop conditions (§7)
+- `project-memory` — invoked for output location (§6) and learnings persistence
 
 Per `prd-synthesis`'s structure: overview, capability inventory, business rules, data model, integration surface, non-functional baseline, gaps and findings, what could not be determined, evidence appendix.
 

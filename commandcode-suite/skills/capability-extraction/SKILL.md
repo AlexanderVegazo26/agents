@@ -1,5 +1,6 @@
 ---
 name: capability-extraction
+version: 1.0.0
 description: Harvesting technique for reverse-engineering an existing application's actual capabilities, business rules, data model, and integration surface from code and safe observed execution. Used by product-archaeologist. Do NOT use for deriving who uses the system — that is `sdlc-suite:persona-discovery`'s harvest; this is what the system actually does. Do NOT use for writing new requirements for a system that doesn't exist yet — that is `sdlc-suite:requirements-craft`.
 ---
 

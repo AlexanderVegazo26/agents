@@ -9,7 +9,7 @@ repository on this machine, with this repo as the single source of truth.
 ## 1. Architecture
 
 ```
-~/Documents/Documents - Alexander’s MacBook Pro/personal/agents   ← source of truth (edit here)
+<agents-repo>/       ← your checkout; source of truth (edit here)
 └── .kimi-code/
     ├── agents/      22 custom agents (Markdown + YAML frontmatter)
     ├── skills/      60 domain skills + 6 flow skills
@@ -20,11 +20,11 @@ repository on this machine, with this repo as the single source of truth.
 └── config.toml      extra_agent_dirs + extra_skill_dirs → point at the repo above
 
 ~/bin/               (registered on PATH via ~/.zshrc)
-└── kflow            shim → <repo>/kflow (workflow shortcut)
+└── kflow            shim → <agents-repo>/kflow (workflow shortcut)
 ```
 
-> The repo path contains spaces and a curly apostrophe (`Alexander’s`). Always
-> quote it in shell commands and TOML strings — all examples below do.
+> If your checkout path contains spaces or punctuation, quote it in shell
+> commands and TOML strings — the examples below are written already quoted.
 
 **Why a shim, not a symlink:** a shim works in every shell, survives Spotlight
 path renames being re-typed, and needs no special flags. Symlinks would also
@@ -37,9 +37,13 @@ work on macOS; the shim is kept for parity with the Windows setup.
 ### 2.1 User-level registration (`~/.kimi-code/config.toml`)
 
 ```toml
-extra_agent_dirs = ["/Users/alexandervegazo/Documents/Documents - Alexander’s MacBook Pro/personal/agents/.kimi-code/agents"]
-extra_skill_dirs = ["/Users/alexandervegazo/Documents/Documents - Alexander’s MacBook Pro/personal/agents/.kimi-code/skills"]
+extra_agent_dirs = ["<agents-repo>/.kimi-code/agents"]
+extra_skill_dirs = ["<agents-repo>/.kimi-code/skills"]
 ```
+
+Replace `<agents-repo>` with the absolute path to your own checkout of this
+repository. These are literal TOML path strings — write the full path out;
+do not rely on `~` or `$HOME` being expanded.
 
 Kimi Code scans these "Extra" scope directories in **every** project
 (priority: Project > Extra > User > Plugin > Built-in). Edits to the repo take
@@ -101,7 +105,7 @@ structured JSON extracted between phases.
 `kflow` resolves the suite by absolute path and runs the workflow against your
 **current working directory** — `cd` into any project and go.
 
-The `~/bin/kflow` shim execs `<repo>/kflow`; `~/bin` is prepended to `PATH` in
+The `~/bin/kflow` shim execs `<agents-repo>/kflow`; `~/bin` is prepended to `PATH` in
 `~/.zshrc` (open a new shell or `source ~/.zshrc` after first install).
 
 ### 2.5 `runner.py` resolution rules
@@ -109,7 +113,7 @@ The `~/bin/kflow` shim execs `<repo>/kflow`; `~/bin` is prepended to `PATH` in
 | Setting | Default | Override |
 |---|---|---|
 | Kimi binary | `~/.kimi-code/bin/kimi` (standalone; NOT PATH `kimi`, which may be the legacy Python CLI) | `$KIMI_BIN` |
-| Agent files | `<repo>/.kimi-code/agents/<name>.md` (absolute) | — |
+| Agent files | `<agents-repo>/.kimi-code/agents/<name>.md` (absolute) | — |
 | Working dir | caller's cwd (the target repo) | — |
 | Approval mode | none needed — print mode (`-p`) is inherently non-interactive and executes tool calls without prompts | `$KIMI_APPROVAL_FLAG` (escape hatch for future versions) |
 | Per-agent timeout | 3600s | `timeout=` arg in the script |
@@ -227,6 +231,6 @@ design); see [`memory/README.md`](./memory/README.md).
 ## 7. Platform note
 
 This guide describes the **macOS** machine. The suite was previously set up on a
-Windows machine (`C:\Users\avega`, `kimi.exe`, cmd/PowerShell shims); that setup
+Windows machine (`kimi.exe`, cmd/PowerShell shims); that setup
 is independent. `runner.py` prefers `~/.kimi-code/bin/kimi` and falls back to
 `kimi.exe`, so the same workflows run on both platforms unchanged.

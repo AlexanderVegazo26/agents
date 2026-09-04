@@ -1,5 +1,6 @@
 ---
 name: risk-management
+version: 1.0.0
 description: Identifying, rating, and tracking risk across a project — likelihood/impact assessment and the difference between mitigated, accepted, and untracked risk. Load when surfacing a risk during any phase of delivery, or when reviewing the standing risk register.
 ---
 
@@ -7,7 +8,7 @@ description: Identifying, rating, and tracking risk across a project — likelih
 
 ## Identify explicitly, don't let risk stay implicit
 
-A risk everyone privately knows about but no one has written down is a risk that will surprise someone eventually. Every material risk gets a line in `.Codex/memory/<project>/risks.md`: what it is, likelihood, impact, current mitigation status, owner.
+A risk everyone privately knows about but no one has written down is a risk that will surprise someone eventually. Every material risk gets a line in `.claude/memory/<project>/risks.md`: what it is, likelihood, impact, current mitigation status, owner.
 
 ## Rating
 

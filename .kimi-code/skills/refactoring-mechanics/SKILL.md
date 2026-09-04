@@ -1,5 +1,6 @@
 ---
 name: refactoring-mechanics
+version: 1.0.0
 description: Safe, behavior-preserving transformation technique — characterization tests as a safety net, finding seams, small verified steps, and a catalog of standard low-risk transformations. Use whenever software-engineer restructures existing code without intending to change its behavior. Do NOT use for deciding what to modernize and in what order (that is `legacy-modernization`) or for tracking and prioritizing debt (that is `technical-debt-management`) — this is the moment-to-moment mechanics once the decision to change is made.
 ---
 

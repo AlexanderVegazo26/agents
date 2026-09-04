@@ -1,5 +1,6 @@
 ---
 name: disaster-recovery
+version: 1.0.0
 description: Planning and testing recovery from major infrastructure loss — RTO/RPO definition, backup validation, and failover procedures. Load when defining DR requirements or reviewing whether a system could actually recover from a major outage. Do NOT use for keeping the business operating while systems are down (that is `business-continuity`) or for day-to-day incident mitigation (that is `incident-response`).
 ---
 
@@ -23,4 +24,4 @@ Disaster recovery covers loss of infrastructure/data at a scale beyond a single 
 
 ## Documentation
 
-DR procedures belong in `.Codex/memory/<project>/runbooks/`, written so someone unfamiliar with the system's internals could execute them under pressure — not written for the person who already knows how it all works.
+DR procedures belong in `.claude/memory/<project>/runbooks/`, written so someone unfamiliar with the system's internals could execute them under pressure — not written for the person who already knows how it all works.

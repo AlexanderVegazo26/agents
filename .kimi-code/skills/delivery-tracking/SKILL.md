@@ -1,5 +1,6 @@
 ---
 name: delivery-tracking
+version: 1.0.0
 description: Work breakdown, dependency mapping, milestone definition, and status tracking for delivery work. Load when planning how a body of work will be sequenced and tracked, or when reporting status across multiple in-flight items.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: business-analysis
+version: 1.0.0
 description: Analyzing a business process or problem to find the actual need before jumping to a solution — process mapping, gap analysis, and cost/benefit framing. Load when an ask arrives as a solution ("build X") and the underlying problem needs to be surfaced first.
 ---
 

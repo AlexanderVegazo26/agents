@@ -43,7 +43,7 @@ kflow audit --root .claude                                  # registry audit
 ### Direct invocation
 
 ```bash
-python C:/Users/avega/Documents/personal/agents/.kimi-code/workflows/sdlc-feature.py "Add CSV export"
+python <repo>/.kimi-code/workflows/sdlc-feature.py "Add CSV export"
 ```
 
 ## Workflow scripts

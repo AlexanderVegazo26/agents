@@ -1,0 +1,324 @@
+# The learning loop's output channel: propose candidates, never publish them.
+#
+# This is the only workflow in the repository that writes anything. Everything
+# in `ci.yml` is `contents: read`; this one holds `contents: write` and
+# `pull-requests: write`, so it is reviewed as production code and every
+# permission it holds is justified below.
+#
+# ---------------------------------------------------------------------------
+# MANUAL ONLY, DELIBERATELY. There is no `schedule:` here.
+# ---------------------------------------------------------------------------
+#
+# The design gates the schedule on two preconditions, and neither holds yet:
+#
+#   1. Branch protection exists on the default branch. Until it does, "the job
+#      cannot reach the default branch" is a property of this file's own good
+#      behaviour, and this file is editable. Protection is not editable by this
+#      token, which is the entire difference.
+#   2. A month of real run data exists. Whether a useful signature emerges from
+#      this repository's actual run volume is unproven, and a weekly job over an
+#      empty store is a weekly no-op that trains everyone to ignore it.
+#
+# When both hold, uncomment the two lines below. Do not uncomment one of them.
+#
+#   schedule:
+#     - cron: '0 6 * * 1'        # Mondays 06:00 UTC
+#
+# ---------------------------------------------------------------------------
+# Four properties, each a decision rather than an accident
+# ---------------------------------------------------------------------------
+#
+# * It can NEVER reach the default branch. It only pushes a `learnings/*` branch
+#   and opens a pull request. Merge is the ratification and it is a human's.
+# * Attribution is in the file. Every candidate's `provenance` lists the run ids
+#   it was derived from, so a reviewer can go and read them — it survives a
+#   squash, a rebase, and being copied into another repository, which a commit
+#   message does not.
+# * Reversibility is structural. Loading is a directory scan with no index and
+#   no cache, so reverting the merge commit removes the behaviour completely.
+# * Decay is by recurrence, not calendar — and it is NOT here. `decay.yml` runs
+#   `--stamp` and `--retire` and opens its own separate pull request, because a
+#   retirement is a different judgement from an addition and should not ride
+#   along in a pull request someone is reading for something else.
+#
+# ---------------------------------------------------------------------------
+# Three hosted-runner realities the design's sketch does not account for
+# ---------------------------------------------------------------------------
+#
+# 1. `.claude/runs/` is gitignored, so a fresh checkout contains ZERO outcomes.
+#    Until a run-data source exists, this job is a pipeline exercise that exits
+#    0 with "no candidates" every time. That is honest, and it is one of the two
+#    preconditions above. No artifact-upload step is invented to paper over it:
+#    run records are private-repository derivatives and uploading them to a
+#    public repository's artifact store would be the exfiltration path this
+#    whole change exists to close.
+#
+# 2. `redaction/denylist.txt` is gitignored too, so TIER 1 IS INERT ON THE
+#    RUNNER. Only the compiled regex classes are in force here. `distil.py`
+#    prints that on every run rather than letting silence read as "clean".
+#    Materialising the list from a repository secret would fix it and is the
+#    owner's call, not this file's — it means putting customer names into
+#    Actions secrets, which is a decision with its own consequences.
+#
+# 3. A push made with the automatic `GITHUB_TOKEN` does not trigger `ci.yml`
+#    unprompted. GitHub's anti-recursion rule: "events triggered by the
+#    GITHUB_TOKEN will not create a new workflow run". There are documented
+#    exceptions around `pull_request`, and exactly how they behave was not
+#    tested here — what is certain is that the scan cannot be relied on to run
+#    on this branch, and that is the one pull request that most needs it.
+#    The gitleaks step below closes that, in this file, before the branch is
+#    pushed — an independent second control that does not share a line of code
+#    with `redact.py`, so a defect in the redactor does not disable both. It is
+#    worth having whichever way the exception resolves.
+#
+# Two more preconditions, each of which fails AFTER the branch is pushed and so
+# leaves an orphaned branch behind — the "red for a reason unrelated to the
+# commit" case that trains people to ignore a job:
+#
+#   * The repository setting "Allow GitHub Actions to create and approve pull
+#     requests" must be on, or `gh pr create` returns an unhelpful 403.
+#   * The `learnings` label must exist in the repository. `gh pr create
+#     --label` on a missing label is an error, not a warning.
+
+name: distil
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Report only; write nothing and open no pull request'
+        type: boolean
+        default: false
+
+# Least privilege for what this actually does: commit to a new branch and open a
+# pull request. It needs no packages, no pages, no id-token, no actions:write.
+permissions:
+  contents: write
+  pull-requests: write
+
+# Two concurrent distillations would race for the same branch name and the same
+# LRN ids. Never cancel one in flight — it may already have pushed.
+concurrency:
+  group: distil
+  cancel-in-progress: false
+
+jobs:
+  distil:
+    name: Distil, redact, propose
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Third-party actions are pinned to a full commit SHA, not a tag: a tag is
+      # mutable and a moved tag is a silent supply-chain change. These are the
+      # same SHAs `ci.yml` already uses; the tag each corresponded to on
+      # 2026-09-02 is in the trailing comment. Re-resolve before bumping, do not
+      # trust the comment.
+      - name: Check out the working tree
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      # The fixture suite runs BEFORE the distiller, on every invocation, and a
+      # failure stops the job. This is not belt-and-braces: the redactor is the
+      # one control in the loop whose failure is invisible, so the only evidence
+      # it still works is a suite that was proven capable of going red. Running
+      # it here means a redactor broken since the last run cannot publish once.
+      - name: The redaction fixture suite still passes
+        run: python sdlc-suite/tools/test_redact.py
+
+      # A redactor that imports cleanly but matches nothing is a worse failure
+      # than one that fails to import, because it is silent. `--selftest` drives
+      # one known positive through every class. `distil.py` calls it again
+      # internally and refuses to run if it fails; this step exists so the
+      # failure is attributed to the redactor rather than to the distiller.
+      - name: The redactor is alive
+        run: python sdlc-suite/tools/redact.py --selftest
+
+      # Exit codes, not output. `distil.py` distinguishes them deliberately:
+      #   0 ok · 1 quarantined · 2 dropped on a denylist hit
+      #   3 the redactor is unavailable · 4 usage
+      # Anything non-zero stops the job before a branch exists, so a run that
+      # dropped or quarantined anything cannot open a pull request.
+      - name: Distil and redact
+        id: distil
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+
+          args=(--pr-body "$RUNNER_TEMP/pr-body.md")
+          if [ "${DRY_RUN}" != "true" ]; then
+            args+=(--emit)
+          fi
+
+          # Captured rather than piped. A pipeline reports the exit status of
+          # its LAST stage, so `distil.py | tee` would report tee's success no
+          # matter what the distiller did — which is exactly how a job that
+          # printed "quarantined" scrolled past as green.
+          set +e
+          python sdlc-suite/tools/distil.py "${args[@]}"
+          code=$?
+          set -e
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+
+          case "$code" in
+            0) echo "distiller exited 0" ;;
+            1) echo "::error::candidates were QUARANTINED — they matched a redaction class and need human review. Nothing published." ; exit 1 ;;
+            2) echo "::error::candidates were DROPPED on a tier-1 denylist hit — a string declared private reached a candidate. Nothing published." ; exit 1 ;;
+            3) echo "::error::the redactor was unavailable or failed its self-test. Nothing ran." ; exit 1 ;;
+            *) echo "::error::distiller exited ${code}" ; exit "$code" ;;
+          esac
+
+      # Belt and braces on top of the exit code, because the two can only
+      # disagree if something is wrong and that is precisely when a second check
+      # earns its place.
+      #
+      # `find -print -quit` rather than the `ls -A | grep -v` idiom: a pipeline
+      # reports its last stage, and `ls` on a missing directory is an error the
+      # grep would swallow.
+      - name: Nothing was quarantined
+        shell: bash
+        run: |
+          set -euo pipefail
+          hit=$(find learnings/quarantine -type f ! -name '.gitkeep' -print -quit 2>/dev/null || true)
+          if [ -n "$hit" ]; then
+            echo "::error::learnings/quarantine is non-empty — not published."
+            # The COUNT and the filenames only. Quarantine filenames are digests
+            # by construction, never derived text. Never `cat` one: this log is
+            # public, and printing a quarantined candidate would publish the
+            # exact string that caused it to be quarantined.
+            find learnings/quarantine -type f ! -name '.gitkeep' -printf '%f\n' | sort
+            exit 1
+          fi
+
+      - name: Anything to propose?
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find learnings/candidates -type f -name '*.md' -print -quit 2>/dev/null | grep -q .; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            # Silence is a normal outcome, not a failure. A distiller that always
+            # produces something will produce noise.
+            echo "no candidates met the two-distinct-run floor"
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # An independent second control over the exact bytes about to be pushed.
+      # It shares no code with `redact.py`, so one defect cannot disable both,
+      # and it is here rather than left to `ci.yml` because `ci.yml` will not run
+      # unprompted on a GITHUB_TOKEN-authored pull request (see note 3 above).
+      - name: Install gitleaks
+        if: steps.gate.outputs.any == 'true' && inputs.dry-run != true
+        shell: bash
+        env:
+          # Pinned version plus the published SHA-256 of that exact asset,
+          # copied from `ci.yml`. A release asset can be replaced; the checksum
+          # is what makes this safe, not the version pin.
+          GITLEAKS_VERSION: '8.28.0'
+          GITLEAKS_SHA256: 'a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb'
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --silent --show-error --fail --location --retry 3 \
+               --output "$RUNNER_TEMP/gitleaks.tar.gz" "$url"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Scan the candidates
+        if: steps.gate.outputs.any == 'true' && inputs.dry-run != true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `--redact` because this log is public: an unredacted finding would
+          # publish the exact string the scan just caught, in a log that
+          # outlives the branch. `--verbose` so a failure names the rule and the
+          # file, which is the difference between a signal and "leaks found: 1".
+          "$RUNNER_TEMP/gitleaks" dir \
+            --config .gitleaks.toml \
+            --no-banner \
+            --redact \
+            --verbose \
+            --exit-code 1 \
+            learnings/candidates
+
+      - name: Push a branch and open a pull request
+        if: steps.gate.outputs.any == 'true' && inputs.dry-run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          branch="learnings/$(date -u +%Y%m%d-%H%M%S)"
+          git switch -c "$branch"
+
+          # ONLY this path is ever staged. Not `git add -A`, not `git add .`:
+          # the distiller also writes `learnings/.last-distil`, and the job
+          # checks out a full tree that a future step could dirty. Naming the
+          # one path is what makes "nothing else is ever staged" true rather
+          # than merely intended.
+          git add learnings/candidates
+
+          # Refuse to continue if anything outside learnings/candidates/ got
+          # staged. Cheap, and it fails closed on exactly the class of mistake
+          # a later edit to this file would introduce.
+          if git diff --cached --name-only | grep -qv '^learnings/candidates/'; then
+            echo "::error::something outside learnings/candidates/ is staged:"
+            git diff --cached --name-only
+            exit 1
+          fi
+
+          n=$(git diff --cached --name-only | wc -l)
+          git -c user.name='distiller' \
+              -c user.email='distiller@users.noreply.github.com' \
+              commit -m "learnings: ${n} candidate(s) from distillation"
+          git push -u origin HEAD
+
+          {
+            echo "Proposed by \`sdlc-suite/tools/distil.py\`. **Merging is the"
+            echo "ratification** — nothing else in this loop can reach the"
+            echo "default branch."
+            echo
+            echo 'Every candidate passed `redact.py` (tier-1 denylist and the'
+            echo 'compiled regex classes) and an independent gitleaks scan.'
+            echo 'Tier 1 is inert on a hosted runner because'
+            echo '`redaction/denylist.txt` is gitignored — read question 3 of'
+            echo 'the checklist with that in mind.'
+            echo
+            echo '### Distiller report'
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/pr-body.md"
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+
+          # `--body-file`, not `--fill`: `--fill` would use the commit message,
+          # which says nothing about provenance or about what a reviewer is
+          # being asked to check.
+          gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$branch" \
+            --title "learnings: ${n} candidate(s) for review" \
+            --body-file "$RUNNER_TEMP/body.md" \
+            --label learnings
+
+      - name: Report
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### distil"
+            echo
+            echo "- distiller exit code: \`${{ steps.distil.outputs.code }}\`"
+            echo "- candidates: \`${{ steps.gate.outputs.any }}\`"
+            echo "- dry run: \`${{ inputs.dry-run }}\`"
+            echo
+            echo "Zero candidates is a normal outcome and exits 0."
+          } >> "$GITHUB_STEP_SUMMARY"

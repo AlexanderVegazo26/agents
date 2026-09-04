@@ -1,5 +1,6 @@
 ---
 name: interaction-design
+version: 1.0.0
 description: Designing states, transitions, and feedback for user interactions — beyond static wireframes, how the UI behaves over time. Load when specifying interactive behavior for a feature.
 ---
 

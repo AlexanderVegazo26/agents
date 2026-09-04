@@ -30,3 +30,14 @@ Unified, per-project durable memory for every agent in this SDLC framework. See 
 No project subdirectory is pre-created here — each agent creates `<project-name>/` and the files it owns the first time it has something durable to record for that project. Never fabricate a project folder or file just to look complete; an empty/missing file means nothing has been recorded yet, which is itself accurate information.
 
 Project isolation is absolute: an agent never reads or writes another project's subdirectory, and never carries a convention, risk, or pattern from one project's memory into another's without re-establishing it holds here.
+
+## A worked example
+
+`sdlc-suite/memory-template/example/decisions/ADR-0001-example.md` shows the shape
+of an ADR this suite expects — the header fields, the evidence-with-provenance
+section, consequences in both directions, and a stated falsifier. It is fictional
+on purpose: an adopter opening this directory should find the convention, not
+somebody else's project decisions.
+
+Nothing is pre-created here. Each agent creates `<project-name>/` and the files it
+owns the first time it has something durable to record.

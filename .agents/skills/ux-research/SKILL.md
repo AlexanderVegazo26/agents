@@ -1,5 +1,6 @@
 ---
 name: ux-research
+version: 1.0.0
 description: Grounding design decisions in actual user behavior — research methods, evidence quality, and how to state a design assumption when research isn't available. Load before or during design work, especially when a design choice is non-obvious.
 ---
 
@@ -23,4 +24,4 @@ Small or self-selected samples (the users who bothered to respond to a survey, t
 
 ## Feeding findings back
 
-Research findings that reveal an assumption was wrong should update `.Codex/memory/<project>/vision.md`/`designs/` — a validated finding is durable context, not a one-time deliverable.
+Research findings that reveal an assumption was wrong should update `.claude/memory/<project>/vision.md`/`designs/` — a validated finding is durable context, not a one-time deliverable.

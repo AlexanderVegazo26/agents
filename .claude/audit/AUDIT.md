@@ -1,6 +1,8 @@
 # Registry Audit — `.claude` agent/skill suite
 
-Audited: 2026-08-04 · Root: `C:\Users\avega\Documents\personal\agents\.claude` · Read-only through Phase 5.
+> **Historical record — not a current statement about this registry.** This audit was run on 2026-08-04 against a 15-agent / 51-skill registry. The tree has since grown and been restructured; the counts, file paths and section numbers below describe the registry as it stood then. No code reads this directory. It is kept because the reasoning is worth having, and because one of its resolutions was later shown to be wrong (see `findings.json`, the TaskCreate entry) — which is itself the most useful thing in it. For current counts see the generated table in `.claude/README.md`.
+
+Audited: 2026-08-04 · Root: `<repo>/.claude` · Read-only through Phase 5.
 
 > ## REMEDIATION STATUS — all 15 findings applied 2026-08-04
 >
@@ -171,7 +173,7 @@ At least **36 of 51** skills are named by no agent body; 21 of those are named b
 ### LOW
 
 #### `PORT-01` — User-global `Bash` hook depends on a user-local binary
-**Evidence:** `%USERPROFILE%\.claude\settings.json` registers `PreToolUse` matcher `Bash` → command `rtk hook claude`. `rtk` resolves to `C:\Users\avega\.local\bin\rtk.exe`. Ten of 15 agents hold `Bash`. **Impact:** on a second machine without `rtk`, every `Bash` call in the suite hits a missing-binary hook. Outside the audited tree, so advisory — but it is the registry's only genuine "breaks on a second machine" item, and it is *not* in the project tree, which is a point in the project's favor.
+**Evidence:** `%USERPROFILE%\.claude\settings.json` registers `PreToolUse` matcher `Bash` → command `rtk hook claude`. `rtk` resolves to `<user-home>/.local/bin/rtk`. Ten of 15 agents hold `Bash`. **Impact:** on a second machine without `rtk`, every `Bash` call in the suite hits a missing-binary hook. Outside the audited tree, so advisory — but it is the registry's only genuine "breaks on a second machine" item, and it is *not* in the project tree, which is a point in the project's favor.
 
 #### `SETTINGS-01` — Dangling MCP reference
 **Evidence:** `settings.local.json` sets `disabledMcpjsonServers: ["webmcp"]`; no `.mcp.json` exists anywhere under the repo. Harmless; remove for tidiness.

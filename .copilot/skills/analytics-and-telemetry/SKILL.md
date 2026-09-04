@@ -1,5 +1,6 @@
 ---
 name: analytics-and-telemetry
+version: 1.0.0
 description: Instrumenting product usage data to validate business-value hypotheses — event design, funnel analysis, and avoiding vanity metrics. Load when designing what to track for a feature, or when interpreting usage data to validate a decision.
 ---
 

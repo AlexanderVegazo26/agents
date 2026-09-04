@@ -1,5 +1,6 @@
 ---
 name: concurrency-and-thread-safety
+version: 1.0.0
 description: Intra-process concurrency hazards — race conditions, deadlock, thread safety, async/await pitfalls, and memory visibility. Use whenever software-engineer writes code with shared mutable state, multiple threads/workers, or async code, and whenever qa-engineer or performance-engineer investigates a race condition or lock contention. Do NOT use for cross-process concerns — network failure, consistency models, ordering across services — that is `sdlc-suite:distributed-systems`; this skill is what happens inside one process.
 ---
 

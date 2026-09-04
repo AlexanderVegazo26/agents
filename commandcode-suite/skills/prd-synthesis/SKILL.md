@@ -1,5 +1,6 @@
 ---
 name: prd-synthesis
+version: 1.0.0
 description: Structure and discipline for synthesizing an as-built PRD from extracted evidence — describing what an existing system does, with citations and honest gaps. Used by product-archaeologist. Do NOT use for writing forward-looking requirements for something being built (that is `sdlc-suite:requirements-craft`) or for deciding what a rebuild should keep, cut, or improve — this document deliberately stops short of recommending anything.
 ---
 

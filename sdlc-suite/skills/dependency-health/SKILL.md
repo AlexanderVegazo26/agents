@@ -1,5 +1,6 @@
 ---
 name: dependency-health
+version: 1.0.0
 description: Evaluating, auditing, and upgrading third-party dependencies and runtime versions — add/avoid decisions, vulnerability and reachability triage, maintenance-health signals, changelog reading, and safe major-version jumps. Load before adding a dependency, when auditing existing ones, or when planning a version bump. Do NOT use for build/publish pipeline integrity, artifact signing, or registry-level compromise (typosquatting, maintainer takeover) — that is `sdlc-suite:supply-chain-security`.
 ---
 

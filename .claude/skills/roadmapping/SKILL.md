@@ -1,5 +1,6 @@
 ---
 name: roadmapping
+version: 1.0.0
 description: Sequencing initiatives on a roadmap by value, dependency, and risk — explicit prioritization criteria and honest tradeoff communication. Load when building or revising a roadmap.
 ---
 

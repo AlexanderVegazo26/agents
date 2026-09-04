@@ -1,5 +1,6 @@
 ---
 name: system-architecture
+version: 1.0.0
 description: Core system-design patterns and evaluation criteria — component boundaries, coupling/cohesion, layering, monolith vs. services, and how to reason about tradeoffs between them. Load when designing or reviewing the shape of a system.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: threat-modeling
+version: 1.0.0
 description: STRIDE-based threat modeling method for identifying attack surface, trust boundaries, and abuse cases before or during implementation. Load before implementing anything touching authentication, sensitive data, or trust boundaries.
 ---
 

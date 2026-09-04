@@ -134,7 +134,7 @@ def write_agent(name: str, front: dict, body: str):
     lines.append("")
     lines.append(body)
 
-    out_path.write_text("\n".join(lines), encoding="utf-8")
+    out_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
 
 def main():

@@ -1,5 +1,6 @@
 ---
 name: slo-and-error-budgets
+version: 1.0.0
 description: Choosing SLIs, setting SLO targets, and running an error-budget policy — the mechanics behind site-reliability's SLI/SLO management responsibility. Use when defining service health signals, setting a reliability target, deciding alert thresholds, or using budget consumption to gate release velocity. Do NOT use for logs/metrics/traces/dashboard design — that is `observability-design`, which stops short of what target to set or how to act on budget burn.
 ---
 

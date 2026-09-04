@@ -1,5 +1,6 @@
 ---
 name: api-design
+version: 1.0.0
 description: Contract design principles for APIs — resource modeling, error shape, pagination, idempotency keys, and what makes a contract stable to evolve. Load when designing a new API or reviewing one for consumer-friendliness and long-term stability. Do NOT use for versioning an already-published contract or planning a sunset — that is `api-versioning`.
 ---
 

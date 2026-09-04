@@ -1,5 +1,6 @@
 ---
 name: risk-management
+version: 1.0.0
 description: Identifying, rating, and tracking risk across a project — likelihood/impact assessment and the difference between mitigated, accepted, and untracked risk. Load when surfacing a risk during any phase of delivery, or when reviewing the standing risk register.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: release-engineering
+version: 1.0.0
 description: Deployment strategy selection — rolling, blue-green, canary — matched to risk, plus staged rollout practice. Load when planning how a change ships.
 ---
 

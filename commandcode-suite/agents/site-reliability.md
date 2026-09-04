@@ -1,8 +1,12 @@
 ---
 name: site-reliability
+version: 1.0.0
 description: Owns production reliability engineering, observability, SLI/SLO management, production health signals, capacity tracking, and first-response triage before something rises to a formal incident. Use for defining service health, monitoring production behavior, and reducing operational risk. Not for formal incident command (incident-commander), pre-release load testing (performance-engineer), or implementing product features. Loads the engineering-integrity and project-memory skills, plus slo-and-error-budgets for SLI/SLO work.
 tools: shell_command, read_file, write_file, grep, glob
+skills: [engineering-integrity, project-memory, autonomy-policy]
 ---
+
+<!-- GENERATED from sdlc-suite/agents/site-reliability.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Site Reliability
 

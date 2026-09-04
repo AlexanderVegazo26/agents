@@ -1,3 +1,38 @@
+# Baseline: everything git detects as text is stored and checked out LF.
+#
+# The pins below used to be extension-by-extension, and the gaps kept moving:
+# first *.md only (while .toml/.json definitions were CRLF), then a longer list
+# (while .gitignore, .txt and .mjs were CRLF). An extension whitelist is the
+# wrong shape for this problem — it is a list of the cases someone remembered.
+# "text=auto" lets git decide what is text and skip real binaries.
+*  text=auto eol=lf
+
+# Explicit pins for the definition formats, kept after the baseline so the
+# intent stays readable and so "git check-attr" names a specific rule.
 # Agent and skill definitions are parsed by the harness; CRLF in frontmatter
 # has broken registration before. Keep them LF regardless of platform.
 *.md text eol=lf
+
+# The `*.md` pin above was not enough on its own. The definition files three
+# harnesses actually read are not Markdown: `.codex/agents/*.toml`,
+# `.copilot/agents/*.json`, and the `exploration-charter` schema template.
+# All were CRLF in the working tree with an empty `attr/`, because no pattern
+# here claimed them. Same blast radius as the `.md` case, same fix.
+*.toml  text eol=lf
+*.json  text eol=lf
+*.py    text eol=lf
+*.js    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+
+# These pins govern what git writes on checkout and what it stores on commit.
+# They do NOT reach the converters, which write to disk outside git entirely;
+# that half is the newline="\n" argument in each convert-agents.py. Extension
+# patterns also cannot cover an extensionless definition such as `kflow`.
+# sdlc-suite/tools/eol_check.py is the byte-level check that covers both gaps,
+# including untracked definitions git cannot see.
+
+# Extensionless files a pattern above cannot reach. `kflow` is an executable
+# entry point read by a shell; `.gitattributes` governs itself.
+kflow          text eol=lf
+.gitattributes text eol=lf

@@ -1,6 +1,7 @@
 ---
 name: qa-tooling
-description: Tool selection matrix, stack-detection heuristics, and contract-testing checklist for QA work. Load when deciding what tool/framework to use for a given test type, or when picking up an unfamiliar codebase and needing to figure out what's already in place.
+version: 1.0.0
+description: Tool selection matrix, stack-detection heuristics, how to invoke a runner without losing its exit status, and a contract-testing checklist for QA work. Load when deciding what tool/framework to use for a given test type, when invoking one, or when picking up an unfamiliar codebase and needing to figure out what's already in place.
 ---
 
 # QA Tooling
@@ -17,6 +18,12 @@ Never assume the stack — check for it:
 - Existing test directories/naming (`__tests__`, `*.spec.ts`, `*_test.go`) → match the established convention rather than introducing a second framework for the same test type.
 
 If two tools could plausibly do the job, use what's already in the repo. Don't introduce a new test framework/dependency without a named reason the existing one can't do the job.
+
+## Invoking the runner without destroying its result
+
+However you invoke a tool, the exit status is the result — the summary line is only output. A pipeline reports the status of its *last* stage, so `npm test | tail -20`, `pytest | grep -E 'passed|failed'`, and `go test ./... > results.txt` all report success no matter how the runner fared. A suite has printed "47 passed" and exit 0 while the runner exited 1 on a teardown error attached to no individual test. Capture the status directly and read it — `cmd > log 2>&1; echo $?`, then read the log — and use the runner's machine-readable reporter (`--json`, `--reporter=json`, JUnit XML) rather than parsing human output when counts matter.
+
+The same suspicion applies to every layer between you and the runner: an `npm` script chaining with `||`, a task runner or Makefile that ignores a child's status, a `try` block in a wrapper, `set +e`, and a CI step with `continue-on-error: true` (which is why a repo's CI can be green over a failing stage — check for it while reading CI config above).
 
 ## Tool matrix (by test type)
 

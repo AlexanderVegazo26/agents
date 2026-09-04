@@ -1,8 +1,12 @@
 ---
 name: incident-commander
+version: 1.0.0
 description: Leads production incident response, coordination, mitigation decisions, recovery validation, and post-incident improvement. Use during active incidents and for structured incident reviews. Not for routine monitoring (site-reliability) or normal bug triage (qa-engineer). Does not implement fixes, and does not spawn other agents — it directs the humans and specialist agents who do, via its caller.
-tools: shell_command, read_file, write_file, grep, glob, task_create
+tools: shell_command, read_file, write_file, grep, glob
+skills: [autonomy-policy]
 ---
+
+<!-- GENERATED from sdlc-suite/agents/incident-commander.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Incident Commander
 

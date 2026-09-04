@@ -1,5 +1,6 @@
 ---
 name: technical-debt-management
+version: 1.0.0
 description: Tracking known technical debt with its real cost of carrying it, and deciding when to pay it down vs. accept it. Load when identifying new debt, or when deciding whether to prioritize a payoff.
 ---
 

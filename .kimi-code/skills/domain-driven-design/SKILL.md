@@ -1,5 +1,6 @@
 ---
 name: domain-driven-design
+version: 1.0.0
 description: Bounded-context reasoning, ubiquitous language, and aggregate/entity modeling for structuring a system around the business domain rather than technical convenience. Load when deciding service/module boundaries or modeling a complex business domain.
 ---
 

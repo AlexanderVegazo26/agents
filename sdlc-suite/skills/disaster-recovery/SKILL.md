@@ -1,5 +1,6 @@
 ---
 name: disaster-recovery
+version: 1.0.0
 description: Planning and testing recovery from major infrastructure loss — RTO/RPO definition, backup validation, and failover procedures. Load when defining DR requirements or reviewing whether a system could actually recover from a major outage. Do NOT use for keeping the business operating while systems are down (that is `sdlc-suite:business-continuity`) or for day-to-day incident mitigation (that is `sdlc-suite:incident-response`).
 ---
 

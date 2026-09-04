@@ -1,0 +1,32 @@
+# Local to `learnings/`, in addition to the repository root's entries.
+#
+# Duplicating `quarantine/` here is deliberate rather than sloppy. The root
+# `.gitignore` is edited by everyone and for every reason; this file is edited
+# only by someone already thinking about the learning loop. If the root entry is
+# ever dropped by accident, this one still stands between a quarantined
+# candidate and a public commit -- and a quarantined candidate is, by
+# definition, one that matched a redaction class.
+
+# Candidates held for human review because they matched a compiled regex class.
+# Never committed. A human reads them locally, then either rewrites the entry or
+# adds the offending string to `redaction/denylist.txt`.
+#
+# Note that git does not descend into an excluded directory, so no `.gitkeep`
+# inside it can be tracked from here or from the root. The directory is created
+# on demand by `sdlc-suite/tools/distil.py`, and its absence is normal.
+quarantine/
+
+# The high-water mark of the last successful `--emit`. Instance state: it
+# records which run outcomes this checkout has already read, which is
+# meaningless in anyone else's clone and changes on every run.
+.last-distil
+
+# Everything else here IS committed, and that is the point:
+#
+#   learnings/*.md            ratified learnings, merged by a human
+#   learnings/candidates/     proposed by the distiller, the body of its PR
+#   learnings/retired/        unconfirmed for 180 days, moved by the decay pass
+#
+# Loading is a plain directory scan with no index and no cache, so reverting the
+# merge commit removes the behaviour completely. That is why there is no
+# generated manifest here to keep in step.

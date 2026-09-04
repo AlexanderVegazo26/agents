@@ -1,5 +1,6 @@
 ---
 name: debugging-methodology
+version: 1.0.0
 description: Localizing a single reproducible failure right now — hypothesis-driven investigation, bisection, differential diagnosis, and instrumenting to observe rather than guessing. Use when software-engineer or qa-engineer has one concrete failure to root-cause. Do NOT use for systemic retrospective analysis after an incident is mitigated or across a recurring pattern (that is `sdlc-suite:root-cause-analysis`), or for classifying a failure as bug/bad-test/flake once its cause is known (that is `sdlc-suite:qa-triage`).
 ---
 

@@ -1,16 +1,17 @@
 ---
 name: project-memory
-description: Conventions for reading and writing the unified per-project memory at .Codex/memory/<project>/ — what belongs in each file, when to update it, and how agents across the SDLC share durable context. Load before writing to memory, or when picking up a project to see what's already known.
+version: 1.0.0
+description: Conventions for reading and writing the unified per-project memory at .claude/memory/<project>/ — what belongs in each file, when to update it, and how agents across the SDLC share durable context. Load before writing to memory, or when picking up a project to see what's already known.
 ---
 
 # Project Memory
 
-All SDLC agents share one memory root: `.Codex/memory/<project-name>/`. It is durable, per-project context — not a session log, not a duplicate of what git/the codebase already tells you.
+All SDLC agents share one memory root: `.claude/memory/<project-name>/`. It is durable, per-project context — not a session log, not a duplicate of what git/the codebase already tells you.
 
 ## Layout
 
 ```
-.Codex/memory/<project>/
+.claude/memory/<project>/
   vision.md            product-manager: problem, target user, north-star outcome
   roadmap.md            product-manager: sequenced initiatives and why
   stakeholders.md        product-manager: who cares about what, and how to reach them
@@ -40,3 +41,42 @@ All SDLC agents share one memory root: `.Codex/memory/<project-name>/`. It is du
 4. **Keep entries factual and dated.** Update or remove stale entries rather than letting contradictory history accumulate.
 5. **One file per concern** — don't blend `risks.md` content into `roadmap.md` because it was convenient at write time; a future reader (or agent) will look in the file named for what they need.
 6. **Cross-reference, don't duplicate.** An incident that created technical debt gets one entry in `incidents.md` and a link (not a copy) in `technical-debt.md`.
+
+## `memory/` versus `learnings/`
+
+Two stores, and confusing them is how a private project's details end up in a
+public repository.
+
+| | `.claude/memory/<project>/` | `learnings/` |
+|---|---|---|
+| Scope | **One project.** Isolation is absolute. | **Cross-project.** Heuristics that hold anywhere. |
+| Content | Whatever that project needs — names, paths, decisions, real identifiers. | Generic technique only. No project, person, customer, host or ticket. |
+| Written by | Any agent, directly, at any time. | Never by an agent. `tools/distil.py` proposes; a human merges. |
+| Committed | To the consuming repository, if at all. | To this repository, by pull request. |
+| Read by | Agents working on that project. | Agents whose name is in an entry's `appliesTo`. |
+
+The asymmetry is deliberate. Memory is allowed to be specific because it never
+leaves the project. A learning is published, so it must survive being read by
+someone with no context — which is also why the distiller runs every candidate
+through `tools/redact.py` before writing it, and why a candidate that matches a
+redaction class is quarantined rather than published or quietly dropped.
+
+**Never copy from memory into a learning by hand.** That is the exact path the
+gate exists to close, and doing it manually bypasses every control on it. If a
+project lesson looks generalisable, write the general form from scratch and let
+the provenance be the runs that produced it.
+
+## Loading learnings
+
+At task start, alongside the skills you load: scan `learnings/*.md` and load every
+entry whose `appliesTo` names you. Name them on the same **Skills loaded** line
+you already report — the same output contract that made skill loading stick is
+what makes a learning load visible.
+
+An empty or missing `learnings/` directory is normal and is not an error. There is
+no index and no cache: loading is a directory scan, which is what makes reverting
+a merge remove the behavior completely.
+
+A learning tells you to look **harder**, never to look less. One that would
+justify skipping a check is malformed regardless of how well-evidenced it is;
+report it rather than acting on it.

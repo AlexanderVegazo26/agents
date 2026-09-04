@@ -1,5 +1,6 @@
 ---
 name: configuration-management
+version: 1.0.0
 description: Managing environment-specific configuration safely — separation from code, secrets handling, and validation to prevent misconfiguration-caused incidents. Load when adding or changing configuration, or reviewing config-related risk.
 ---
 

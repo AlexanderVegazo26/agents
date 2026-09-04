@@ -1,0 +1,96 @@
+# No `labels:` key. An issue form that assigns a label which does not exist in
+# the repository fails on submission, and this repository has no labels
+# configured. Add labels here only after creating them.
+name: Feature or change proposal
+description: A new agent, skill or workflow, or a change to how an existing one behaves
+title: "feat: "
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals are welcome. Two things shape whether one lands.
+
+        **A new agent has to earn its boundary.** The suite's value comes from
+        each lens being independent of the others, so the useful question is
+        not "would this be useful" but "what does this see that no existing
+        agent sees, and what does it stop doing because another agent owns
+        it". A proposal that overlaps an existing agent without saying where
+        the line falls usually ends up making both worse.
+
+        **The founding rule is not negotiable.** The agent that does the work
+        is never the agent that certifies it. A proposal that has an agent
+        verify its own output will be declined regardless of its other merits.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of change
+      options:
+        - New agent
+        - New skill
+        - New workflow
+        - Change to an existing agent
+        - Change to an existing skill
+        - Change to an existing workflow
+        - Tooling, CI or repository infrastructure
+        - Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What goes wrong today
+      description: >
+        Describe the failure, not the solution. If it has actually happened,
+        say what happened — a concrete case is worth more than a category.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Boundary with what already exists
+      description: >
+        Which existing agent or skill is nearest, what this does that it does
+        not, and what this deliberately does not do because that one owns it.
+        If the answer is "nothing is near", say so.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: How anyone would know it works
+      description: >
+        What would be measured, and what result would mean it had failed. A
+        change with no failing condition cannot be verified, and the review
+        will ask for one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including doing nothing, and why that is worse.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: This does not have any agent verify or certify its own output.
+          required: true
+        - label: I have not pasted any secret, access token, customer name, employer name or absolute home path into this proposal.
+          required: true

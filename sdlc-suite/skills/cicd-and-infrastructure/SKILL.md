@@ -1,5 +1,6 @@
 ---
 name: cicd-and-infrastructure
+version: 1.0.0
 description: Pipeline design, Infrastructure as Code practices, environment management, deployment strategies, and environment promotion. Load when building/changing a CI/CD pipeline, writing IaC, or planning how a change moves from dev to production.
 ---
 
@@ -8,6 +9,8 @@ description: Pipeline design, Infrastructure as Code practices, environment mana
 ## Pipelines
 
 Every stage should have one clear purpose (build, test, security scan, deploy) and fail fast — cheap checks (lint, unit tests) before expensive ones (integration, E2E, load). A pipeline that's green but skips a stage silently is worse than a red one; make skips visible in the output.
+
+Detect which CI system and command runner actually apply the same way `sdlc-suite:qa-tooling` detects a test runner — from the config files and scripts already present (`.github/workflows`, `azure-pipelines.yml`, `.gitlab-ci.yml`, a `Makefile`, package-manager scripts) — rather than assuming a toolchain or introducing a second one for the same job.
 
 ## Infrastructure as Code
 

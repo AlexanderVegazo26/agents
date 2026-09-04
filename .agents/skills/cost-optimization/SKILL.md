@@ -1,5 +1,6 @@
 ---
 name: cost-optimization
+version: 1.0.0
 description: FinOps-style reasoning for balancing infrastructure/tooling cost against reliability and performance needs. Load when reviewing spend, right-sizing infrastructure, or weighing a cost-vs-reliability tradeoff.
 ---
 

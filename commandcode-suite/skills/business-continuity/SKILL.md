@@ -1,5 +1,6 @@
 ---
 name: business-continuity
+version: 1.0.0
 description: Ensuring critical business functions can continue through a major disruption — beyond technical DR, covering process, staffing, and communication continuity. Load when assessing organizational resilience to a major disruption, not just system recovery. Do NOT use for the technical recovery mechanics themselves — RTO/RPO, backups, failover — that is `sdlc-suite:disaster-recovery`, whose commitments this skill's plans depend on.
 ---
 

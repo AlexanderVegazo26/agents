@@ -1,9 +1,16 @@
 {
+  "_historical": "**Historical record — not a current statement about this registry.** This audit was run on 2026-08-04 against a 15-agent / 51-skill registry. The tree has since grown and been restructured; the counts, file paths and section numbers below describe the registry as it stood then. No code reads this directory. It is kept because the reasoning is worth having, and because one of its resolutions was later shown to be wrong (see `findings.json`, the TaskCreate entry) — which is itself the most useful thing in it. For current counts see the generated table in `.claude/README.md`.",
   "audit": {
     "date": "2026-08-04",
     "root": ".claude",
     "scope": "agents (15), skills (51), memory (1), settings (1); user-global tree inventoried for precedence only",
-    "totals": { "blocker": 1, "high": 4, "medium": 7, "low": 3, "all": 15 },
+    "totals": {
+      "blocker": 1,
+      "high": 4,
+      "medium": 7,
+      "low": 3,
+      "all": 15
+    },
     "dissolved_on_verification": [
       {
         "claim": "No agent declares the Skill tool, so 'Load the <skill> skill' directives are unsatisfiable",
@@ -11,7 +18,21 @@
       },
       {
         "claim": "TaskCreate may not be a valid frontmatter tool name",
-        "resolution": "Not a finding. TaskCreate is documented and valid. The 7 agents declaring it are correct."
+        "resolution": "Not a finding. TaskCreate is documented and valid. The 7 agents declaring it are correct.",
+        "superseded": {
+          "date": "2026-09-02",
+          "verdict": "The 2026-08-04 resolution above was wrong. It is kept verbatim, not deleted, because the precedent it set is the point: an authoritative one-line dissolution stopped anyone opening an agent body for a month.",
+          "why_it_was_wrong": [
+            "It answered a question nobody needed answered. The claim was about name validity; the registry invariant at .claude/README.md:200 is that every tool in tools: must be exercised by a procedure in the body. Validity is necessary, not sufficient, and the resolution never opened a body to check the sufficient half.",
+            "No agent body in any tree contains a procedure that uses the grant. That was true on 2026-08-04 and is the entire finding. It holds regardless of whether the name resolves, which is why it is the justification for dropping the grant.",
+            "'documented and valid' cited no document. TaskCreate is absent from the current Claude Code tool registry, which exposes TaskOutput and TaskStop; no tree references either of those. That is a second and independent reason the grants were inert, but it is not the reason they were dropped."
+          ],
+          "the_grant_set_churned_rather_than_grew": "'The 7 agents declaring it are correct' reads as a stable, reviewed set. It was not. .claude/audit/AUDIT.md:92 names database-engineer and performance-engineer as declarers; neither declares it today (both now carry Agent(qa-runner) instead). The eight declarers measured on 2026-09-02 were incident-commander, product-analyst, product-manager, qa-engineer, release-manager, software-engineer, solution-architect, ui-engineer. The membership turned over while the 'correct' verdict was carried forward unexamined, which is worse precedent than a set that merely grew from 7 to 8: nobody re-derived the verdict for the members that were added.",
+          "action_taken": "Grant dropped at 34 sites: 8 TaskCreate frontmatters in .claude/agents/, 8 in sdlc-suite/agents/, 8 task_create in commandcode-suite/agents/, 8 create-task in .copilot/agents/*.json, and the two converter map entries at commandcode-suite/convert-agents.py and .copilot/convert-agents.py. The map entries were load-bearing: measured before the change, a regeneration of all four harnesses reintroduced the grant into 16 generated definitions; measured after, 0.",
+          "a_tempting_but_backwards_argument_not_to_repeat": "Do not argue that commandcode-suite granting TaskCreate to none of its agents shows the name is harness-specific. Two converters translated it (TaskCreate -> task_create, TaskCreate -> create-task), which is evidence it was treated as portable. That false negative came from grepping the literal string across trees whose converters rename it.",
+          "residual_references_left_deliberately": "commandcode-suite/validate.py:27 keeps task_create in KNOWN_TOOLS. That list is Command Code's tool vocabulary, not a grant, and is correctly unaffected by whether any agent uses it. .claude/audit/AUDIT.md:92 still names the two former declarers; it is left intact because its staleness is the evidence this entry cites.",
+          "totals_unchanged": "This supersedes a dissolved_on_verification entry, not a findings[] entry, so audit.totals is untouched and remains accurate."
+        }
       }
     ]
   },
@@ -180,7 +201,7 @@
       "path": "%USERPROFILE%/.claude/settings.json",
       "line": null,
       "finding": "A PreToolUse hook on Bash runs 'rtk hook claude', a user-local binary. Ten of 15 agents hold Bash and route through it.",
-      "evidence": "%USERPROFILE%/.claude/settings.json hooks.PreToolUse matcher 'Bash' command 'rtk hook claude'; rtk resolves to C:/Users/avega/.local/bin/rtk.exe.",
+      "evidence": "%USERPROFILE%/.claude/settings.json hooks.PreToolUse matcher 'Bash' command 'rtk hook claude'; rtk resolves to <user-home>/.local/bin/rtk.exe.",
       "impact": "On a machine without rtk, every Bash call in the suite hits a missing-binary hook. Outside the audited project tree, so advisory - and notably the project tree itself has no such coupling.",
       "recommendation": "Guard the hook on binary presence, or document rtk as an environment prerequisite. Requires a separate decision - not in project scope.",
       "effort": "small"
@@ -233,8 +254,15 @@
     },
     "process_note": "The first PATH-01 pass used Get-Content -Raw + WriteAllText, which in PowerShell 5.1 read UTF-8 as cp1252 and double-encoded every em-dash and section sign in 16 files. Caught on the next read, reversed via cp1252 round-trip, verified 0 mojibake remaining. All later edits used the editor rather than shell rewrites. Future bulk edits of this tree must not round-trip through Get-Content -Raw.",
     "added_this_session_not_audit_findings": {
-      "agents": ["persona-discovery", "persona-runner", "boundary-prober", "journey-orchestrator"],
-      "skills": ["exploration-charter (with personas-schema-template.yaml sibling - the registry's first progressive-disclosure reference file)"],
+      "agents": [
+        "persona-discovery",
+        "persona-runner",
+        "boundary-prober",
+        "journey-orchestrator"
+      ],
+      "skills": [
+        "exploration-charter (with personas-schema-template.yaml sibling - the registry's first progressive-disclosure reference file)"
+      ],
       "audit_fixes_applied_pre_install": [
         "bare memory/<project>/ path corrected to .claude/memory/<project>/ (PATH-01)",
         "tools: Task corrected to scoped Agent(persona-runner) - bare Task is not a valid tool name, and the scoping is the DELEG-01 lesson",

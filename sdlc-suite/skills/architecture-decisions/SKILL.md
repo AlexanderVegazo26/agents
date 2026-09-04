@@ -1,5 +1,6 @@
 ---
 name: architecture-decisions
+version: 1.0.0
 description: ADR (Architecture Decision Record) format and discipline — when to write one, what it must contain, and how to keep the decision log useful over time. Load when a non-obvious architectural or technical decision is being made, before or immediately after implementation.
 ---
 

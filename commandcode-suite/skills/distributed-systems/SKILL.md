@@ -1,5 +1,6 @@
 ---
 name: distributed-systems
+version: 1.0.0
 description: Core distributed-systems reasoning — consistency models, failure modes, idempotency, and the fallacies that quietly break designs which assume a network is reliable. Load when a design spans more than one process/service/datastore.
 ---
 

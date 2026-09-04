@@ -28,7 +28,7 @@ Command Code discovers `.commandcode/agents/`, `.commandcode/skills/`, and `.com
 **Option C — run the workflows directly** from this repo, no install at all:
 
 ```bash
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/release-readiness.js" "release 2.4.0"
+node "<repo>/commandcode-suite/workflows/release-readiness.js" "release 2.4.0"
 ```
 
 The workflow scripts resolve their own paths relative to the suite directory, so they work from any `cwd`; run them against the target repo by `cd`-ing into it first.
@@ -60,25 +60,68 @@ A gate absent from the file is treated as not authorized. Uncertainty about reve
 
 ```bash
 cd /path/to/any/project
-node "C:/Users/avega/Documents/personal/agents/commandcode-suite/workflows/sdlc-feature.js" "Add CSV export to the reporting dashboard" 2>&1 | tee build.log
+node "<repo>/commandcode-suite/workflows/sdlc-feature.js" "Add CSV export to the reporting dashboard" 2>&1 | tee build.log
 ```
 
 Inside a session, say *"run the sdlc-feature workflow on 'Add CSV export…'"* — the session model matches the `commands/sdlc-feature.md` launcher and executes it.
+
+### Output streams
+
+Every workflow writes to **two** streams, and they carry different things:
+
+| Stream | Carries | Written by |
+|---|---|---|
+| **stdout** | the final JSON report — and nothing else | `console.log(JSON.stringify(…))` in each workflow script |
+| **stderr** | progress: `[workflow] …` lines and `=== PHASE: … ===` headers | `log()` and `phase()` in `_runner.js` |
+
+So **`2>/dev/null` gets you only the report**, and it is safe to pipe stdout straight into a parser:
+
+```bash
+node workflows/registry-audit.js 2>/dev/null | jq -e .findings
+```
+
+Dropping `2>/dev/null` also parses — the redirect just suppresses the progress
+lines rather than being required to make the report readable. Keep it that way:
+a `console.log` added to `_runner.js`, or a progress line added to a workflow
+with `console.log` instead of `log()`, silently breaks every consumer that pipes
+the report, and the only symptom is a parser error with no explanation.
+
+To keep both streams interleaved in one log, merge them explicitly — which is
+what the `2>&1 | tee build.log` example above does. Note that the merged file is
+then **not** parseable as JSON.
 
 ### Environment
 
 | Variable | Effect | Default |
 |---|---|---|
+| `SUITE_ROOT` | Directory holding this suite. Every `commands/*.md` launcher line resolves the workflow script through it | none — the launchers fail fast without it |
 | `CMDC_BIN` | Path to the Command Code executable (node entry, exe, etc.) | auto-detected (npm package bin, native exe, then PATH `cmdc`) |
 | `CMDC_MODEL` | Pin a model for all workflow phases (any `/model` id) | session/inherit |
 | `CMDC_AGENT_TIMEOUT_MS` | Per-phase timeout | 3600000 |
+
+`SUITE_ROOT` is only needed by the `commands/*.md` launchers. Export it once:
+
+```bash
+export SUITE_ROOT=/path/to/agents/commandcode-suite
+```
+
+Each launcher spells it `${SUITE_ROOT:?set SUITE_ROOT to the directory holding
+commandcode-suite}`, so an unset variable fails immediately and names itself
+rather than resolving to `/workflows/…` and reporting "file not found" from a
+path nobody chose.
+
+Running a workflow script directly (Option C above) does **not** need it: the
+scripts resolve their own location — `_runner.js` sets its own `SUITE_ROOT`
+from `__dirname` — so `node "<repo>/commandcode-suite/workflows/sdlc-feature.js" …`
+works with the variable unset. It is the launcher text, not the script, that
+depends on the environment.
 
 ### Before you trust an unattended run
 
 Three things will silently degrade a headless run. Check each once in the target repo:
 
 1. **Permissions.** Every `shell_command`/`write_file` call that would prompt interactively fails or stalls headless. The workflows pass `--permission-mode auto-accept` to their `cmdc -p` phases, but a consuming repo's `.commandcode/settings.json` may still restrict. Confirm with a throwaway `cmdc -p` run first.
-2. **Memory root.** Every agent reads and writes `.commandcode/memory/<project>/`. In a fresh repo that tree doesn't exist — copy `memory-template/` to `.commandcode/memory/<project>/` before the first run.
+2. **Memory root.** Every agent reads and writes `.claude/memory/<project>/` — the memory root is tool-agnostic by design and is not renamed per harness. In a fresh repo that tree doesn't exist — copy `memory-template/` to `.claude/memory/<project>/` before the first run.
 3. **MCP auth.** Interactively-authenticated MCP servers may be absent in headless runs. Any workflow step that reads a ticket or posts a status comment depends on them — verify with a throwaway `cmdc -p` first.
 
 ## What autonomy does not change

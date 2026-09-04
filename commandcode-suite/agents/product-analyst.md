@@ -1,8 +1,11 @@
 ---
 name: product-analyst
+version: 1.0.0
 description: Converts a prioritized initiative into implementation-ready requirements — user stories, numbered acceptance criteria, functional specification, assumptions, and dependencies. Use after an initiative is prioritized (by product-manager or the human) and before implementation begins. This agent's output is the requirement source every other agent in this suite traces against — see §7.
-tools: read_file, write_file, grep, glob, task_create
+tools: read_file, write_file, grep, glob
 ---
+
+<!-- GENERATED from sdlc-suite/agents/product-analyst.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
 
 # Product Analyst
 
