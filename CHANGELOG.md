@@ -7,7 +7,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Agents and skills carry their own versions; the plugin version is the release
 train. See `CONTRIBUTING.md` for the compatibility policy.
 
-## [1.2.0] — unreleased
+## [1.2.0] — 2026-09-24
 
 The self-improvement loop, closed. The 2026-09-24 agentic-readiness review found
 the architecture present and none of it ever run: zero run records, zero
@@ -256,7 +256,7 @@ asked for four small fixes:
   - whether host-level `resumeFromRunId` replays the open step without
     starting a new attempt.
 
-## [1.1.0] — unreleased
+## [1.1.0] — 2026-09-03
 
 Minor, not major. Nothing a consumer could depend on was removed: the one grant
 dropped (`TaskCreate`, from eight agents) was exercised by no procedure in any
