@@ -240,8 +240,16 @@ def read_runs(root: Path, since: datetime | None, gaps: Gap) -> list[dict]:
     out = []
     if not runs_root.is_dir():
         return out
-    for d in sorted(p for p in runs_root.iterdir() if p.is_dir()):
+    # The same run-directory controls as _learnings.js and improve.py (security
+    # IM5): the recorder's run-id shape, no symlinked directory, and a size cap.
+    # Anything else under .claude/runs is not a run the recorder wrote.
+    run_id = re.compile(r"\d{8}T\d{6}Z-[a-z0-9-]{1,40}-[0-9a-f]{4}")
+    for d in sorted(p for p in runs_root.iterdir()
+                    if p.is_dir() and not p.is_symlink() and run_id.fullmatch(p.name)):
         f = d / "outcome.json"
+        if f.is_file() and f.stat().st_size > 1024 * 1024:
+            gaps.unreadable_outcome.append("{n}: outcome.json exceeds 1 MB".format(n=d.name))
+            continue
         if not f.is_file():
             gaps.missing_outcome.append(d.name)
             continue
@@ -438,7 +446,12 @@ def collect(runs: list[dict], gaps: Gap) -> dict[str, Group]:
             why = norm(na["why"])
             if not why:
                 continue
-            g = group("not-addressed", (norm(na["id"]), why), "heuristic")
+            # Keyed on the REASON alone. A criterion id is run-local --
+            # product-analyst numbers each run's criteria afresh, so "AC-2" in
+            # two runs names two unrelated things, and keying on it both split
+            # real recurrences and put an AC-n string into every candidate,
+            # which the redactor's ticket-id class then quarantined.
+            g = group("not-addressed", (why,), "heuristic")
             g.add(run, {"id": na["id"], "why": na["why"],
                         "agentType": na.get("agentType")})
 
@@ -483,8 +496,14 @@ def _title_body_check(g: Group) -> tuple[str, str, str]:
             "reliable false positive from the lens. Either way the reasoning is "
             "the useful part, not the verdict."
         ).format(n=n, l=s["lens"], why=clamp(s["why"], BODY_CAP))
-        check = ("Before raising this class of finding again, check whether the "
-                 "reason above already applies, and say so explicitly if it does not.")
+        # Worded to make the agent look HARDER. The previous text -- "Before
+        # raising this class of finding again, check whether the reason above
+        # already applies" -- read as a reason to raise fewer findings, the one
+        # thing learnings/README.md says a learning must never do. The template
+        # test in test_distil.py fails on that wording.
+        check = ("When this class of finding comes up again, test it against the "
+                 "reason above using evidence from the change in front of you, and "
+                 "state explicitly whether that reason holds here and why.")
     elif g.sigtype == "failure-class-phase":
         title = clamp("{c} failures recur in the {p} phase".format(
             c=s["class"], p=s["phase"]), TITLE_CAP)
@@ -510,10 +529,10 @@ def _title_body_check(g: Group) -> tuple[str, str, str]:
         check = ("Before starting work that will hit this gate, prepare the "
                  "action and record it as blocked rather than stopping the run.")
     else:  # not-addressed
-        title = clamp("{i} is repeatedly deferred: {why}".format(
-            i=s["id"], why=s["why"]), TITLE_CAP)
+        title = clamp("A criterion is repeatedly deferred: {why}".format(
+            why=s["why"]), TITLE_CAP)
         body = (
-            "The criterion {i} has been reported in `notAddressed` in {n} "
+            "A criterion has been reported in `notAddressed` in {n} "
             "distinct runs for the same stated reason:\n\n> {why}\n\n"
             "A scope boundary that keeps being rediscovered mid-build is worth "
             "naming in the requirements up front."
@@ -685,18 +704,76 @@ def safe_write(root: Path, target: Path, text: str) -> None:
 # --------------------------------------------------------------------------
 
 
+def read_marker(marker: Path):
+    """`(since, deferred_signatures)` out of `.last-distil`.
+
+    Line 1 is the ISO timestamp the marker always held; any later line reading
+    `deferred <signature>` names a signature that qualified but was cut by the
+    per-run cap. A marker from before deferrals existed is just line 1.
+    """
+    if not marker.is_file():
+        return None, set(), 0
+    lines = marker.read_text(encoding="utf-8").splitlines()
+    since = parse_iso(lines[0].strip()) if lines else None
+    deferred = {ln.split(None, 1)[1].strip() for ln in lines[1:]
+                if ln.startswith("deferred ") and len(ln.split(None, 1)) == 2}
+    # The highest LRN number ever handed out. A candidate a reviewer rejects is
+    # deleted, and with it the only record that its id was used; without this
+    # line the next run re-issued the id for a different signature.
+    issued = 0
+    for ln in lines[1:]:
+        m = re.match(r"^issued LRN-(\d+)$", ln.strip())
+        if m:
+            issued = max(issued, int(m.group(1)))
+    return since, deferred, issued
+
+
+def pending_candidate_signatures(root: Path) -> set:
+    """Signatures already sitting in `candidates/`, awaiting a reviewer.
+
+    Only files that are present NOW. A candidate a reviewer rejected and deleted
+    is absent, so it is not suppressed forever -- it comes back only when new
+    runs bring new evidence for it, which is the behaviour the reviewer needs.
+    """
+    d = root / LEARNINGS_REL / "candidates"
+    if not d.is_dir():
+        return set()
+    return {read_frontmatter(p).get("signature") for p in d.glob("*.md")} - {None}
+
+
 def do_distil(root: Path, emit: bool, denylist, out) -> int:
     marker = root / LEARNINGS_REL / MARKER_NAME
-    since = parse_iso(marker.read_text(encoding="utf-8").strip()) if marker.is_file() else None
+    since, deferred_before, issued_before = read_marker(marker)
 
+    # The WHOLE store is grouped; the marker only decides what is new. Filtering
+    # by the marker before grouping -- what this did until 2026-09-24 -- meant a
+    # signature seen in run 1 and again in run 2 was grouped from run 2 alone,
+    # so "0 of 1 met the 2-distinct-run floor" on exactly the recurrence the
+    # floor exists to detect. Run per-run, as the loop intends, distil could
+    # therefore never emit anything. Measured, not inferred.
     gaps = Gap()
-    runs = read_runs(root, since, gaps)
+    runs = read_runs(root, None, gaps)
     groups = collect(runs, gaps)
 
     known = {fm.get("signature"): fm.get("id")
              for _, fm in existing_learnings(root) if fm.get("signature")}
+    pending = pending_candidate_signatures(root)
 
-    qualifying = [g for g in groups.values() if g.distinct_runs >= 2]
+    def is_new(g: Group) -> bool:
+        # New evidence since the last emit, or left unresolved (deferred, quarantined, dropped) by it.
+        if g.signature in deferred_before:
+            return True
+        return since is None or any(r["_endedAt"] > since for r in g.runs.values())
+
+    # Ratified signatures are removed BEFORE the cap. Grouping the whole store
+    # makes a ratified learning that keeps recurring the highest-count group, so
+    # left in, ten of them filled every slot as a no-op "recurrence" and a new
+    # signature was deferred on every run -- measured, a regression on HEAD.
+    recurring_known = [g for g in groups.values()
+                       if g.distinct_runs >= 2 and g.signature in known]
+    qualifying = [g for g in groups.values()
+                  if g.distinct_runs >= 2 and g.signature not in known
+                  and g.signature not in pending and is_new(g)]
 
     # Deterministic order: strongest signal first, then a stable tiebreak, so
     # the same store produces the same ten candidates and the same ids on every
@@ -704,22 +781,21 @@ def do_distil(root: Path, emit: bool, denylist, out) -> int:
     # signals ever get seen.
     qualifying.sort(key=lambda g: (-g.distinct_runs, g.sigtype, g.key))
 
-    below_floor = len(groups) - len(qualifying)
+    # "Seen in only one run" means exactly that -- not "pending" or "no new
+    # evidence", which the old subtraction also counted and then mislabelled.
+    below_floor = sum(1 for g in groups.values() if g.distinct_runs < 2)
     selected = qualifying[:MAX_CANDIDATES_PER_RUN]
     deferred = qualifying[MAX_CANDIDATES_PER_RUN:]
 
     counts = defaultdict(int)
+    counts["recurrence"] = len(recurring_known)
     written = []
     quarantined = []
+    unresolved = []          # quarantined or dropped: reconsidered next run
     dropped_reasons = []
-    seq = next_id(root)
+    seq = max(next_id(root), issued_before + 1)
 
     for g in selected:
-        if g.signature in known:
-            # A recurrence, not a new concept. `--stamp` handles it; --emit must
-            # not rewrite the file, and must not propose a duplicate either.
-            counts["recurrence"] += 1
-            continue
 
         # `supersedes` is always empty. Computing it would mean deciding that
         # one candidate replaces a specific existing learning, and nothing here
@@ -738,12 +814,17 @@ def do_distil(root: Path, emit: bool, denylist, out) -> int:
 
         if verdict.dropped:
             counts["dropped"] += 1
+            unresolved.append(g)
             dropped_reasons.append(_redact.mask_summary(verdict))
             # Nothing is written. Not even to quarantine: a string the adopter
             # has declared private must not sit in a holding pen.
             continue
         if verdict.quarantined:
             counts["quarantined"] += 1
+            unresolved.append(g)
+            # The quarantined file carries this id, so the id is used: the next
+            # published candidate must not be handed the same one.
+            seq += 1
             quarantined.append((g.signature, _redact.mask_summary(verdict)))
             if emit:
                 # Named by digest, never by title: a quarantine filename built
@@ -763,10 +844,15 @@ def do_distil(root: Path, emit: bool, denylist, out) -> int:
                        render(cand))
 
     # ---- report -----------------------------------------------------------
-    print("read {r} outcome(s) since {s}; {q} of {t} signature(s) met the "
-          "2-distinct-run floor; {c} candidate(s)".format(
-              r=len(runs), s=(since.isoformat() if since else "the beginning"),
+    new_runs = sum(1 for r in runs if since is None or r["_endedAt"] > since)
+    print("read {r} outcome(s), {n} new since {s}; {q} of {t} signature(s) met the "
+          "2-distinct-run floor with new evidence; {c} candidate(s)".format(
+              r=len(runs), n=new_runs, s=(since.isoformat() if since else "the beginning"),
               q=len(qualifying), t=len(groups), c=counts["published"]), file=out)
+    if pending & {g.signature for g in groups.values()}:
+        print("  {n} signature(s) already have a candidate awaiting review in "
+              "candidates/ -- not proposed twice".format(
+                  n=len(pending & {g.signature for g in groups.values()})), file=out)
     if below_floor:
         print("  {n} signature(s) seen in only one run -- the floor is distinct "
               "runs, not occurrences".format(n=below_floor), file=out)
@@ -799,12 +885,21 @@ def do_distil(root: Path, emit: bool, denylist, out) -> int:
     if counts["dropped"]:
         code = EXIT_DROPPED
 
-    # The marker advances only on a clean emit. A quarantined outcome must be
-    # re-read and re-quarantined on every run until a human acts, or the loop
-    # goes quiet on exactly the material that needed attention.
-    if emit and code == EXIT_OK:
+    # The marker advances on EVERY emit, and carries forward by signature
+    # whatever is still unresolved -- deferred by the cap, quarantined, or
+    # dropped -- so each is reconsidered (and re-quarantined, and fails the job
+    # again) on every run until a human acts, without holding everything else
+    # back. The old rule, "advance only on a clean emit", achieved the first
+    # half by never advancing at all: the redactor quarantines the suite's own
+    # AC-n criterion ids, so a realistic store almost never exited 0, and every
+    # candidate a reviewer rejected came back on the next run under a re-used id.
+    # `issued` records the id high-water mark for the same reason.
+    if emit:
+        carried = list(dict.fromkeys(g.signature for g in [*deferred, *unresolved]))
         safe_write(root, marker,
-                   datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "\n")
+                   datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + "\n"
+                   + "".join("deferred {s}\n".format(s=s) for s in carried)
+                   + "issued LRN-{n:04d}\n".format(n=seq - 1))
 
     return code
 
@@ -820,16 +915,84 @@ def do_stamp(root: Path, emit: bool, out) -> int:
     runs = read_runs(root, None, gaps)
     groups = collect(runs, gaps)
     recurring = {g.signature: g for g in groups.values() if g.distinct_runs >= 2}
+    by_sig = {g.signature: g for g in groups.values()}
+
+    # EXPOSURE: which runs actually handed each learning to an agent. Before
+    # runs recorded `learningsLoaded`, decay could only count recurrence -- so a
+    # learning that WORKED (its signature stopped appearing) retired at 180
+    # days, and one that was IGNORED (its signature kept appearing) was
+    # re-confirmed forever.
+    #
+    # The judgement is a RATE comparison, within the workflows the signature
+    # occurs in: how often the signature appears in runs where the learning
+    # was loaded, against runs where it was not. "Not seen in an exposed run"
+    # alone is not effectiveness -- most runs never exercise a given failure
+    # class, so that rule kept every loaded learning alive forever (code review).
+    today = datetime.now(timezone.utc).date().isoformat()
+    run_info = {}                        # runId -> (date, workflow)
+    exposed = defaultdict(set)           # learning id -> {runId}
+    for r in runs:
+        rid = str(r.get("runId") or r["_dir"].name)
+        date = iso_date(r.get("endedAt") or r.get("startedAt"))
+        # A date in the future is not evidence of anything; security review
+        # showed a planted `9999-12-31` pinning a learning alive for good.
+        if date and date > today:
+            date = ""
+        run_info[rid] = (date, str(r.get("workflow") or ""))
+        for x in r.get("learningsLoaded") or []:
+            if isinstance(x, dict):
+                for i in x.get("ids") or []:
+                    exposed[str(i)].add(rid)
+
+    def rate(ids, sig_runs):
+        return (len(ids & sig_runs) / len(ids)) if ids else None
 
     changed = 0
     for path, fm in existing_learnings(root):
         sig = fm.get("signature")
         g = recurring.get(sig)
-        if not g:
-            continue
-        latest = max((iso_date(r.get("endedAt") or r.get("startedAt"))
-                      for r in g.runs.values()), default="")
-        if not latest or latest == fm.get("lastConfirmed"):
+        sig_runs = set(by_sig[sig].runs) if sig in by_sig else set()
+        workflows = {run_info[r][1] for r in sig_runs if r in run_info}
+        relevant = {rid for rid, (_, wf) in run_info.items() if wf in workflows}
+        exp = exposed.get(fm.get("id"), set()) & relevant
+        # The baseline excludes the learning's FOUNDING runs (its provenance):
+        # it exists only because its signature recurred there, so counting them
+        # makes the baseline positive by construction, and two clean runs of a
+        # rare signature then read as "effective" by chance (code review).
+        founding = set(re.findall(r"(?m)^[ \t]+- run:[ \t]*(\S+)[ \t]*$",
+                                  path.read_text(encoding="utf-8")))
+        unexp = relevant - exp - founding
+        pre, post = rate(unexp, sig_runs), rate(exp, sig_runs)
+        verdict = None
+        # Enough exposure that at least one recurrence was EXPECTED at the
+        # baseline rate; below that, zero recurrences is noise, not an effect.
+        if (len(exp) >= 2 and pre is not None and post is not None
+                and len(exp) * pre >= 1):
+            if post < pre:
+                verdict = "effective"
+            elif post > 0:
+                verdict = "ignored"
+        dates = []
+        if verdict == "effective":
+            dates += [run_info[r][0] for r in exp - sig_runs]
+            print("  EFFECTIVE {p}: signature in {a:.0%} of {n} run(s) where it was loaded, "
+                  "against {b:.0%} of {m} where it was not".format(
+                      p=path.name, a=post, n=len(exp), b=pre, m=len(unexp)), file=out)
+        elif verdict == "ignored":
+            # Loaded, and the failure it names happens as often as without it.
+            # The note is not changing behaviour: escalate it (reword it, or
+            # promote it into the agent or skill definition). It is NOT
+            # re-confirmed by the very recurrence it failed to prevent.
+            print("  IGNORED {p}: signature in {a:.0%} of {n} run(s) where it was loaded, "
+                  "against {b:.0%} where it was not -- the note is not changing "
+                  "behaviour; escalate it".format(p=path.name, a=post, n=len(exp), b=pre), file=out)
+        if g:
+            # Recurrence still confirms that the problem exists -- but only in
+            # runs where the learning was NOT in play.
+            dates += [run_info[r][0] for r in sig_runs - exp if r in run_info]
+        latest = max((d for d in dates if d), default="")
+        # Never backwards: a stamp only ever extends a learning's life.
+        if not latest or latest <= (fm.get("lastConfirmed") or ""):
             continue
         text = path.read_text(encoding="utf-8")
         new = re.sub(r"(?m)^lastConfirmed:[ \t]*.*$",
@@ -837,13 +1000,16 @@ def do_stamp(root: Path, emit: bool, out) -> int:
         if new == text:
             continue
         changed += 1
-        print("  {p}: lastConfirmed {a} -> {b} ({n} distinct runs)".format(
+        print("  {p}: lastConfirmed {a} -> {b} ({why})".format(
             p=path.name, a=fm.get("lastConfirmed"), b=latest,
-            n=g.distinct_runs), file=out)
+            why="; ".join(filter(None, [
+                "{n} distinct runs recurring".format(n=g.distinct_runs) if g else "",
+                "effective against exposure" if verdict == "effective" else "",
+            ]))), file=out)
         if emit:
             path.write_text(new, encoding="utf-8", newline="\n")
 
-    print("stamped {c} learning(s) as still recurring{d}".format(
+    print("stamped {c} learning(s) as still recurring or effective{d}".format(
         c=changed, d="" if emit else " (dry run -- nothing written)"), file=out)
     return EXIT_OK
 

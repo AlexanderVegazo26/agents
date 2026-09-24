@@ -8,6 +8,8 @@ export const meta = {
     { title: 'Build', detail: 'software-engineer / ui-engineer / database-engineer as the change requires' },
     { title: 'Verify', detail: 'code-reviewer, qa-engineer, security-engineer, performance-engineer independently' },
     { title: 'Cross-check', detail: 'every finding handed to a refuter before it is reported' },
+    { title: 'Repair', detail: 'the builder fixes confirmed blocking findings in its own change — at most 2 rounds' },
+    { title: 'Re-verify', detail: 'only the lenses that raised a blocking finding re-check the repair, then the refuter' },
     { title: 'Readiness', detail: 'release-manager synthesizes gates; technical-writer drafts docs' },
     { title: 'Runtime', detail: 'bridge steps that reach the recorder, the policy loader and the brief builder' },
   ],
@@ -46,6 +48,7 @@ export const meta = {
 // ===========================================================================
 
 const WORKFLOW = 'sdlc-feature'
+// >>> RUNTIME BLOCK — generated from _runtime.block.js by tools/runtime_block.py; do not hand-edit >>>
 
 const BRIDGE_SCHEMA = {
   type: 'object',
@@ -89,7 +92,15 @@ function runtimeDirOf(v) {
   // and no plugin root, so it has no trusted anchor and cannot check LOCATION.
   // That limit is real: the durable fix is for the command layer to pass
   // `runtimeDir` explicitly instead of letting one argument select two things.
-  if (/^(\\\\|\/\/)/.test(p)) return null
+  // Any two leading separators, in any mix: `/\host\share` passed the old
+  // `\\\\|//` test and `path.win32.join` still produced a UNC path from it.
+  if (/^[\\/]{2}/.test(p)) return null
+  // Absolute only — a drive root or `/`. A relative value resolves against the
+  // CONSUMING repo's working directory, so `.claude/workflows` made the bridge
+  // `require` a `_policy.js` the reviewed repository wrote, and hand back any
+  // gate table it liked. The command layer always passes an absolute
+  // `${CLAUDE_PLUGIN_ROOT}/workflows`, so this rejects no legitimate value.
+  if (!/^([A-Za-z]:[\\/]|\/)/.test(p)) return null
   return /[\\/]workflows[\\/]?$/.test(p) ? p.replace(/[\\/]+$/, '') : null
 }
 
@@ -108,11 +119,21 @@ function resumeIdOf(v) {
   return p
 }
 
+// Two policy arguments, because they mean two different things:
+//   `policy`        — an EXPLICIT policy the invoker imposes. It is INTERSECTED
+//                     with the repo's own file (a gate needs both), so an
+//                     invoker can run stricter than the repo, never looser.
+//   `policyDefault` — the plugin's shipped default, which every command passes.
+//                     A FALLBACK: the repo's `.claude/autonomy.json` overrides it.
+// Before the split, the commands passed the default as `policy`, so it beat the
+// repo file and silently re-enabled every gate a repo had locked down.
 const POLICY_PATH = resolvedPath(args?.policy)
+const POLICY_DEFAULT_PATH = resolvedPath(args?.policyDefault)
+const ANY_POLICY_PATH = POLICY_PATH || POLICY_DEFAULT_PATH
 const RUNTIME_DIR =
   runtimeDirOf(args?.runtimeDir) ||
-  (POLICY_PATH && parentDir(POLICY_PATH) ? runtimeDirOf(`${parentDir(POLICY_PATH)}/workflows`) : null)
-const RESUME_ID = resolvedPath(args?.resume)
+  (ANY_POLICY_PATH && parentDir(ANY_POLICY_PATH) ? runtimeDirOf(`${parentDir(ANY_POLICY_PATH)}/workflows`) : null)
+const RESUME_ID = resumeIdOf(args?.resume)
 const RECORDING = args?.record !== false
 
 const REQUIRE_HEAD = `const path = require('path')\nconst DIR = ${JSON.stringify(RUNTIME_DIR)}\n`
@@ -186,11 +207,12 @@ const DEGRADED_TABLE = [
 
 const POLICY = await (async () => {
   const r = await bridge('policy', `${REQUIRE_HEAD}const p = require(path.join(DIR, '_policy.js'))
-const r = p.loadPolicy({ explicitPath: ${JSON.stringify(POLICY_PATH)} })
-process.stdout.write(JSON.stringify({ gateTable: p.gateTableForPrompt(r), source: r.source, degraded: r.degraded, errors: r.errors }))`)
+const r = p.loadPolicy({ explicitPath: ${JSON.stringify(POLICY_PATH)}, defaultPath: ${JSON.stringify(POLICY_DEFAULT_PATH)} })
+const actGranted = Object.keys(r.gates.act).filter(k => r.gates.act[k] === true)
+process.stdout.write(JSON.stringify({ gateTable: p.gateTableForPrompt(r), source: r.source, degraded: r.degraded, errors: r.errors, actGranted: actGranted }))`)
   return r && typeof r.gateTable === 'string' && r.gateTable
     ? r
-    : { gateTable: DEGRADED_TABLE, source: null, degraded: true, errors: ['the policy bridge did not run'] }
+    : { gateTable: DEGRADED_TABLE, source: null, degraded: true, errors: ['the policy bridge did not run'], actGranted: [] }
 })()
 
 if (POLICY.degraded) {
@@ -198,6 +220,29 @@ if (POLICY.degraded) {
 } else {
   log(`autonomy policy resolved from ${POLICY.source}`)
 }
+if (Array.isArray(POLICY.actGranted) && POLICY.actGranted.length) {
+  log(`act.* gates GRANTED by ${POLICY.source}: ${POLICY.actGranted.join(', ')}`)
+}
+
+// Learnings travel on their OWN bridge step, never on the policy one. The
+// policy bridge's output is the gate table every later agent is handed; carrying
+// repository-authored free text through the same ungated transcriber, in the
+// same JSON, would let a learning's text reach the one agent that controls it.
+// A learnings failure therefore cannot touch the policy, and vice versa.
+const LEARNING_SET = await (async () => {
+  const r = await bridge('learnings', `${REQUIRE_HEAD}const l = require(path.join(DIR, '_learnings.js'))
+const got = l.loadLearnings({ dirs: l.defaultDirs({ cwd: process.cwd(), runtimeDir: DIR }), cwd: process.cwd() })
+// Repo-local lessons: signals recurring in THIS repo's recent runs, unratified,
+// handed back on the next run with no human gate because they never leave it.
+const repo = ${JSON.stringify(args?.repoLessons !== false)} ? l.loadRepoLessons({ cwd: process.cwd() }) : { entries: [], runsRead: 0 }
+const all = got.entries.concat(repo.entries)
+process.stdout.write(JSON.stringify({ byAgent: l.promptBlocksByAgent(all), sources: got.sources, skipped: got.skipped, repoRunsRead: repo.runsRead, repoLessons: repo.entries.length }))`)
+  if (r && r.byAgent && typeof r.byAgent === 'object') return { ...r, error: null }
+  return {
+    byAgent: {}, sources: [], skipped: [],
+    error: RUNTIME_DIR ? 'the learnings bridge did not run' : 'the runtime modules are unreachable',
+  }
+})()
 
 /**
  * Prefix the resolved gate table to an agent prompt.
@@ -209,6 +254,120 @@ if (POLICY.degraded) {
  */
 function withPolicy(prompt) {
   return `${POLICY.gateTable}\n\n---\n\n${prompt}`
+}
+
+// --------------------------------------------------------------------------
+// Learnings in, retries out — the two halves of "learn from the last run" and
+// "heal this one", at the one call site every specialist agent goes through.
+// --------------------------------------------------------------------------
+const LEARNINGS = LEARNING_SET.byAgent || {}
+const LEARNINGS_LOADED = []   // [{label, agentType, ids}] — lands in outcome.json
+const RETRIES = []            // [{label, phase, agentType, attempts, recovered}]
+const AGENT_TYPES = {}        // label -> agentType, so failure records can name the agent
+const NULL_RESULTS = []       // labels of dispatches that ended with no result, in order
+const REQUIRED_MISSING = []   // required deliverables that came back null
+const RETRY_ENABLED = args?.retry !== false
+
+if (LEARNING_SET.error) {
+  log(`learnings could not be loaded — ${LEARNING_SET.error}. Agents run without prior-run lessons.`)
+} else if (Object.keys(LEARNINGS).length) {
+  log(`learnings loaded for: ${Object.keys(LEARNINGS).join(', ')}`)
+}
+if (LEARNING_SET.repoLessons) {
+  log(`${LEARNING_SET.repoLessons} unratified repo-local lesson(s) from the last ${LEARNING_SET.repoRunsRead} run(s) of this repository`)
+}
+// A malformed or untracked learning that was refused is named, never silently
+// absent — "it did not load" and "there was nothing to load" must differ.
+for (const s of LEARNING_SET.skipped || []) log(`learning SKIPPED — ${s}`)
+
+function learningsBlockFor(agentType) {
+  const name = String(agentType || '').replace(/^.*:/, '')
+  return (name && LEARNINGS[name]) || LEARNINGS['*'] || null
+}
+
+/**
+ * Dispatch a specialist agent: prefix the ratified learnings that name it, and
+ * re-dispatch ONCE when it returns nothing.
+ *
+ * WHY ONE RETRY, AND WHY IT IS REWRITTEN
+ * `agent()` returns null with no stderr, no exit code and no message — after the
+ * host has already applied its own transport retries. So this cannot classify
+ * the failure, and does not pretend to. What it can do is the one thing the
+ * host's retry cannot: change the request. The retry names the previous empty
+ * result and restates the output contract, which is `_failure.js`'s BAD_INPUT
+ * strategy (retry with the conformance failure named) — the only class whose
+ * second attempt is designed to differ from the first. A second identical
+ * request is what the taxonomy calls not self-healing, so there is no third.
+ *
+ * The retry is deterministic (no clock, no randomness), so resume stays exact.
+ * `args.retry === false` turns it off for a run that must not spend twice, and
+ * `retry: false` in a call's opts turns it off for that call — used for agents
+ * that MUTATE (builders, repairs): a null from one of those may follow a partial
+ * edit, and a second attempt on top of it is not a clean retry. A user who
+ * deliberately skips an agent also produces a null; that cannot be told apart
+ * from a failure here, so a skipped read-only agent is asked once more.
+ *
+ * LEARNINGS GO AFTER THE GATE TABLE, NEVER BEFORE IT. The autonomy-policy skill
+ * tells an agent that a prompt BEGINNING `AUTONOMY POLICY —` is authoritative;
+ * prefixing learnings ahead of it broke that rule and — security review showed —
+ * let a learning's text forge a second policy block that sat in front of the
+ * real one. The table stays first; learnings follow it as fenced data.
+ */
+async function dispatch(prompt, opts) {
+  const { retry: retryThisCall = true, ...o } = opts || {}
+  const label = String(o.label || '')
+  AGENT_TYPES[label] = o.agentType || null
+  const lb = learningsBlockFor(o.agentType)
+  let full = prompt
+  if (lb && lb.text) {
+    const head = `${POLICY.gateTable}\n\n---\n\n`
+    full = prompt.startsWith(head)
+      ? `${head}${lb.text}\n\n---\n\n${prompt.slice(head.length)}`
+      : `${prompt}\n\n---\n\n${lb.text}`
+    if (lb.ids && lb.ids.length && !LEARNINGS_LOADED.some(x => x.label === label)) {
+      LEARNINGS_LOADED.push({ label, agentType: o.agentType || null, ids: lb.ids })
+    }
+  }
+  const first = await agent(full, o)
+  if (first !== null && first !== undefined) return first
+  if (!RETRY_ENABLED || !retryThisCall) {
+    RETRIES.push({ label, phase: o.phase || null, agentType: o.agentType || null, attempts: 1, recovered: false })
+    NULL_RESULTS.push(label)
+    return first
+  }
+  log(`${label} returned no result — re-dispatching once with the output contract restated`)
+  const second = await agent(`${full}
+
+---
+A previous attempt at this exact task returned NO result — nothing reached the workflow. That is the failure being corrected. Complete the task and return the required output${o.schema ? ', conforming exactly to the schema you were given' : ''}. If you genuinely cannot, return that as your result and say why — an explained refusal is usable, silence is not.`,
+  { ...o, label: `${label} (retry)` })
+  const recovered = second !== null && second !== undefined
+  RETRIES.push({ label, phase: o.phase || null, agentType: o.agentType || null, attempts: 2, recovered })
+  if (recovered) log(`${label} recovered on retry`)
+  else NULL_RESULTS.push(label)
+  return second
+}
+
+/**
+ * Mark a result the workflow cannot honestly finish without — the readiness
+ * recommendation, the merged review, the report. A run whose terminal agent
+ * returned nothing used to report `completed` with the deliverable null; it is
+ * now `incomplete`, with a gate naming what is missing.
+ */
+function requireResult(label, value) {
+  if (value === null || value === undefined) REQUIRED_MISSING.push(label)
+  return value
+}
+
+function repoLessonsLoaded() {
+  return LEARNINGS_LOADED
+    .map(x => ({ label: x.label, ids: (x.ids || []).filter(id => /^REPO-/.test(id)) }))
+    .filter(x => x.ids.length)
+}
+
+function attemptsFor(label) {
+  const r = RETRIES.filter(x => x.label === label).pop()
+  return r ? r.attempts : 1
 }
 
 // --------------------------------------------------------------------------
@@ -234,6 +393,9 @@ async function openRun(firstPhase) {
   }
   const r = await bridge('open', `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
 const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, args: ${JSON.stringify(args ?? null)}, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RESUME_ID)} })
+// A genuine resume is a new attempt, so the breaker below folds only this
+// attempt's failures and a fixed-then-resumed run does not re-trip on old ones.
+if (${JSON.stringify(RESUME_ID)}) run.beginAttempt()
 const resumed = {}
 for (const t of run.resumedPhases) resumed[t] = run.resumed(t)
 run.startPhase(${JSON.stringify(firstPhase)})
@@ -271,29 +433,49 @@ process.stdout.write(JSON.stringify({ runId: run.runId, dir: run.dir, resumed: r
  * `classify({})` is called with nothing and every failure lands on its
  * conservative fallback class. The breaker is therefore "N null returns in one
  * phase" — that is all it can be from inside the sandbox, and it is not dressed
- * up as more.
+ * up as more. Each record does name the agent and how many attempts
+ * `dispatch()` made, so the distiller can address a recurring failure to the
+ * agent that produced it rather than to a generic orchestrator.
+ *
+ * A TRIPPED PHASE IS FAILED, NOT COMPLETE. Marking it complete first meant a
+ * resume replayed it from cache — one lens of four — and reported `completed`.
+ * It is now `failPhase`d, so a resume re-executes it; and the breaker folds only
+ * the current attempt's failures, so a resume after the cause is fixed does not
+ * re-trip on the attempt it already recovered from.
  */
 async function recordPhase(title, artifact, nextPhase, failedLabels) {
   if (!RUN) return { tripped: false, entry: null }
+  const failed = (failedLabels || []).map(label => ({
+    label, agentType: AGENT_TYPES[label] || null, attempts: attemptsFor(label),
+  }))
   const r = await bridge('phase', `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
 const f = require(path.join(DIR, '_failure.js'))
 const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RUN.runId)} })
-const done = run.manifest.phases
+const done = run.manifest.phases.filter(p => p.status === 'complete')
 // A fresh process starts its own clock at zero, so the recorder would time the
 // bridge subprocess instead of the phase. The real boundary is already on disk.
 const prevIso = done.length ? (run._cache.get(done[done.length - 1].title) || {}).completedAt : run.manifest.startedAt
 run._phaseStartMs = Date.parse(prevIso || run.manifest.startedAt)
-run.completePhase(${JSON.stringify(title)}, ${JSON.stringify(artifact)})
+const title = ${JSON.stringify(title)}
 const cls = f.classify({})
-for (const label of ${JSON.stringify(failedLabels || [])}) {
-  run.recordFailure({ label: label, phase: ${JSON.stringify(title)}, class: cls, attempt: 1, of: 1,
+for (const x of ${JSON.stringify(failed)}) {
+  run.recordFailure({ label: x.label, agentType: x.agentType, phase: title, class: cls, attempt: x.attempts, of: x.attempts,
     detail: 'agent() returned no result - skipped, blocked, or gave up after the host runtime retried',
-    strategyNext: 'no further attempt is available to the workflow script; the host runtime owns retry' })
+    strategyNext: x.attempts > 1 ? 'the workflow re-dispatched once with the output contract restated and it still returned nothing'
+                                 : 'no further attempt was made by the workflow script; the host runtime owns transport retry' })
 }
 const breaker = new f.Breaker()
-for (const rec of run.readFailures()) breaker.record(rec.phase, rec.class || cls)
-if (${JSON.stringify(nextPhase)}) run.startPhase(${JSON.stringify(nextPhase)})
-process.stdout.write(JSON.stringify({ tripped: breaker.isTripped(${JSON.stringify(title)}), info: breaker.trippedInfo(${JSON.stringify(title)}), entry: breaker.asBlockedEntry(${JSON.stringify(title)}) }))`)
+for (const rec of run.readFailures()) {
+  if ((rec.epoch || 1) === run.attempt) breaker.record(rec.phase, rec.class || cls)
+}
+const tripped = breaker.isTripped(title)
+if (tripped) {
+  run.failPhase(title, 'breaker tripped: ' + JSON.stringify(breaker.trippedInfo(title)))
+} else {
+  run.completePhase(title, ${JSON.stringify(artifact)})
+  if (${JSON.stringify(nextPhase)}) run.startPhase(${JSON.stringify(nextPhase)})
+}
+process.stdout.write(JSON.stringify({ tripped: tripped, info: breaker.trippedInfo(title), entry: breaker.asBlockedEntry(title) }))`)
   if (!r) return { tripped: false, entry: null }
   if (r.tripped && r.info) log(`BREAKER TRIPPED in "${title}" — ${r.info.count} x ${r.info.class}`)
   return r
@@ -311,24 +493,43 @@ function replayed(title) {
  * `fn` returns the phase artifact: `{ agents: [{label, result}], ... }`. That
  * shape is what `--resume` replays, so anything a later phase needs has to be
  * inside it.
+ *
+ * `uiTitle` is the `meta.phases` title shown to the user when it differs from
+ * the recorded one — a repair loop records `Repair 1`, `Repair 2` so each round
+ * resumes independently, while both display under the one declared `Repair`.
  */
-async function runPhase(title, next, fn) {
+async function runPhase(title, next, fn, uiTitle) {
   const cached = replayed(title)
   if (cached) {
     log(`phase "${title}" replayed from run ${RUN.runId} — no agent ran`)
     for (const a of cached.agents || []) keep(a.result)
+    // The phase's learnings and retry ledger replay with it. Without this a
+    // resumed run's outcome.json said the lens that got LRN-x in attempt 1 got
+    // no learnings at all — the exposure record effectiveness is measured on.
+    const led = cached._ledger || {}
+    for (const x of led.learningsLoaded || []) {
+      if (!LEARNINGS_LOADED.some(y => y.label === x.label)) LEARNINGS_LOADED.push(x)
+    }
+    for (const x of led.retries || []) RETRIES.push(x)
     return cached
   }
-  phase(title)
+  phase(uiTitle || title)
+  const ll0 = LEARNINGS_LOADED.length
+  const rt0 = RETRIES.length
+  const nl0 = NULL_RESULTS.length
   const artifact = await fn()
+  artifact._ledger = { learningsLoaded: LEARNINGS_LOADED.slice(ll0), retries: RETRIES.slice(rt0) }
   for (const a of artifact.agents || []) keep(a.result)
-  // A phase whose agents feed a second pipeline stage must report its own
-  // failures in `artifact.failed`: the stage's OUTPUT is what lands in
-  // `agents`, and a lens that returned null still produces an empty array
-  // there, so deriving failures from the artifact alone silently sees none.
-  const failed = Array.isArray(artifact.failed)
+  // Every dispatch in this phase that ended null — including refuters and
+  // verifiers, whose null used to reach neither failures.jsonl nor the breaker,
+  // so a run where cross-checking never happened looked healthy. A phase whose
+  // agents feed a second pipeline stage may also report failures in
+  // `artifact.failed`; those are merged, not double-counted.
+  const nulls = NULL_RESULTS.slice(nl0)
+  const declared = Array.isArray(artifact.failed)
     ? artifact.failed
     : (artifact.agents || []).filter(a => a.result === null || a.result === undefined).map(a => a.label)
+  const failed = [...nulls, ...declared.filter(l => !nulls.includes(l))]
   const b = await recordPhase(title, artifact, next, failed)
   if (b.entry) BREAKER_ENTRIES.push(b.entry)
   if (b.tripped) {
@@ -393,6 +594,150 @@ run._startMs = Date.parse(run.manifest.startedAt)
 run.resumedPhases = new Set(${JSON.stringify(REPLAYED)})
 process.stdout.write(JSON.stringify(run.close(${JSON.stringify(summary)})))`)
 }
+
+/**
+ * The self-improvement loop's own failure, as a gate that cannot vanish.
+ *
+ * A run whose runtime was unreachable completed its phases and recorded nothing
+ * — no outcome, no failures, no learnings in or out. Before this it returned
+ * `status: 'completed'` with `outcomeRecorded: false` buried in the payload, and
+ * four of six commands produced exactly that on every invocation because they
+ * passed `args` as a bare string. Measured: zero run directories, ever.
+ */
+function runtimeGates(outcome) {
+  const out = []
+  if (!RUNTIME_DIR) {
+    out.push({
+      gate: 'runtime.unreachable',
+      actionWithheld: 'recording this run, loading learnings from prior runs, and the cross-phase breaker',
+      whyGated: 'args carried no usable runtimeDir or policy path (a bare-string args, or an unexpanded ${CLAUDE_PLUGIN_ROOT}), so the runtime modules could not be reached — this run can neither learn nor be learned from',
+      prepared: 'the phases themselves ran, with every autonomy gate read as NOT pre-authorized',
+      unblocks: 'invoke the workflow with args as an OBJECT carrying runtimeDir: "<plugin root>/workflows"',
+      authorizeBy: 'not an authorization gate — a wiring failure',
+    })
+  } else if (RECORDING && !outcome) {
+    out.push({
+      gate: 'runtime.outcomeUnrecorded',
+      actionWithheld: 'writing outcome.json for this run',
+      whyGated: RUN ? 'the close bridge step did not run, so the run directory has no outcome' : 'the run directory could not be opened',
+      prepared: 'the phase results are in this return value',
+      unblocks: 'check that node runs in this environment and .claude/runs/ is writable, then re-run',
+      authorizeBy: 'not an authorization gate — a recording failure',
+    })
+  }
+  return out
+}
+
+/**
+ * Run the workflow body and ALWAYS reach the outcome record — on a stop, a
+ * crash, or a clean finish. Shared, because six hand-kept copies of this tail
+ * had already drifted apart in the fields they recorded.
+ *
+ * Deliberately NOT a `finally { return }`: returning from a finally swallows the
+ * thrown error and a crashed run would report success.
+ *
+ * Reads and writes the host workflow's `status`; `extras()` supplies the
+ * workflow's own findings, refutations and repair record at close time.
+ */
+async function finishRun(body, extras = () => ({})) {
+  let result = null
+  let thrown = null
+  try {
+    result = await body()
+  } catch (e) {
+    // A tripped breaker is a decision this workflow made, not a crash: it stops
+    // the phases that depend on the failing one and records why. Anything else
+    // is a genuine error, and is re-thrown once the outcome record is written.
+    if (e && e.breakerStop === true) {
+      status = 'stopped'
+      result = {
+        status: 'stopped',
+        reason: `Breaker tripped in phase "${e.title}": ${e.entry.whyGated} Phases depending on it were not run.`,
+      }
+    } else {
+      thrown = e
+    }
+  }
+
+  // `completed` is a claim about the run, so it is withheld when the run cannot
+  // back it. A run that could not reach its runtime recorded nothing and learned
+  // nothing; a run whose terminal agent returned nothing has no deliverable.
+  // Both used to read `completed`, and an orchestrator reading `status` saw a
+  // clean run. They are `incomplete`, each with a gate saying why.
+  const requiredGates = REQUIRED_MISSING.map(label => ({
+    gate: 'run.deliverableMissing',
+    actionWithheld: `reporting this run as completed`,
+    whyGated: `the required result "${label}" came back empty, after one retry`,
+    prepared: 'every earlier phase result is in this return value and the run directory',
+    // A RE-RUN, not a resume: one null is below the breaker threshold, so the
+    // phase was recorded complete with the empty result, and a resume would
+    // replay that emptiness from cache (code review N2).
+    unblocks: `re-run the workflow — a resume would replay the completed phase, empty deliverable included`,
+    authorizeBy: 'not an authorization gate — a missing deliverable',
+  }))
+  if (status === 'completed' && (!RUNTIME_DIR || REQUIRED_MISSING.length)) status = 'incomplete'
+
+  let blocked = { gates: [], complete: false }
+  let outcome = null
+  let x = {}
+  try { x = extras() || {} } catch (e) { log(`could not collect the run's own record: ${(e && e.message) || e}`) }
+  try {
+    blocked = await collectBlockedGates()
+    outcome = await closeRun({
+      status,
+      findings: x.findings || { confirmed: 0, refuted: 0, byLens: {} },
+      refutations: x.refutations || [],
+      blockedGates: [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(true)],
+      error: thrown ? String((thrown && thrown.message) || thrown) : null,
+      learningsLoaded: LEARNINGS_LOADED,
+      repoLessonsLoaded: repoLessonsLoaded(),
+      learningsSkipped: LEARNING_SET.skipped || [],
+      learningsError: LEARNING_SET.error || null,
+      policyDegraded: POLICY.degraded === true,
+      actGranted: POLICY.actGranted || [],
+      retries: RETRIES,
+      repairRounds: x.repairRounds || null,
+    })
+  } catch (e) {
+    // Never let a failure to WRITE the record replace the failure that caused it.
+    log(`could not complete the outcome record: ${(e && e.message) || e}`)
+  }
+
+  if (thrown) throw thrown
+
+  const allGates = [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
+  return {
+    ...(result || {}),
+    status,
+    // Stated first-class, not buried: any act.* gate the resolved policy
+    // grants, and the file that granted it. A repo's own .claude/autonomy.json
+    // can grant these, so a reader must be able to see that it did.
+    actGranted: POLICY.actGranted || [],
+    selfHealDisabled: !RUNTIME_DIR,
+    runId: RUN ? RUN.runId : null,
+    runDir: RUN ? RUN.dir : null,
+    outcomeRecorded: !!outcome,
+    resumedPhases: [...REPLAYED],
+    // Unattended runs defer gates rather than halting (see the autonomy-policy
+    // skill). Every BLOCKED entry any agent emitted survives to this top level
+    // as a parsed ARRAY — a blocked gate that vanishes because the rest of the
+    // run looked clean is a reporting failure.
+    blockedGates: allGates,
+    blockedGatesComplete: blocked.complete,
+    breakerTripped: BREAKER_ENTRIES.length ? BREAKER_ENTRIES : null,
+    learningsLoaded: LEARNINGS_LOADED,
+    // First-class, like actGranted: which agents were steered by UNRATIFIED
+    // repo-local lessons no human reviewed (security review).
+    repoLessonsLoaded: repoLessonsLoaded(),
+    learningsSkipped: LEARNING_SET.skipped || [],
+    learningsError: LEARNING_SET.error || null,
+    retries: RETRIES,
+    ...(x.repairRounds ? { repairRounds: x.repairRounds } : {}),
+    policySource: POLICY.source,
+    degraded: POLICY.degraded,
+  }
+}
+// <<< RUNTIME BLOCK <<<
 
 // ---------------------------------------------------------------------------
 // The initiative under development. Pass a string or {initiative, paths} object.
@@ -564,6 +909,76 @@ process.stdout.write(JSON.stringify(out))`)
   return r
 }
 
+/**
+ * Hand every finding a lens raised to an independent refuter.
+ *
+ * Shared by Verify and by each repair round's re-verification, so a finding
+ * raised after a fix is held to exactly the standard the original was.
+ */
+function refuteFindings(result, lensKey, criteriaText, phaseLabel = 'Cross-check') {
+  if (!result?.findings?.length) return []
+  return parallel(
+    result.findings.map(f => () =>
+      dispatch(
+        withPolicy(`Try to REFUTE this finding. Default to refuted=true if you cannot substantiate it from actual evidence.
+
+FINDING (${f.severity}): ${f.summary}
+EVIDENCE CLAIMED: ${f.evidence}
+
+Criteria for context:\n${criteriaText}`),
+        {
+          agentType: 'code-reviewer',
+          label: `refute:${lensKey}`,
+          phase: phaseLabel,
+          effort: 'low',
+          schema: {
+            type: 'object',
+            required: ['refuted', 'reasoning'],
+            properties: { refuted: { type: 'boolean' }, reasoning: { type: 'string' } },
+          },
+        },
+      // A refuter that returned nothing has NOT refuted the finding. This used
+      // to read `v?.refuted !== false`, so a dead refuter deleted every finding
+      // it was handed: four null refuters -> zero confirmed and zero failure
+      // records. independent-review already did the opposite; now both keep
+      // the finding, flagged.
+      ).then(v => (v === null || v === undefined
+        ? { ...f, lens: lensKey, refuted: false, unverified: true, why: null }
+        : { ...f, lens: lensKey, refuted: v.refuted === true, why: v.reasoning })),
+    ),
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The repair loop — detect, repair, independently re-verify, record.
+// ---------------------------------------------------------------------------
+// The single most repeated human process in this repository's history was
+// "act on review, then re-review" (6a746ad, 10ad72f, 652f983, 8951c41), and no
+// workflow did it. A confirmed Must-Fix finding went straight to readiness as
+// a No-Go and waited for a person to re-run the whole lifecycle.
+//
+// Bounded at MAX_REPAIR_ROUNDS. The builder that wrote the change fixes it, in
+// the change's own location; ONLY the lenses that raised a surviving blocking
+// finding re-verify, and their new findings go through the same refuter. The
+// builder never certifies its own repair — ROUTING.md's rule, enforced here by
+// construction. An exhausted loop becomes a blocked gate, not a silent No-Go.
+const MAX_REPAIR_ROUNDS = 2
+const BLOCKING_RE = /must[\s-]?fix|critical|blocker|\bhigh\b/i
+
+// An UNVERIFIED finding (its refuter returned nothing) is kept, never dropped —
+// but it is not sent to a builder under the words "independent reviewers
+// confirmed", because nobody did. It goes to readiness in its own section.
+function isBlocking(f) {
+  return !!f && !f.refuted && !f.unverified && BLOCKING_RE.test(String(f.severity || ''))
+}
+
+// Findings are compared by content, not object identity: a replayed phase
+// hands back fresh objects, and a repair round must still recognise the
+// finding it was sent to fix.
+function findingKey(f) {
+  return JSON.stringify([f.lens, f.severity, f.summary, f.file || null, f.line || null])
+}
+
 // ===========================================================================
 // The workflow itself. Wrapped so that every exit — a stop, a crash, or a
 // clean finish — still reaches the outcome record. Deliberately NOT a
@@ -571,10 +986,9 @@ process.stdout.write(JSON.stringify(out))`)
 // a crashed run would report success.
 // ===========================================================================
 let status = 'crashed'
-let thrown = null
-let result = null
 let findingCounts = { confirmed: 0, refuted: 0, byLens: {} }
 let refutations = []
+let repairRounds = null
 
 async function runWorkflow() {
   const opened = await openRun('Requirements')
@@ -587,7 +1001,7 @@ async function runWorkflow() {
   // Phase 1 — Requirements. Everything downstream traces to these IDs.
   // -------------------------------------------------------------------------
   const reqArtifact = await runPhase('Requirements', 'Design', async () => {
-    const reqs = await agent(
+    const reqs = await dispatch(
       withPolicy(`Convert this initiative into implementation-ready requirements: ${initiative}
 
 Produce numbered, stable acceptance-criterion IDs — every downstream agent in this workflow traces against them, so an unstable ID breaks the whole run. Record assumptions as numbered/traceable/risk-rated per your §4. Do not invent a success metric that wasn't given; label any proposal as proposed-not-confirmed.
@@ -622,12 +1036,12 @@ Also classify which implementation surfaces this genuinely touches (backend / fr
       [
         needsUx &&
           (() =>
-            agent(
+            dispatch(
               withPolicy(`Produce the UX specification for these requirements:\n${criteriaText}\n\nSpecify every interactive state — initial, loading, empty, success, error, permission-denied, degraded. State accessibility requirements as checkable targets (a WCAG level, a contrast ratio, a touch-target size), not aspirations; ui-engineer owns turning them into measured values. Flag any gap back rather than inventing behavior.`),
               { agentType: 'ux-designer', label: 'ux-spec', phase: 'Design' },
             )),
         () =>
-          agent(
+          dispatch(
             withPolicy(`Assess the architecture for these requirements:\n${criteriaText}\n\nDecide the tier per your §2 — if this is Tier 1, say so and keep it short rather than manufacturing an ADR. Define NFRs as measurable numbers, never "scalable" or "fast". Flag anything that constrains the UX so it can be reconciled before build rather than mid-implementation.`),
             { agentType: 'solution-architect', label: 'architecture', phase: 'Design' },
           ),
@@ -667,7 +1081,7 @@ Also classify which implementation surfaces this genuinely touches (backend / fr
   const buildArtifact = await runPhase('Build', 'Verify', async () => {
     const built = await parallel(
       surfaces.map(surface => () =>
-        agent(
+        dispatch(
           withPolicy(`${BUILDERS[surface].brief}
 
 ACCEPTANCE CRITERIA (trace to these IDs):\n${criteriaText}
@@ -675,7 +1089,8 @@ ACCEPTANCE CRITERIA (trace to these IDs):\n${criteriaText}
 ARCHITECTURE CONTEXT:\n${architecture ?? '(none)'}
 
 Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code themselves — your summary is at most 2000 characters and exists to tell them what to look at and why, never to reproduce the diff. List every file you changed with its role, give a diffRef a reader can reach the change through (a git range, or the worktree path you were given), and name the criteria you addressed. Any criterion you did not address goes in notAddressed with the reason — an omission that is written down is a decision; one that is not is a defect found later.`),
-          { agentType: BUILDERS[surface].agentType, label: `build:${surface}`, phase: 'Build', isolation: 'worktree', schema: BUILD_MANIFEST_SCHEMA },
+          // retry: false — a builder mutates a worktree; see dispatch().
+          { agentType: BUILDERS[surface].agentType, label: `build:${surface}`, phase: 'Build', isolation: 'worktree', schema: BUILD_MANIFEST_SCHEMA, retry: false },
         ),
       ),
     )
@@ -729,7 +1144,7 @@ Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code 
         if (b.truncated) {
           log(`verify:${lens.key} brief was TRUNCATED to its budget — the lens is told so in the brief`)
         }
-        return agent(
+        return dispatch(
           withPolicy(`${lens.brief}
 
 ${text}
@@ -742,32 +1157,7 @@ The section above is a BRIEF, by reference. It is not the diff. Read the changed
         })
       },
       // Adversarially verify each finding from a different lens than produced it.
-      (result, lens) =>
-        result?.findings?.length
-          ? parallel(
-              result.findings.map(f => () =>
-                agent(
-                  withPolicy(`Try to REFUTE this finding. Default to refuted=true if you cannot substantiate it from actual evidence.
-
-FINDING (${f.severity}): ${f.summary}
-EVIDENCE CLAIMED: ${f.evidence}
-
-Criteria for context:\n${criteriaText}`),
-                  {
-                    agentType: 'code-reviewer',
-                    label: `refute:${lens.key}`,
-                    phase: 'Cross-check',
-                    effort: 'low',
-                    schema: {
-                      type: 'object',
-                      required: ['refuted', 'reasoning'],
-                      properties: { refuted: { type: 'boolean' }, reasoning: { type: 'string' } },
-                    },
-                  },
-                ).then(v => ({ ...f, lens: lens.key, refuted: v?.refuted !== false, why: v?.reasoning })),
-              ),
-            )
-          : [],
+      (result, lens) => refuteFindings(result, lens.key, criteriaText),
     )
     return {
       agents: LENSES.map((l, i) => ({ label: `verify:${l.key}`, result: verified[i] })),
@@ -777,23 +1167,183 @@ Criteria for context:\n${criteriaText}`),
   })
 
   const allFindings = (verifyArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
-  const confirmed = allFindings.filter(f => !f.refuted)
+  let confirmed = allFindings.filter(f => !f.refuted)
   const refuted = allFindings.filter(f => f.refuted)
   log(`${confirmed.length} findings survived cross-check, ${refuted.length} refuted`)
 
-  findingCounts = {
-    confirmed: confirmed.length,
-    refuted: refuted.length,
-    byLens: LENSES.reduce((acc, l) => {
-      acc[l.key] = allFindings.filter(f => f.lens === l.key).length
-      return acc
-    }, {}),
-  }
   // CHG-22 — the refutation reasoning is the most informative thing the run
-  // produces, and it is what used to be unrecoverable an hour later.
+  // produces, and it is what used to be unrecoverable an hour later. Set before
+  // the repair loop, which appends each re-verification's own.
   refutations = allFindings.map(f => ({
     lens: f.lens, severity: f.severity, summary: f.summary, refuted: f.refuted === true, why: f.why ?? null,
   }))
+
+  // -------------------------------------------------------------------------
+  // Phase 4b — Repair. Bounded; see MAX_REPAIR_ROUNDS above.
+  // -------------------------------------------------------------------------
+  repairRounds = { max: MAX_REPAIR_ROUNDS, rounds: [], outcome: 'not-needed' }
+  const seenFindings = [...allFindings]   // every finding any lens raised, all rounds
+  let open = confirmed.filter(isBlocking)
+  if (open.length && args?.repair === false) repairRounds.outcome = 'disabled'
+  for (let k = 1; open.length && args?.repair !== false && k <= MAX_REPAIR_ROUNDS; k++) {
+    const target = open
+    const lensKeys = [...new Set(target.map(f => f.lens))]
+    // Each finding goes to the builder(s) whose manifest names its file — paths
+    // normalised, since a lens may cite `./src/x.ts` or an absolute path for a
+    // manifest's `src/x.ts` — and a finding no manifest owns goes to every
+    // builder. Per finding, not per set: one matching finding must not route
+    // another surface's finding to the wrong builder.
+    const normPath = p => String(p || '').replace(/\\/g, '/').replace(/^\.\//, '')
+    const owns = (m, f) => !!f.file && (m.filesChanged || []).some(x => {
+      const a = normPath(x.path)
+      const b = normPath(f.file)
+      // A suffix match only when the shorter path still names a directory: a
+      // manifest's root-level `index.ts` must not own a finding in `ui/index.ts`.
+      const [short, long] = a.length <= b.length ? [a, b] : [b, a]
+      return a === b || (short.includes('/') && long.endsWith(`/${short}`))
+    })
+    const ownersOf = f => {
+      const o = manifests.filter(m => owns(m, f))
+      return o.length ? o : manifests
+    }
+    const fixers = manifests.filter(m => target.some(f => ownersOf(f).includes(m)))
+    const findingsFor = m => target.filter(f => ownersOf(f).includes(m))
+    const surfaceOf = m => String(m.label).replace(/^build:/, '')
+
+    const repairArtifact = await runPhase(`Repair ${k}`, `Re-verify ${k}`, async () => {
+      const fixed = await parallel(fixers.map(m => () =>
+        dispatch(
+          withPolicy(`REPAIR, round ${k} of ${MAX_REPAIR_ROUNDS}. Independent reviewers confirmed the blocking findings below against the change you built. Fix them.
+
+Work on YOUR ORIGINAL CHANGE, where it already lives — ${m.diffRef ? `reach it through: ${m.diffRef}` : 'the worktree or branch you built it in'}. Do not start from a fresh checkout: the change is not there, and a fix applied to the wrong tree fixes nothing. Stay inside the findings' scope; anything else you notice goes in your summary as noticed-but-not-touched.
+
+A finding you believe is wrong is not yours to dismiss — say so in notAddressed with the evidence, and the independent lens that raised it will re-check. You do not certify this repair; the lens re-verifies it after you.
+
+FINDINGS TO FIX:
+${JSON.stringify(findingsFor(m).map(f => ({ lens: f.lens, severity: f.severity, summary: f.summary, evidence: f.evidence, file: f.file, line: f.line })), null, 2)}
+
+YOUR ORIGINAL BUILD MANIFEST:
+${JSON.stringify(m, null, 2)}
+
+ACCEPTANCE CRITERIA:
+${criteriaText}
+
+Report a BUILD MANIFEST of the repair, with the same rules as the build: every file you changed, a diffRef, and criteriaAddressed.`),
+          // retry: false — a repair MUTATES the change. A null after a partial
+          // edit is not something a second attempt on top of it can cleanly fix.
+          { agentType: BUILDERS[surfaceOf(m)].agentType, label: `repair:${surfaceOf(m)}`, phase: 'Repair', schema: BUILD_MANIFEST_SCHEMA, retry: false },
+        ),
+      ))
+      return { agents: fixers.map((m, i) => ({ label: `repair:${surfaceOf(m)}`, result: fixed[i] })) }
+    }, 'Repair')
+
+    const repairManifests = (repairArtifact.agents || []).filter(a => a.result).map(a => ({ label: a.label, ...a.result }))
+    if (!repairManifests.length) {
+      repairRounds.rounds.push({ round: k, lenses: lensKeys, fixers: fixers.map(m => m.label), targeted: target.length, remaining: target.length, note: 'no builder produced a repair manifest' })
+      break
+    }
+
+    const reverifyFailed = []
+    const reArtifact = await runPhase(`Re-verify ${k}`, 'Readiness', async () => {
+      const reLenses = LENSES.filter(l => lensKeys.includes(l.key))
+      const out = await pipeline(
+        reLenses,
+        lens => dispatch(
+          withPolicy(`${lens.brief}
+
+RE-VERIFICATION, round ${k} of ${MAX_REPAIR_ROUNDS}. A builder has attempted to fix the blocking findings below, which your lens raised and an independent refuter confirmed. Decide INDEPENDENTLY whether each one is actually fixed: read the changed files yourself — the repair manifest is the builder's claim, not evidence. Report every finding that is still present, at its real severity, and any new defect the repair introduced. A finding you have shown to be fixed is not reported again; a finding you could not check is reported as still present, with why.
+
+FINDINGS TO RE-CHECK:
+${JSON.stringify(target.filter(f => f.lens === lens.key).map(f => ({ severity: f.severity, summary: f.summary, evidence: f.evidence, file: f.file, line: f.line })), null, 2)}
+
+REPAIR MANIFEST(S):
+${JSON.stringify(repairManifests, null, 2)}
+
+ORIGINAL BUILD MANIFEST(S):
+${JSON.stringify(manifests, null, 2)}
+
+ACCEPTANCE CRITERIA:
+${criteriaText}`),
+          { agentType: lens.agentType, label: `reverify:${lens.key}`, phase: 'Re-verify', schema: FINDINGS_SCHEMA },
+        ).then(r => {
+          if (r === null || r === undefined) reverifyFailed.push(`reverify:${lens.key}`)
+          return r
+        }),
+        (result, lens) => refuteFindings(result, lens.key, criteriaText, 'Re-verify'),
+      )
+      return {
+        agents: reLenses.map((l, i) => ({ label: `reverify:${l.key}`, result: out[i] })),
+        failed: reverifyFailed,
+        deadLenses: reverifyFailed.map(x => x.replace(/^reverify:/, '')),
+      }
+    }, 'Re-verify')
+
+    const reFindings = (reArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
+    // A re-verifier that returned nothing has certified nothing. Its lens's
+    // findings stay open rather than reading as "fixed" by silence — the same
+    // rule as the null refuter, one level up.
+    const dead = new Set(reArtifact.deadLenses || [])
+    const stillOpenUnchecked = target.filter(f => dead.has(f.lens))
+    for (const f of stillOpenUnchecked) f.repairUnverified = true
+    // Replace ONLY the findings this round targeted, and only for lenses that
+    // actually re-checked them. Everything else the lens confirmed — its Should
+    // Fix and Low findings, which the re-verifier was never shown — stays.
+    // Dropping a re-verified lens's findings wholesale erased independently
+    // confirmed findings on every successful repair (code review + QA, D1).
+    const replaced = new Set(target.filter(f => !dead.has(f.lens)).map(findingKey))
+    const kept = confirmed.filter(f => !replaced.has(findingKey(f)))
+    const keptKeys = new Set(kept.map(findingKey))
+    confirmed = kept.concat(reFindings.filter(f => !f.refuted && !keptKeys.has(findingKey(f))))
+    seenFindings.push(...reFindings)
+    for (const f of reFindings) {
+      refutations.push({ lens: f.lens, severity: f.severity, summary: f.summary, refuted: f.refuted === true, why: f.why ?? null })
+    }
+    // In RE-verification a blocking finding stays open unless it was refuted —
+    // even if its refuter died. The lens has positively said "still present";
+    // a second agent's silence does not overrule that, and treating it as
+    // unverified here let the loop report `closed` on a defect the re-verifier
+    // had just re-confirmed (code review N1).
+    open = [
+      ...reFindings.filter(f => !f.refuted && BLOCKING_RE.test(String(f.severity || ''))),
+      ...stillOpenUnchecked,
+    ]
+    repairRounds.rounds.push({
+      round: k, lenses: lensKeys, fixers: fixers.map(m => m.label),
+      targeted: target.length, remaining: open.length, deadReverifiers: [...dead],
+      // Per lens, so a lens that closed while another exhausted is never
+      // reported as churn (improve.py reads this).
+      openLenses: [...new Set(open.map(f => f.lens))],
+    })
+    log(`repair round ${k}: ${target.length} blocking finding(s) targeted, ${open.length} still open`)
+  }
+  if (repairRounds.rounds.length) repairRounds.outcome = open.length ? 'exhausted' : 'closed'
+  if (repairRounds.outcome === 'exhausted') {
+    // Through the same reducer as every autonomy gate, so it cannot vanish from
+    // a run whose other phases look clean.
+    keep([
+      'BLOCKED — repair.exhausted',
+      `  Action withheld: declaring the change fixed after ${repairRounds.rounds.length} bounded repair round(s)`,
+      `  Why gated: ${open.length} blocking finding(s) survived independent re-verification: ${open.map(f => `[${f.lens}] ${f.summary}`).join('; ').slice(0, 600)}`,
+      '  Prepared: every round\'s repair manifest and re-verification is in the run directory',
+      '  Unblocks: a human or a fresh sdlc-feature run addressing the named findings',
+      '  Authorize by: not an authorization gate — the repair loop is bounded by design',
+    ].join('\n'))
+  }
+
+  // After repair, and every count from the same final state: `confirmed` is
+  // what survived the last re-verification; `refuted` and `byLens` include each
+  // re-verification's findings, so the three numbers agree with one another.
+  const verified = confirmed.filter(f => !f.unverified)
+  const unverified = confirmed.filter(f => f.unverified)
+  findingCounts = {
+    confirmed: verified.length,
+    unverified: unverified.length,
+    refuted: seenFindings.filter(f => f.refuted).length,
+    byLens: LENSES.reduce((acc, l) => {
+      acc[l.key] = seenFindings.filter(f => f.lens === l.key).length
+      return acc
+    }, {}),
+  }
 
   // -------------------------------------------------------------------------
   // Phase 5 — Readiness. Recommendation only. No deploy authority here.
@@ -801,20 +1351,24 @@ Criteria for context:\n${criteriaText}`),
   const readinessArtifact = await runPhase('Readiness', null, async () => {
     const [readiness, docs] = await parallel([
       () =>
-        agent(
+        dispatch(
           withPolicy(`Assess release readiness from this evidence. Classify each gate Confirmed / Claimed-not-verified / Missing / N-A — do not upgrade a claim to Confirmed because it sounds reasonable.
 
 Produce a RECOMMENDATION for human confirmation. You do not hold deploy authority and this workflow cannot grant it.
 
 The autonomy policy in force is stated at the top of this prompt — you do not need to go and find it. Reproduce every BLOCKED gate entry from the evidence below verbatim in your output, each with what was prepared so a human can execute it in one step. Do not drop a blocked gate because the recommendation is otherwise a Go.
 
-CONFIRMED FINDINGS:\n${JSON.stringify(confirmed, null, 2)}
+CONFIRMED FINDINGS (an independent refuter checked each; after the bounded repair loop):\n${JSON.stringify(verified, null, 2)}
+
+UNVERIFIED FINDINGS — raised by a lens, but the refuter returned NOTHING, so no one has confirmed or dismissed them. Treat each as open and classify it Claimed-not-verified, never Confirmed:\n${JSON.stringify(unverified, null, 2)}
+
+REPAIR LOOP RECORD — blocking findings the builder repaired and an independent lens re-verified:\n${JSON.stringify(repairRounds, null, 2)}
 
 OPEN ASSUMPTIONS / QUESTIONS FROM REQUIREMENTS:\n${[...reqs.assumptions, ...reqs.openQuestions].join('\n') || '(none)'}`),
           { agentType: 'release-manager', label: 'readiness', phase: 'Readiness' },
         ),
       () =>
-        agent(
+        dispatch(
           withPolicy(`Draft the user-facing documentation and release notes for this change. Verify every behavioral claim against the actual implementation, not the requirement text — label anything you could not verify as Unverified rather than asserting or omitting it.
 
 CRITERIA:\n${criteriaText}
@@ -834,8 +1388,11 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
     surfacesBuilt: surfaces,
     buildManifests: manifests,
     verifyHandoff: (verifyArtifact.handoff && verifyArtifact.handoff.length) ? verifyArtifact.handoff : handoffs,
-    findings: { confirmed, refutedCount: refuted.length },
-    readinessRecommendation: agentResult(readinessArtifact, 'readiness'),
+    // `confirmed` keeps every surviving finding, unverified ones flagged, so a
+    // consumer that reads only this list still sees them; `unverified` names
+    // the subset no refuter checked.
+    findings: { confirmed, unverified, refutedCount: findingCounts.refuted },
+    readinessRecommendation: requireResult('readiness', agentResult(readinessArtifact, 'readiness')),
     documentation: agentResult(readinessArtifact, 'docs'),
     humanDecisionRequired: [
       'Release go/no-go — release-manager recommends, it never commits.',
@@ -844,56 +1401,7 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
   }
 }
 
-try {
-  result = await runWorkflow()
-} catch (e) {
-  // A tripped breaker is a decision this workflow made, not a crash: it stops
-  // the phases that depend on the failing one and records why. Anything else is
-  // a genuine error, and is re-thrown once the outcome record is written.
-  if (e && e.breakerStop === true) {
-    status = 'stopped'
-    result = {
-      status: 'stopped',
-      reason: `Breaker tripped in phase "${e.title}": ${e.entry.whyGated} Phases depending on it were not run.`,
-    }
-  } else {
-    thrown = e
-  }
-}
-
-let blocked = { gates: [], complete: false }
-let outcome = null
-try {
-  blocked = await collectBlockedGates()
-  outcome = await closeRun({
-    status,
-    findings: findingCounts,
-    refutations,
-    blockedGates: [...blocked.gates, ...BREAKER_ENTRIES],
-    error: thrown ? String((thrown && thrown.message) || thrown) : null,
-  })
-} catch (e) {
-  // Never let a failure to WRITE the record replace the failure that caused it.
-  log(`could not complete the outcome record: ${(e && e.message) || e}`)
-}
-
-if (thrown) throw thrown
-
-return {
-  ...(result || {}),
-  status,
-  runId: RUN ? RUN.runId : null,
-  runDir: RUN ? RUN.dir : null,
-  outcomeRecorded: !!outcome,
-  resumedPhases: [...REPLAYED],
-  // Unattended runs defer gates rather than halting (see the autonomy-policy
-  // skill). Every BLOCKED entry any agent emitted survives to this top level as
-  // a parsed ARRAY — a blocked gate that vanishes because the rest of the run
-  // looked clean is a reporting failure, and an instruction to the reader to go
-  // and collect them is not a collection.
-  blockedGates: [...blocked.gates, ...BREAKER_ENTRIES],
-  blockedGatesComplete: blocked.complete,
-  breakerTripped: BREAKER_ENTRIES.length ? BREAKER_ENTRIES : null,
-  policySource: POLICY.source,
-  degraded: POLICY.degraded,
-}
+// Every exit — stop, crash or clean finish — reaches the outcome record,
+// the retry and learnings ledger, and the blocked-gate reducer. See
+// finishRun() in the runtime block.
+return await finishRun(runWorkflow, () => ({ findings: findingCounts, refutations, repairRounds }))

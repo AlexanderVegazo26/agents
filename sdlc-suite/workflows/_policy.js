@@ -24,8 +24,9 @@
  *      relies on the model to prevent it. `collectBlockedGates()` is a reducer
  *      over the phase artifacts instead.
  *
- * Resolution order matches the skill's documented order, so an agent invoked
- * directly and a workflow-driven agent resolve the same file.
+ * Resolution — the repo's `.claude/autonomy.json` intersected with any explicit
+ * path, and the plugin default only when neither exists — matches the skill, so an agent invoked directly and a
+ * workflow-driven agent resolve the same file.
  */
 
 const fs = require('fs')
@@ -149,47 +150,92 @@ function allDenied() {
  * result rather than inferred, because "no policy file" and "a policy that denies
  * everything" are indistinguishable from the outside and the difference matters.
  */
-function loadPolicy({ explicitPath, cwd = process.cwd() } = {}) {
-  const candidates = [
-    explicitPath,
-    path.join(cwd, '.claude', 'autonomy.json'),
-  ].filter(Boolean)
+/** `{absent}`, `{bad: result}` or `{ok: parsed}` for one candidate file. */
+function readPolicyFile(p) {
+  let raw
+  try {
+    raw = fs.readFileSync(p, 'utf8')
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { absent: true }
+    return { bad: { ...allDeniedResult(p), errors: [`${p}: exists but could not be read — ${e && e.message}`] } }
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch (e) {
+    return { bad: { ...allDeniedResult(p), errors: [`${p}: not valid JSON — ${e.message}`] } }
+  }
+  const errors = validate(parsed)
+  if (errors.length) return { bad: { ...allDeniedResult(p), errors } }
+  return { ok: parsed }
+}
 
-  for (const p of candidates) {
-    let raw
-    try {
-      raw = fs.readFileSync(p, 'utf8')
-    } catch {
-      continue
-    }
-    let parsed
-    try {
-      parsed = JSON.parse(raw)
-    } catch (e) {
-      return {
-        ...allDeniedResult(p),
-        errors: [`${p}: not valid JSON — ${e.message}`],
-      }
-    }
-    const errors = validate(parsed)
-    if (errors.length) return { ...allDeniedResult(p), errors }
+function loadPolicy({ explicitPath, defaultPath, cwd = process.cwd() } = {}) {
+  // THREE sources, and how they combine.
+  //
+  //   repo      `.claude/autonomy.json` in the consuming repository
+  //   explicit  a `policy` path the invoker passes deliberately
+  //   default   the plugin's shipped file — what the commands pass, as
+  //             `policyDefault`
+  //
+  // The default is a FALLBACK, used only when neither of the others exists: the
+  // file itself says "copy this file to a consuming repo as
+  // .claude/autonomy.json to override". Until 2026-09-24 the commands passed it
+  // as the explicit path and it beat the repo, silently re-enabling every gate
+  // a repo had locked down (R2).
+  //
+  // When the repo and an explicit policy BOTH exist they are INTERSECTED: a gate
+  // is authorized only if every one of them authorizes it. So an invoker can
+  // always run stricter than the repository, and never looser — "stricter only"
+  // holds by construction instead of by the invoker's good intent. Code review
+  // caught the alternative (explicit simply wins) re-opening R2 for any caller
+  // still passing the plugin default under the old `policy` name.
+  //
+  // Anything that exists but cannot be read, parsed or validated degrades to all
+  // denied. An EXPLICIT path that does not exist also degrades: a typo in a
+  // path meant to make the run stricter must not silently yield the repo's
+  // permissive policy (security review, measured). Only an absent repo file or
+  // default falls through.
+  const repoPath = path.join(cwd, '.claude', 'autonomy.json')
+  const present = []
 
-    const gates = { decide: {}, act: {} }
-    for (const cls of ['decide', 'act']) {
-      for (const g of GATES[cls]) gates[cls][g] = parsed.preAuthorized[cls][g] === true
+  if (explicitPath) {
+    const r = readPolicyFile(explicitPath)
+    if (r.bad) return r.bad
+    if (r.absent) {
+      return { ...allDeniedResult(explicitPath), errors: [`${explicitPath}: the explicit policy path does not exist`] }
     }
-    return {
-      gates,
-      source: p,
-      degraded: false,
-      mode: parsed.mode,
-      onBlocked: parsed.onBlocked,
-      channel: (parsed.escalation && parsed.escalation.channel) || 'return',
-      errors: [],
+    present.push({ path: explicitPath, parsed: r.ok })
+  }
+  const repo = readPolicyFile(repoPath)
+  if (repo.bad) return repo.bad
+  if (repo.ok) present.push({ path: repoPath, parsed: repo.ok })
+
+  if (!present.length && defaultPath) {
+    const d = readPolicyFile(defaultPath)
+    if (d.bad) return d.bad
+    if (d.ok) present.push({ path: defaultPath, parsed: d.ok })
+  }
+  if (!present.length) return { ...allDeniedResult(null), errors: [] }
+
+  const gates = { decide: {}, act: {} }
+  for (const cls of ['decide', 'act']) {
+    for (const g of GATES[cls]) {
+      gates[cls][g] = present.every(s => s.parsed.preAuthorized[cls][g] === true)
     }
   }
-
-  return { ...allDeniedResult(null), errors: [] }
+  // Behaviour on a blocked gate takes the stricter of the sources too.
+  const first = present[0].parsed
+  return {
+    gates,
+    source: present.map(s => s.path).join(' ∩ '),
+    sources: present.map(s => s.path),
+    degraded: false,
+    mode: first.mode,
+    onBlocked: present.some(s => s.parsed.onBlocked === 'halt') ? 'halt' : first.onBlocked,
+    channel: (first.escalation && first.escalation.channel) || 'return',
+    errors: [],
+  }
 }
 
 function allDeniedResult(source) {

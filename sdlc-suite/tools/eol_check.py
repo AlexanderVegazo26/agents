@@ -20,6 +20,7 @@ Usage:
     python sdlc-suite/tools/eol_check.py                # list offenders, exit 0
     python sdlc-suite/tools/eol_check.py --check        # exit 1 if any offender
     python sdlc-suite/tools/eol_check.py --check PATH   # scan PATH instead
+    python sdlc-suite/tools/eol_check.py --fix          # rewrite CRLF -> LF, re-scan
 
 Exit codes (the contract a CI job depends on -- do not change silently):
     0  no CRLF found, or offenders found in plain listing mode
@@ -114,7 +115,17 @@ def iter_files(root: Path):
         yield root
         return
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
+        # A symlink is never followed. `is_file()` and `write_bytes()` both
+        # follow one, so `--fix` would rewrite a target outside the scanned
+        # tree — the definition trees never need a link to be real files.
+        if path.is_symlink() or not path.is_file():
+            continue
+        # A directory junction is not a symlink to `is_symlink()`, and rglob
+        # walks through it. Anything that RESOLVES outside the root being
+        # scanned is skipped, so `--fix` can never rewrite a file beyond it.
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
             continue
         if any(part in SKIP_DIRS for part in path.parts):
             continue
@@ -167,6 +178,11 @@ def main(argv=None) -> int:
         "--check", action="store_true",
         help="exit non-zero when any file contains CRLF",
     )
+    parser.add_argument(
+        "--fix", action="store_true",
+        help="rewrite every offender's CRLF to LF in place, then re-scan; exit 1 "
+             "only if CRLF survives the rewrite",
+    )
     args = parser.parse_args(argv)
 
     if args.paths:
@@ -181,6 +197,24 @@ def main(argv=None) -> int:
         roots += [REPO_ROOT / f for f in DEFAULT_FILES if (REPO_ROOT / f).exists()]
 
     offenders, scanned, skipped_binary = scan(roots)
+
+    if args.fix and offenders:
+        # The documented remedy — "normalising to LF restored them in the same
+        # session" — applied by the tool instead of by hand. Byte-level, so a
+        # file carrying a deliberate NUL (_policy.js) is rewritten exactly and
+        # nothing else in it moves. Binary files never reach this list. Then
+        # re-scan: a fix is reported from what is on disk afterwards, never
+        # from the fact that a write was attempted.
+        for path in offenders:
+            try:
+                path.write_bytes(path.read_bytes().replace(CRLF, b"\n"))
+                print("FIXED CRLF -> LF: {}".format(rel(path)))
+            except OSError as exc:
+                print("error: could not rewrite {}: {}".format(rel(path), exc), file=sys.stderr)
+        offenders, scanned, skipped_binary = scan(roots)
+        if not offenders:
+            print("OK: {} file(s) scanned, 0 with CRLF after --fix".format(scanned))
+            return 0
 
     for path in offenders:
         print("CRLF: {}".format(rel(path)))
@@ -199,7 +233,7 @@ def main(argv=None) -> int:
         "CRLF in a definition file has silently unregistered agents in this "
         "repository before. Rewrite the bytes with LF."
     )
-    return 1 if args.check else 0
+    return 1 if (args.check or args.fix) else 0
 
 
 if __name__ == "__main__":

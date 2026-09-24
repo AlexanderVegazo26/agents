@@ -6,6 +6,14 @@
 
 This directory contains the `.claude/` SDLC Agent Suite converted to the current **Kimi Code** format (the standalone product documented at `https://www.kimi.com/code/docs/en/kimi-code-cli/`).
 
+> **No self-improvement loop in this port — stated, not implied.** The Claude
+> Code workflows record every run (`.claude/runs/<id>/outcome.json`), retry an
+> agent that returns nothing, trip a per-attempt breaker, run a bounded
+> repair-and-re-verify loop in `sdlc-feature`, and load ratified `learnings/`
+> into the agents they name. `.kimi-code/workflows/*.py` is hand-ported and has
+> **none** of that, so a run here neither learns nor teaches. Use the Claude
+> Code workflows for anything you want the suite to learn from.
+
 > **Two Kimi products exist on this machine.** The legacy `kimi-cli` Python package (v1.49.0) uses the older `.kimi/` format; the newer standalone Kimi Code uses `.kimi-code/`. This directory targets the **new** product. The legacy mirror is kept in `.kimi/` for backward compatibility.
 
 ## Layout

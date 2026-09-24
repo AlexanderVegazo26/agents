@@ -169,6 +169,11 @@ class Run {
         resumableFrom: null,
         agentVersions: {},
         status: 'running',
+        // Which attempt at this run is executing. A resume is a new attempt.
+        // The breaker folds only the current attempt's failures: without that,
+        // a run that tripped, was fixed and was resumed re-tripped on the
+        // failures of the attempt it had already recovered from — forever.
+        attempt: 1,
       }
       this._safeMkdir()
       this._writeManifest()
@@ -231,6 +236,10 @@ class Run {
    */
   completePhase(title, artifact) {
     if (this.resumedPhases.has(title)) return artifact
+    // A phase that failed on an earlier attempt and now succeeds replaces its
+    // failed entry rather than sitting beside it, so a title appears once.
+    const failedAt = this.manifest.phases.findIndex(p => p.title === title && p.status === 'failed')
+    if (failedAt >= 0) this.manifest.phases.splice(failedAt, 1)
     const index = this.manifest.phases.length + 1
     const file = `phase-${index}-${slug(title)}.json`
     const payload = {
@@ -270,9 +279,24 @@ class Run {
     this._writeManifest()
   }
 
+  /**
+   * Start a new attempt at a resumed run. Called once per genuine resume — not
+   * on every reopen, which the workflow bridge does at each phase boundary.
+   */
+  beginAttempt() {
+    this.manifest.attempt = (this.manifest.attempt || 1) + 1
+    this._writeManifest()
+    return this.manifest.attempt
+  }
+
+  /** The attempt now executing. Runs recorded before attempts existed are attempt 1. */
+  get attempt() {
+    return this.manifest.attempt || 1
+  }
+
   /** Append one failure record. `failures.jsonl` is append-only by design. */
   recordFailure(record) {
-    const line = JSON.stringify({ at: new Date().toISOString(), ...record }) + '\n'
+    const line = JSON.stringify({ at: new Date().toISOString(), epoch: this.attempt, ...record }) + '\n'
     try {
       fs.appendFileSync(path.join(this.dir, 'failures.jsonl'), line, 'utf8')
     } catch (e) {
@@ -314,7 +338,10 @@ class Run {
     this._closed = true
 
     const { status = 'completed', findings = null, refutations = [],
-            blockedGates = [], error = null } = summary
+            blockedGates = [], error = null,
+            learningsLoaded = [], repoLessonsLoaded = [], learningsSkipped = [], learningsError = null,
+            policyDegraded = null, actGranted = [],
+            retries = [], repairRounds = null } = summary
 
     const failures = this.readFailures()
     const byClass = {}
@@ -340,6 +367,24 @@ class Run {
       refutations,
       blockedGates,
       failures: Object.entries(byClass).map(([cls, count]) => ({ class: cls, count })),
+      attempt: this.attempt,
+      // The loop's own evidence. `learningsLoaded` is which ratified learnings
+      // reached which agent — the input a learning's effectiveness is measured
+      // against. `retries` is every agent call that returned nothing and was
+      // re-dispatched, and whether the second attempt recovered it.
+      // `repairRounds` is the bounded fix-and-re-verify loop, where a workflow
+      // has one.
+      learningsLoaded,
+      // "Nothing loaded" has three causes that must stay distinguishable: no
+      // learning names the agent, a learning was refused (named here), or the
+      // loader never ran (`learningsError`).
+      repoLessonsLoaded,
+      learningsSkipped,
+      learningsError,
+      policyDegraded,
+      actGranted,
+      retries,
+      repairRounds,
       durationsMs,
       // If the recorder itself could not write, say so in the record rather than
       // leaving a plausible-looking file that is quietly incomplete.

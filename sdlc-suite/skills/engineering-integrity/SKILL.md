@@ -1,6 +1,6 @@
 ---
 name: engineering-integrity
-version: 1.0.0
+version: 1.1.0
 description: Compact checklist of honesty, verification-method, untrusted-input, shared-tree, and stop-condition rules, distilled from the software-engineer (Atlas) and qa-engineer (Sentinel) prime directives. Covers what counts as "verified", how an observation method (a pipe, a stale baseline, a never-red test, a single-shape fixture) can silently destroy the signal, treating inherited technical claims as unverified until measured, and working safely alongside a parallel agent in one working tree. Load for a quick self-check mid-task, or by any lighter-weight agent (e.g. qa-runner) that needs the core rules without the full agent spec.
 ---
 
@@ -21,6 +21,8 @@ description: Compact checklist of honesty, verification-method, untrusted-input,
 **A test that asserts the plumbing is not a test of the outcome.** A value that round-trips through an API, persists to disk, and broadcasts correctly has proved transport, not effect. If nothing consumes it, every one of those assertions passes while the feature does nothing a user could see. Assert the observable end state — the computed style, the rendered pixel, the file on disk — not the fact that the value arrived somewhere.
 
 **Your observation method can destroy the signal you are observing.** Reading a command's output is not the same as reading its result. A pipeline reports the exit status of its *last* stage, so `cmd | tail`, `cmd | grep`, and `cmd > file` all return success no matter how `cmd` fared — the summary line scrolls by reading "passed" while the runner exited non-zero on a failure that was never attached to a test. When an exit code is what you are claiming, capture it directly (`cmd > log; echo $?`) and read it. The same care applies to any layer that can swallow a status: a wrapper script, a task runner, a `try` block, a CI step with `continue-on-error`.
+
+**The channel you send a script through can rewrite it.** A shell heredoc, an inline `-c`/`-e` string, or a quoted argument passes through a layer that may collapse backslashes, expand `$`, or re-quote — so a regex, a JSON string with `\n`, or a Windows path arrives changed. It fails in the worst way: sometimes an error, sometimes a *plausible wrong answer* (a pattern that matches less, a string that no longer contains what you asserted it does). When a script contains a backslash, write it to a file with a file-writing tool and run the file; if a string-replacement script reports "not found" on text you can see, suspect the transport before the target. **A file-writing or editing tool is a transport too** — it can decode `\uXXXX` into the raw character, which inside a JavaScript regex literal is a line terminator and a syntax error; `sed` can turn `\t` into a tab; `python -c` can drop the backslash in `\'`. So after writing any source that contains escapes, verify the bytes, not your intent: run the language's syntax check or the test that loads the file, and grep for raw U+2028/U+2029 or tabs where you wrote escapes. Where it matters, build the backslash in code (`chr(92)`) so no layer can reinterpret it.
 
 **Measure the baseline yourself before claiming you did not regress it.** "All N tests still pass" is only meaningful against an N you established, in this tree, at the commit you started from. Counts quoted from a README, an issue, a prior agent's summary, or your own task brief are frequently stale — and a wrong baseline hides exactly the regression the check exists to catch. Run it first, record the number, and if it disagrees with what you were told, say so.
 
@@ -74,6 +76,8 @@ Stay inside the requested scope. Fix what was asked and what's genuinely require
 ## 7. Confirm before hard-to-undo actions
 
 Destructive or hard-to-reverse actions (data-altering migrations, deletions, force-push, history rewrite), anything touching production, anything sending data externally or changing auth/access, anything affecting other people's work or other tenants' data — confirm first. Judge by blast radius and reversibility, not category; if unsure whether something is reversible, treat it as irreversible.
+
+**When no human is present, "confirm" does not mean "wait".** In an unattended or scheduled run — and any run invoked through a workflow, whose prompt begins `AUTONOMY POLICY —` — load the `autonomy-policy` skill: act if the gate is pre-authorized, otherwise record it as a `BLOCKED — <gate>` entry with the action prepared, and carry on with everything that does not depend on it. A run that halts at the first gate with nobody to answer has not been careful; it has done nothing, and hidden the one decision that was needed.
 
 ## 8. Working alongside another agent in the same tree
 

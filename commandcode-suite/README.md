@@ -4,6 +4,16 @@ A full software-development-lifecycle framework for **Command Code** — a fixed
 
 This is a faithful port of the [sdlc-suite](../sdlc-suite) Claude Code plugin, re-targeted to Command Code's native `.commandcode/` layout. The organizing idea is unchanged: **the agent that does the work is never the agent that certifies it.** Implementation, review, execution-based verification, security assessment, and release authorization are held by separate agents on purpose, and none of them can quietly absorb another's job.
 
+> **No self-improvement loop in this port — stated, not implied.** The Claude
+> Code workflows record every run (`.claude/runs/<id>/outcome.json`), retry an
+> agent that returns nothing, trip a per-attempt breaker, run a bounded
+> repair-and-re-verify loop in `sdlc-feature`, and load ratified `learnings/`
+> into the agents they name. `commandcode-suite/workflows/` is hand-ported and
+> has **none** of that: no run record, no learnings in, nothing for
+> `distil.py` to learn from. A run here neither learns nor teaches. Porting it
+> means carrying `_runtime.block.js`'s behaviour into `_runner.js`; until then,
+> use the Claude Code workflows for anything you want the suite to learn from.
+
 ```
 commandcode-suite/
 ├── agents/          agents (.commandcode/agents format — Markdown + YAML frontmatter)
@@ -23,7 +33,7 @@ commandcode-suite/
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
 | `.claude/` | 22 | 60 | 6 | — |
-| `sdlc-suite/` | 22 | 60 | 6 | 8 |
+| `sdlc-suite/` | 22 | 60 | 6 | 9 |
 | `commandcode-suite/` | 22 | 60 | 6 | 6 |
 | `.kimi-code/` | 22 | 66 | 6 | — |
 | `.copilot/` | 22 | 60 | — | — |

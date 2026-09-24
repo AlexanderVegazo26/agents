@@ -42,6 +42,7 @@ export const meta = {
 // ===========================================================================
 
 const WORKFLOW = 'release-readiness'
+// >>> RUNTIME BLOCK — generated from _runtime.block.js by tools/runtime_block.py; do not hand-edit >>>
 
 const BRIDGE_SCHEMA = {
   type: 'object',
@@ -85,7 +86,15 @@ function runtimeDirOf(v) {
   // and no plugin root, so it has no trusted anchor and cannot check LOCATION.
   // That limit is real: the durable fix is for the command layer to pass
   // `runtimeDir` explicitly instead of letting one argument select two things.
-  if (/^(\\\\|\/\/)/.test(p)) return null
+  // Any two leading separators, in any mix: `/\host\share` passed the old
+  // `\\\\|//` test and `path.win32.join` still produced a UNC path from it.
+  if (/^[\\/]{2}/.test(p)) return null
+  // Absolute only — a drive root or `/`. A relative value resolves against the
+  // CONSUMING repo's working directory, so `.claude/workflows` made the bridge
+  // `require` a `_policy.js` the reviewed repository wrote, and hand back any
+  // gate table it liked. The command layer always passes an absolute
+  // `${CLAUDE_PLUGIN_ROOT}/workflows`, so this rejects no legitimate value.
+  if (!/^([A-Za-z]:[\\/]|\/)/.test(p)) return null
   return /[\\/]workflows[\\/]?$/.test(p) ? p.replace(/[\\/]+$/, '') : null
 }
 
@@ -104,10 +113,20 @@ function resumeIdOf(v) {
   return p
 }
 
+// Two policy arguments, because they mean two different things:
+//   `policy`        — an EXPLICIT policy the invoker imposes. It is INTERSECTED
+//                     with the repo's own file (a gate needs both), so an
+//                     invoker can run stricter than the repo, never looser.
+//   `policyDefault` — the plugin's shipped default, which every command passes.
+//                     A FALLBACK: the repo's `.claude/autonomy.json` overrides it.
+// Before the split, the commands passed the default as `policy`, so it beat the
+// repo file and silently re-enabled every gate a repo had locked down.
 const POLICY_PATH = resolvedPath(args?.policy)
+const POLICY_DEFAULT_PATH = resolvedPath(args?.policyDefault)
+const ANY_POLICY_PATH = POLICY_PATH || POLICY_DEFAULT_PATH
 const RUNTIME_DIR =
   runtimeDirOf(args?.runtimeDir) ||
-  (POLICY_PATH && parentDir(POLICY_PATH) ? runtimeDirOf(`${parentDir(POLICY_PATH)}/workflows`) : null)
+  (ANY_POLICY_PATH && parentDir(ANY_POLICY_PATH) ? runtimeDirOf(`${parentDir(ANY_POLICY_PATH)}/workflows`) : null)
 const RESUME_ID = resumeIdOf(args?.resume)
 const RECORDING = args?.record !== false
 
@@ -182,11 +201,12 @@ const DEGRADED_TABLE = [
 
 const POLICY = await (async () => {
   const r = await bridge('policy', `${REQUIRE_HEAD}const p = require(path.join(DIR, '_policy.js'))
-const r = p.loadPolicy({ explicitPath: ${JSON.stringify(POLICY_PATH)} })
-process.stdout.write(JSON.stringify({ gateTable: p.gateTableForPrompt(r), source: r.source, degraded: r.degraded, errors: r.errors }))`)
+const r = p.loadPolicy({ explicitPath: ${JSON.stringify(POLICY_PATH)}, defaultPath: ${JSON.stringify(POLICY_DEFAULT_PATH)} })
+const actGranted = Object.keys(r.gates.act).filter(k => r.gates.act[k] === true)
+process.stdout.write(JSON.stringify({ gateTable: p.gateTableForPrompt(r), source: r.source, degraded: r.degraded, errors: r.errors, actGranted: actGranted }))`)
   return r && typeof r.gateTable === 'string' && r.gateTable
     ? r
-    : { gateTable: DEGRADED_TABLE, source: null, degraded: true, errors: ['the policy bridge did not run'] }
+    : { gateTable: DEGRADED_TABLE, source: null, degraded: true, errors: ['the policy bridge did not run'], actGranted: [] }
 })()
 
 if (POLICY.degraded) {
@@ -194,6 +214,29 @@ if (POLICY.degraded) {
 } else {
   log(`autonomy policy resolved from ${POLICY.source}`)
 }
+if (Array.isArray(POLICY.actGranted) && POLICY.actGranted.length) {
+  log(`act.* gates GRANTED by ${POLICY.source}: ${POLICY.actGranted.join(', ')}`)
+}
+
+// Learnings travel on their OWN bridge step, never on the policy one. The
+// policy bridge's output is the gate table every later agent is handed; carrying
+// repository-authored free text through the same ungated transcriber, in the
+// same JSON, would let a learning's text reach the one agent that controls it.
+// A learnings failure therefore cannot touch the policy, and vice versa.
+const LEARNING_SET = await (async () => {
+  const r = await bridge('learnings', `${REQUIRE_HEAD}const l = require(path.join(DIR, '_learnings.js'))
+const got = l.loadLearnings({ dirs: l.defaultDirs({ cwd: process.cwd(), runtimeDir: DIR }), cwd: process.cwd() })
+// Repo-local lessons: signals recurring in THIS repo's recent runs, unratified,
+// handed back on the next run with no human gate because they never leave it.
+const repo = ${JSON.stringify(args?.repoLessons !== false)} ? l.loadRepoLessons({ cwd: process.cwd() }) : { entries: [], runsRead: 0 }
+const all = got.entries.concat(repo.entries)
+process.stdout.write(JSON.stringify({ byAgent: l.promptBlocksByAgent(all), sources: got.sources, skipped: got.skipped, repoRunsRead: repo.runsRead, repoLessons: repo.entries.length }))`)
+  if (r && r.byAgent && typeof r.byAgent === 'object') return { ...r, error: null }
+  return {
+    byAgent: {}, sources: [], skipped: [],
+    error: RUNTIME_DIR ? 'the learnings bridge did not run' : 'the runtime modules are unreachable',
+  }
+})()
 
 /**
  * Prefix the resolved gate table to an agent prompt.
@@ -205,6 +248,120 @@ if (POLICY.degraded) {
  */
 function withPolicy(prompt) {
   return `${POLICY.gateTable}\n\n---\n\n${prompt}`
+}
+
+// --------------------------------------------------------------------------
+// Learnings in, retries out — the two halves of "learn from the last run" and
+// "heal this one", at the one call site every specialist agent goes through.
+// --------------------------------------------------------------------------
+const LEARNINGS = LEARNING_SET.byAgent || {}
+const LEARNINGS_LOADED = []   // [{label, agentType, ids}] — lands in outcome.json
+const RETRIES = []            // [{label, phase, agentType, attempts, recovered}]
+const AGENT_TYPES = {}        // label -> agentType, so failure records can name the agent
+const NULL_RESULTS = []       // labels of dispatches that ended with no result, in order
+const REQUIRED_MISSING = []   // required deliverables that came back null
+const RETRY_ENABLED = args?.retry !== false
+
+if (LEARNING_SET.error) {
+  log(`learnings could not be loaded — ${LEARNING_SET.error}. Agents run without prior-run lessons.`)
+} else if (Object.keys(LEARNINGS).length) {
+  log(`learnings loaded for: ${Object.keys(LEARNINGS).join(', ')}`)
+}
+if (LEARNING_SET.repoLessons) {
+  log(`${LEARNING_SET.repoLessons} unratified repo-local lesson(s) from the last ${LEARNING_SET.repoRunsRead} run(s) of this repository`)
+}
+// A malformed or untracked learning that was refused is named, never silently
+// absent — "it did not load" and "there was nothing to load" must differ.
+for (const s of LEARNING_SET.skipped || []) log(`learning SKIPPED — ${s}`)
+
+function learningsBlockFor(agentType) {
+  const name = String(agentType || '').replace(/^.*:/, '')
+  return (name && LEARNINGS[name]) || LEARNINGS['*'] || null
+}
+
+/**
+ * Dispatch a specialist agent: prefix the ratified learnings that name it, and
+ * re-dispatch ONCE when it returns nothing.
+ *
+ * WHY ONE RETRY, AND WHY IT IS REWRITTEN
+ * `agent()` returns null with no stderr, no exit code and no message — after the
+ * host has already applied its own transport retries. So this cannot classify
+ * the failure, and does not pretend to. What it can do is the one thing the
+ * host's retry cannot: change the request. The retry names the previous empty
+ * result and restates the output contract, which is `_failure.js`'s BAD_INPUT
+ * strategy (retry with the conformance failure named) — the only class whose
+ * second attempt is designed to differ from the first. A second identical
+ * request is what the taxonomy calls not self-healing, so there is no third.
+ *
+ * The retry is deterministic (no clock, no randomness), so resume stays exact.
+ * `args.retry === false` turns it off for a run that must not spend twice, and
+ * `retry: false` in a call's opts turns it off for that call — used for agents
+ * that MUTATE (builders, repairs): a null from one of those may follow a partial
+ * edit, and a second attempt on top of it is not a clean retry. A user who
+ * deliberately skips an agent also produces a null; that cannot be told apart
+ * from a failure here, so a skipped read-only agent is asked once more.
+ *
+ * LEARNINGS GO AFTER THE GATE TABLE, NEVER BEFORE IT. The autonomy-policy skill
+ * tells an agent that a prompt BEGINNING `AUTONOMY POLICY —` is authoritative;
+ * prefixing learnings ahead of it broke that rule and — security review showed —
+ * let a learning's text forge a second policy block that sat in front of the
+ * real one. The table stays first; learnings follow it as fenced data.
+ */
+async function dispatch(prompt, opts) {
+  const { retry: retryThisCall = true, ...o } = opts || {}
+  const label = String(o.label || '')
+  AGENT_TYPES[label] = o.agentType || null
+  const lb = learningsBlockFor(o.agentType)
+  let full = prompt
+  if (lb && lb.text) {
+    const head = `${POLICY.gateTable}\n\n---\n\n`
+    full = prompt.startsWith(head)
+      ? `${head}${lb.text}\n\n---\n\n${prompt.slice(head.length)}`
+      : `${prompt}\n\n---\n\n${lb.text}`
+    if (lb.ids && lb.ids.length && !LEARNINGS_LOADED.some(x => x.label === label)) {
+      LEARNINGS_LOADED.push({ label, agentType: o.agentType || null, ids: lb.ids })
+    }
+  }
+  const first = await agent(full, o)
+  if (first !== null && first !== undefined) return first
+  if (!RETRY_ENABLED || !retryThisCall) {
+    RETRIES.push({ label, phase: o.phase || null, agentType: o.agentType || null, attempts: 1, recovered: false })
+    NULL_RESULTS.push(label)
+    return first
+  }
+  log(`${label} returned no result — re-dispatching once with the output contract restated`)
+  const second = await agent(`${full}
+
+---
+A previous attempt at this exact task returned NO result — nothing reached the workflow. That is the failure being corrected. Complete the task and return the required output${o.schema ? ', conforming exactly to the schema you were given' : ''}. If you genuinely cannot, return that as your result and say why — an explained refusal is usable, silence is not.`,
+  { ...o, label: `${label} (retry)` })
+  const recovered = second !== null && second !== undefined
+  RETRIES.push({ label, phase: o.phase || null, agentType: o.agentType || null, attempts: 2, recovered })
+  if (recovered) log(`${label} recovered on retry`)
+  else NULL_RESULTS.push(label)
+  return second
+}
+
+/**
+ * Mark a result the workflow cannot honestly finish without — the readiness
+ * recommendation, the merged review, the report. A run whose terminal agent
+ * returned nothing used to report `completed` with the deliverable null; it is
+ * now `incomplete`, with a gate naming what is missing.
+ */
+function requireResult(label, value) {
+  if (value === null || value === undefined) REQUIRED_MISSING.push(label)
+  return value
+}
+
+function repoLessonsLoaded() {
+  return LEARNINGS_LOADED
+    .map(x => ({ label: x.label, ids: (x.ids || []).filter(id => /^REPO-/.test(id)) }))
+    .filter(x => x.ids.length)
+}
+
+function attemptsFor(label) {
+  const r = RETRIES.filter(x => x.label === label).pop()
+  return r ? r.attempts : 1
 }
 
 // --------------------------------------------------------------------------
@@ -230,6 +387,9 @@ async function openRun(firstPhase) {
   }
   const r = await bridge('open', `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
 const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, args: ${JSON.stringify(args ?? null)}, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RESUME_ID)} })
+// A genuine resume is a new attempt, so the breaker below folds only this
+// attempt's failures and a fixed-then-resumed run does not re-trip on old ones.
+if (${JSON.stringify(RESUME_ID)}) run.beginAttempt()
 const resumed = {}
 for (const t of run.resumedPhases) resumed[t] = run.resumed(t)
 run.startPhase(${JSON.stringify(firstPhase)})
@@ -267,29 +427,49 @@ process.stdout.write(JSON.stringify({ runId: run.runId, dir: run.dir, resumed: r
  * `classify({})` is called with nothing and every failure lands on its
  * conservative fallback class. The breaker is therefore "N null returns in one
  * phase" — that is all it can be from inside the sandbox, and it is not dressed
- * up as more.
+ * up as more. Each record does name the agent and how many attempts
+ * `dispatch()` made, so the distiller can address a recurring failure to the
+ * agent that produced it rather than to a generic orchestrator.
+ *
+ * A TRIPPED PHASE IS FAILED, NOT COMPLETE. Marking it complete first meant a
+ * resume replayed it from cache — one lens of four — and reported `completed`.
+ * It is now `failPhase`d, so a resume re-executes it; and the breaker folds only
+ * the current attempt's failures, so a resume after the cause is fixed does not
+ * re-trip on the attempt it already recovered from.
  */
 async function recordPhase(title, artifact, nextPhase, failedLabels) {
   if (!RUN) return { tripped: false, entry: null }
+  const failed = (failedLabels || []).map(label => ({
+    label, agentType: AGENT_TYPES[label] || null, attempts: attemptsFor(label),
+  }))
   const r = await bridge('phase', `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
 const f = require(path.join(DIR, '_failure.js'))
 const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RUN.runId)} })
-const done = run.manifest.phases
+const done = run.manifest.phases.filter(p => p.status === 'complete')
 // A fresh process starts its own clock at zero, so the recorder would time the
 // bridge subprocess instead of the phase. The real boundary is already on disk.
 const prevIso = done.length ? (run._cache.get(done[done.length - 1].title) || {}).completedAt : run.manifest.startedAt
 run._phaseStartMs = Date.parse(prevIso || run.manifest.startedAt)
-run.completePhase(${JSON.stringify(title)}, ${JSON.stringify(artifact)})
+const title = ${JSON.stringify(title)}
 const cls = f.classify({})
-for (const label of ${JSON.stringify(failedLabels || [])}) {
-  run.recordFailure({ label: label, phase: ${JSON.stringify(title)}, class: cls, attempt: 1, of: 1,
+for (const x of ${JSON.stringify(failed)}) {
+  run.recordFailure({ label: x.label, agentType: x.agentType, phase: title, class: cls, attempt: x.attempts, of: x.attempts,
     detail: 'agent() returned no result - skipped, blocked, or gave up after the host runtime retried',
-    strategyNext: 'no further attempt is available to the workflow script; the host runtime owns retry' })
+    strategyNext: x.attempts > 1 ? 'the workflow re-dispatched once with the output contract restated and it still returned nothing'
+                                 : 'no further attempt was made by the workflow script; the host runtime owns transport retry' })
 }
 const breaker = new f.Breaker()
-for (const rec of run.readFailures()) breaker.record(rec.phase, rec.class || cls)
-if (${JSON.stringify(nextPhase)}) run.startPhase(${JSON.stringify(nextPhase)})
-process.stdout.write(JSON.stringify({ tripped: breaker.isTripped(${JSON.stringify(title)}), info: breaker.trippedInfo(${JSON.stringify(title)}), entry: breaker.asBlockedEntry(${JSON.stringify(title)}) }))`)
+for (const rec of run.readFailures()) {
+  if ((rec.epoch || 1) === run.attempt) breaker.record(rec.phase, rec.class || cls)
+}
+const tripped = breaker.isTripped(title)
+if (tripped) {
+  run.failPhase(title, 'breaker tripped: ' + JSON.stringify(breaker.trippedInfo(title)))
+} else {
+  run.completePhase(title, ${JSON.stringify(artifact)})
+  if (${JSON.stringify(nextPhase)}) run.startPhase(${JSON.stringify(nextPhase)})
+}
+process.stdout.write(JSON.stringify({ tripped: tripped, info: breaker.trippedInfo(title), entry: breaker.asBlockedEntry(title) }))`)
   if (!r) return { tripped: false, entry: null }
   if (r.tripped && r.info) log(`BREAKER TRIPPED in "${title}" — ${r.info.count} x ${r.info.class}`)
   return r
@@ -307,24 +487,43 @@ function replayed(title) {
  * `fn` returns the phase artifact: `{ agents: [{label, result}], ... }`. That
  * shape is what `--resume` replays, so anything a later phase needs has to be
  * inside it.
+ *
+ * `uiTitle` is the `meta.phases` title shown to the user when it differs from
+ * the recorded one — a repair loop records `Repair 1`, `Repair 2` so each round
+ * resumes independently, while both display under the one declared `Repair`.
  */
-async function runPhase(title, next, fn) {
+async function runPhase(title, next, fn, uiTitle) {
   const cached = replayed(title)
   if (cached) {
     log(`phase "${title}" replayed from run ${RUN.runId} — no agent ran`)
     for (const a of cached.agents || []) keep(a.result)
+    // The phase's learnings and retry ledger replay with it. Without this a
+    // resumed run's outcome.json said the lens that got LRN-x in attempt 1 got
+    // no learnings at all — the exposure record effectiveness is measured on.
+    const led = cached._ledger || {}
+    for (const x of led.learningsLoaded || []) {
+      if (!LEARNINGS_LOADED.some(y => y.label === x.label)) LEARNINGS_LOADED.push(x)
+    }
+    for (const x of led.retries || []) RETRIES.push(x)
     return cached
   }
-  phase(title)
+  phase(uiTitle || title)
+  const ll0 = LEARNINGS_LOADED.length
+  const rt0 = RETRIES.length
+  const nl0 = NULL_RESULTS.length
   const artifact = await fn()
+  artifact._ledger = { learningsLoaded: LEARNINGS_LOADED.slice(ll0), retries: RETRIES.slice(rt0) }
   for (const a of artifact.agents || []) keep(a.result)
-  // A phase whose agents feed a second pipeline stage must report its own
-  // failures in `artifact.failed`: the stage's OUTPUT is what lands in
-  // `agents`, and a lens that returned null still produces an empty array
-  // there, so deriving failures from the artifact alone silently sees none.
-  const failed = Array.isArray(artifact.failed)
+  // Every dispatch in this phase that ended null — including refuters and
+  // verifiers, whose null used to reach neither failures.jsonl nor the breaker,
+  // so a run where cross-checking never happened looked healthy. A phase whose
+  // agents feed a second pipeline stage may also report failures in
+  // `artifact.failed`; those are merged, not double-counted.
+  const nulls = NULL_RESULTS.slice(nl0)
+  const declared = Array.isArray(artifact.failed)
     ? artifact.failed
     : (artifact.agents || []).filter(a => a.result === null || a.result === undefined).map(a => a.label)
+  const failed = [...nulls, ...declared.filter(l => !nulls.includes(l))]
   const b = await recordPhase(title, artifact, next, failed)
   if (b.entry) BREAKER_ENTRIES.push(b.entry)
   if (b.tripped) {
@@ -390,6 +589,150 @@ run.resumedPhases = new Set(${JSON.stringify(REPLAYED)})
 process.stdout.write(JSON.stringify(run.close(${JSON.stringify(summary)})))`)
 }
 
+/**
+ * The self-improvement loop's own failure, as a gate that cannot vanish.
+ *
+ * A run whose runtime was unreachable completed its phases and recorded nothing
+ * — no outcome, no failures, no learnings in or out. Before this it returned
+ * `status: 'completed'` with `outcomeRecorded: false` buried in the payload, and
+ * four of six commands produced exactly that on every invocation because they
+ * passed `args` as a bare string. Measured: zero run directories, ever.
+ */
+function runtimeGates(outcome) {
+  const out = []
+  if (!RUNTIME_DIR) {
+    out.push({
+      gate: 'runtime.unreachable',
+      actionWithheld: 'recording this run, loading learnings from prior runs, and the cross-phase breaker',
+      whyGated: 'args carried no usable runtimeDir or policy path (a bare-string args, or an unexpanded ${CLAUDE_PLUGIN_ROOT}), so the runtime modules could not be reached — this run can neither learn nor be learned from',
+      prepared: 'the phases themselves ran, with every autonomy gate read as NOT pre-authorized',
+      unblocks: 'invoke the workflow with args as an OBJECT carrying runtimeDir: "<plugin root>/workflows"',
+      authorizeBy: 'not an authorization gate — a wiring failure',
+    })
+  } else if (RECORDING && !outcome) {
+    out.push({
+      gate: 'runtime.outcomeUnrecorded',
+      actionWithheld: 'writing outcome.json for this run',
+      whyGated: RUN ? 'the close bridge step did not run, so the run directory has no outcome' : 'the run directory could not be opened',
+      prepared: 'the phase results are in this return value',
+      unblocks: 'check that node runs in this environment and .claude/runs/ is writable, then re-run',
+      authorizeBy: 'not an authorization gate — a recording failure',
+    })
+  }
+  return out
+}
+
+/**
+ * Run the workflow body and ALWAYS reach the outcome record — on a stop, a
+ * crash, or a clean finish. Shared, because six hand-kept copies of this tail
+ * had already drifted apart in the fields they recorded.
+ *
+ * Deliberately NOT a `finally { return }`: returning from a finally swallows the
+ * thrown error and a crashed run would report success.
+ *
+ * Reads and writes the host workflow's `status`; `extras()` supplies the
+ * workflow's own findings, refutations and repair record at close time.
+ */
+async function finishRun(body, extras = () => ({})) {
+  let result = null
+  let thrown = null
+  try {
+    result = await body()
+  } catch (e) {
+    // A tripped breaker is a decision this workflow made, not a crash: it stops
+    // the phases that depend on the failing one and records why. Anything else
+    // is a genuine error, and is re-thrown once the outcome record is written.
+    if (e && e.breakerStop === true) {
+      status = 'stopped'
+      result = {
+        status: 'stopped',
+        reason: `Breaker tripped in phase "${e.title}": ${e.entry.whyGated} Phases depending on it were not run.`,
+      }
+    } else {
+      thrown = e
+    }
+  }
+
+  // `completed` is a claim about the run, so it is withheld when the run cannot
+  // back it. A run that could not reach its runtime recorded nothing and learned
+  // nothing; a run whose terminal agent returned nothing has no deliverable.
+  // Both used to read `completed`, and an orchestrator reading `status` saw a
+  // clean run. They are `incomplete`, each with a gate saying why.
+  const requiredGates = REQUIRED_MISSING.map(label => ({
+    gate: 'run.deliverableMissing',
+    actionWithheld: `reporting this run as completed`,
+    whyGated: `the required result "${label}" came back empty, after one retry`,
+    prepared: 'every earlier phase result is in this return value and the run directory',
+    // A RE-RUN, not a resume: one null is below the breaker threshold, so the
+    // phase was recorded complete with the empty result, and a resume would
+    // replay that emptiness from cache (code review N2).
+    unblocks: `re-run the workflow — a resume would replay the completed phase, empty deliverable included`,
+    authorizeBy: 'not an authorization gate — a missing deliverable',
+  }))
+  if (status === 'completed' && (!RUNTIME_DIR || REQUIRED_MISSING.length)) status = 'incomplete'
+
+  let blocked = { gates: [], complete: false }
+  let outcome = null
+  let x = {}
+  try { x = extras() || {} } catch (e) { log(`could not collect the run's own record: ${(e && e.message) || e}`) }
+  try {
+    blocked = await collectBlockedGates()
+    outcome = await closeRun({
+      status,
+      findings: x.findings || { confirmed: 0, refuted: 0, byLens: {} },
+      refutations: x.refutations || [],
+      blockedGates: [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(true)],
+      error: thrown ? String((thrown && thrown.message) || thrown) : null,
+      learningsLoaded: LEARNINGS_LOADED,
+      repoLessonsLoaded: repoLessonsLoaded(),
+      learningsSkipped: LEARNING_SET.skipped || [],
+      learningsError: LEARNING_SET.error || null,
+      policyDegraded: POLICY.degraded === true,
+      actGranted: POLICY.actGranted || [],
+      retries: RETRIES,
+      repairRounds: x.repairRounds || null,
+    })
+  } catch (e) {
+    // Never let a failure to WRITE the record replace the failure that caused it.
+    log(`could not complete the outcome record: ${(e && e.message) || e}`)
+  }
+
+  if (thrown) throw thrown
+
+  const allGates = [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
+  return {
+    ...(result || {}),
+    status,
+    // Stated first-class, not buried: any act.* gate the resolved policy
+    // grants, and the file that granted it. A repo's own .claude/autonomy.json
+    // can grant these, so a reader must be able to see that it did.
+    actGranted: POLICY.actGranted || [],
+    selfHealDisabled: !RUNTIME_DIR,
+    runId: RUN ? RUN.runId : null,
+    runDir: RUN ? RUN.dir : null,
+    outcomeRecorded: !!outcome,
+    resumedPhases: [...REPLAYED],
+    // Unattended runs defer gates rather than halting (see the autonomy-policy
+    // skill). Every BLOCKED entry any agent emitted survives to this top level
+    // as a parsed ARRAY — a blocked gate that vanishes because the rest of the
+    // run looked clean is a reporting failure.
+    blockedGates: allGates,
+    blockedGatesComplete: blocked.complete,
+    breakerTripped: BREAKER_ENTRIES.length ? BREAKER_ENTRIES : null,
+    learningsLoaded: LEARNINGS_LOADED,
+    // First-class, like actGranted: which agents were steered by UNRATIFIED
+    // repo-local lessons no human reviewed (security review).
+    repoLessonsLoaded: repoLessonsLoaded(),
+    learningsSkipped: LEARNING_SET.skipped || [],
+    learningsError: LEARNING_SET.error || null,
+    retries: RETRIES,
+    ...(x.repairRounds ? { repairRounds: x.repairRounds } : {}),
+    policySource: POLICY.source,
+    degraded: POLICY.degraded,
+  }
+}
+// <<< RUNTIME BLOCK <<<
+
 const release = typeof args === 'string' ? args : args?.release ?? 'the pending release on the current branch'
 
 const GATE_SCHEMA = {
@@ -447,8 +790,6 @@ const GATES = [
 // a crashed run would report success.
 // ===========================================================================
 let status = 'crashed'
-let thrown = null
-let result = null
 
 async function runWorkflow() {
   const opened = await openRun('Gates')
@@ -460,7 +801,7 @@ async function runWorkflow() {
   const gatesArtifact = await runPhase('Gates', 'Synthesize', async () => {
     const gates = await parallel(
       GATES.map(g => () =>
-        agent(withPolicy(`Assess your gate for: ${release}\n\n${g.brief}`), {
+        dispatch(withPolicy(`Assess your gate for: ${release}\n\n${g.brief}`), {
           agentType: g.agentType,
           label: `gate:${g.key}`,
           phase: 'Gates',
@@ -477,7 +818,7 @@ async function runWorkflow() {
   log(`${gates.filter(g => g.status === 'Confirmed').length}/${gates.length} gates Confirmed; ${unverified.length} claimed-not-verified; ${blocking.length} blocking`)
 
   const synthArtifact = await runPhase('Synthesize', null, async () => {
-    const recommendation = await agent(
+    const recommendation = await dispatch(
       withPolicy(`Produce a release readiness recommendation for: ${release}
 
 GATE RESULTS:
@@ -501,59 +842,13 @@ Rules you already hold, restated because this run is automated and nobody is wat
     gatesConfirmed: gates.filter(g => g.status === 'Confirmed').map(g => g.key),
     gatesBlocking: blocking.map(g => g.key),
     gatesClaimedNotVerified: unverified.map(g => g.key),
-    recommendation: agentResult(synthArtifact, 'recommendation'),
+    recommendation: requireResult('recommendation', agentResult(synthArtifact, 'recommendation')),
     authority:
       'RECOMMENDATION ONLY. This workflow has no deploy authority and cannot grant it. A human confirms go/no-go.',
   }
 }
 
-try {
-  result = await runWorkflow()
-} catch (e) {
-  // A tripped breaker is a decision this workflow made, not a crash: it stops
-  // the phases that depend on the failing one and records why. Anything else is
-  // a genuine error, and is re-thrown once the outcome record is written.
-  if (e && e.breakerStop === true) {
-    status = 'stopped'
-    result = {
-      status: 'stopped',
-      reason: `Breaker tripped in phase "${e.title}": ${e.entry.whyGated} Phases depending on it were not run.`,
-    }
-  } else {
-    thrown = e
-  }
-}
-
-let blocked = { gates: [], complete: false }
-let outcome = null
-try {
-  blocked = await collectBlockedGates()
-  outcome = await closeRun({
-    status,
-    findings: { confirmed: 0, refuted: 0, byLens: {} },
-    refutations: [],
-    blockedGates: [...blocked.gates, ...BREAKER_ENTRIES],
-    error: thrown ? String((thrown && thrown.message) || thrown) : null,
-  })
-} catch (e) {
-  // Never let a failure to WRITE the record replace the failure that caused it.
-  log(`could not complete the outcome record: ${(e && e.message) || e}`)
-}
-
-if (thrown) throw thrown
-
-return {
-  ...(result || {}),
-  status,
-  runId: RUN ? RUN.runId : null,
-  runDir: RUN ? RUN.dir : null,
-  outcomeRecorded: !!outcome,
-  resumedPhases: [...REPLAYED],
-  // A blocked deploy gate vanishing from a run whose recommendation reads Go is
-  // the precise failure this array replaces an instruction to prevent.
-  blockedGates: [...blocked.gates, ...BREAKER_ENTRIES],
-  blockedGatesComplete: blocked.complete,
-  breakerTripped: BREAKER_ENTRIES.length ? BREAKER_ENTRIES : null,
-  policySource: POLICY.source,
-  degraded: POLICY.degraded,
-}
+// Every exit — stop, crash or clean finish — reaches the outcome record,
+// the retry and learnings ledger, and the blocked-gate reducer. See
+// finishRun() in the runtime block.
+return await finishRun(runWorkflow)

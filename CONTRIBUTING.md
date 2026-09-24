@@ -46,7 +46,30 @@ python sdlc-suite/tools/counts.py --check   # documented counts match the tree
 python sdlc-suite/tools/generate_trees.py   # regenerate the ports, then read the diff
 python sdlc-suite/tools/bump.py --check     # a changed agent or skill moved its version
 python sdlc-suite/tools/bump.py --marketplace --check   # marketplace.json matches plugin.json
+python sdlc-suite/tools/runtime_block.py --check        # every workflow carries the canonical runtime block
 ```
+
+Or all of the tree-state checks at once, with the one safe repair applied:
+
+```sh
+python sdlc-suite/tools/doctor.py --fix-eol   # CRLF -> LF is the only thing it fixes
+```
+
+`doctor.py` never regenerates a tree or re-splices the runtime block: drift
+there can be a hand-edit to a generated file, and regenerating would discard it.
+It names the repair command instead. To run it at the start of every Claude Code
+session in your checkout — so an agent learns the tree is unhealthy before it
+trips over it — add a `SessionStart` hook running
+`python "$CLAUDE_PROJECT_DIR/sdlc-suite/tools/doctor.py" --hook` to your
+`.claude/settings.json` (gitignored, so it is yours to opt into). In `--hook`
+mode it prints nothing when healthy and always exits 0.
+
+**The workflow runtime block.** A Workflow-tool script runs in a sandbox with no
+`require`, so the ~500-line runtime (policy bridge, run recorder, retry, breaker,
+learnings loader, outcome record) is pasted into all six workflows between
+`// >>> RUNTIME BLOCK` markers. Edit `sdlc-suite/workflows/_runtime.block.js`
+and run `runtime_block.py --write`; never edit a workflow's copy. Before this
+check existed, one copy had silently lost a security guard the other five had.
 
 `python sync-all.py` is superseded and now **refuses to run** (exit 2), pointing
 at the generator instead. It is still on disk, and the refusal is the point:

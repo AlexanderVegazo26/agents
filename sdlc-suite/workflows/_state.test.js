@@ -288,4 +288,51 @@ test('pruneRuns leaves a run with an unreadable manifest alone rather than guess
   assert.strictEqual(listRuns(cwd).length, 1)
 })
 
+console.log('\nattempts — a resume is a new attempt, and failures carry theirs')
+
+test('a fresh run is attempt 1; beginAttempt on a resume makes it 2 and persists', () => {
+  const cwd = tmpRepo()
+  const run = openRun({ workflow: 'w', cwd, logger: quiet })
+  assert.strictEqual(run.attempt, 1)
+  const again = openRun({ workflow: 'w', cwd, resumeFrom: run.runId, logger: quiet })
+  assert.strictEqual(again.attempt, 1, 'reopening alone must not start an attempt')
+  again.beginAttempt()
+  const third = openRun({ workflow: 'w', cwd, resumeFrom: run.runId, logger: quiet })
+  assert.strictEqual(third.attempt, 2)
+})
+
+test('every failure record is stamped with the attempt that produced it', () => {
+  const cwd = tmpRepo()
+  const run = openRun({ workflow: 'w', cwd, logger: quiet })
+  run.recordFailure({ label: 'a', phase: 'Verify', class: 'tool' })
+  run.beginAttempt()
+  run.recordFailure({ label: 'b', phase: 'Verify', class: 'tool' })
+  assert.deepStrictEqual(run.readFailures().map(f => f.epoch), [1, 2])
+})
+
+test('a phase that failed and then completes appears once, as complete', () => {
+  const cwd = tmpRepo()
+  const run = openRun({ workflow: 'w', cwd, logger: quiet })
+  run.completePhase('Build', { agents: [] })
+  run.failPhase('Verify', 'breaker tripped')
+  run.completePhase('Verify', { agents: [] })
+  const m = JSON.parse(fs.readFileSync(path.join(run.dir, 'manifest.json'), 'utf8'))
+  assert.deepStrictEqual(m.phases.map(p => `${p.title}:${p.status}`), ['Build:complete', 'Verify:complete'])
+})
+
+test('close() records attempt, learningsLoaded, retries and repairRounds', () => {
+  const cwd = tmpRepo()
+  const run = openRun({ workflow: 'w', cwd, logger: quiet })
+  const o = run.close({
+    status: 'completed',
+    learningsLoaded: [{ label: 'verify:qa', ids: ['LRN-0001'] }],
+    retries: [{ label: 'verify:qa', attempts: 2, recovered: true }],
+    repairRounds: { rounds: 1, max: 2 },
+  })
+  assert.strictEqual(o.attempt, 1)
+  assert.deepStrictEqual(o.learningsLoaded, [{ label: 'verify:qa', ids: ['LRN-0001'] }])
+  assert.strictEqual(o.retries[0].recovered, true)
+  assert.deepStrictEqual(o.repairRounds, { rounds: 1, max: 2 })
+})
+
 console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)
