@@ -158,6 +158,17 @@ function runBridge(prompt, cwd) {
  *                                   modules could not be reached at all
  */
 async function runScript(file, { args, cwd, onAgent, noBridge = false }) {
+  // Under `--src <tree>`, a scenario that reaches the runtime through a policy
+  // path would otherwise derive its runtimeDir from POLICY_JSON — i.e. always
+  // `sdlc-suite/workflows` — so `--src .claude/workflows` exercised the
+  // .claude WORKFLOWS against the sdlc-suite MODULES. QA broke each .claude
+  // module in turn and this suite stayed green. Point the runtime at the tree
+  // under test instead; scenarios that deliberately carry no runtime path are
+  // left alone.
+  if (SRC !== __dirname && args && typeof args === 'object' && !args.runtimeDir &&
+      (args.policy || args.policyDefault)) {
+    args = { ...args, runtimeDir: SRC }
+  }
   const src = fs.readFileSync(path.join(SRC, file), 'utf8')
     .replace(/^export\s+const\s+meta\s*=/m, 'const meta =')
   const script = new vm.Script(`(async () => {'use strict';\n${src}\n})()`, { filename: file })
@@ -277,7 +288,15 @@ const FRONTEND_FILES = ['ui/ExportButton.tsx']
 
 function featureAgents(overrides = {}) {
   return (prompt, opts) => {
-    const label = opts.label
+    // dispatch() re-dispatches a null result once under `<label> (retry)`. An
+    // override applies to both attempts, so a scenario that says an agent is
+    // dead stays dead; a scenario that wants recovery uses a function override
+    // that looks at the label itself.
+    const label = String(opts.label).replace(/ \(retry\)$/, '')
+    if (opts.label in overrides && opts.label !== label) {
+      const v = overrides[opts.label]
+      return typeof v === 'function' ? v(prompt, opts) : v
+    }
     if (label in overrides) {
       const v = overrides[label]
       if (typeof v === 'function') return v(prompt, opts)
@@ -559,7 +578,11 @@ async function main() {
     assert.strictEqual(broke.thrown, null, broke.thrown && broke.thrown.message)
     const o = readJson(path.join(runDirs(breakCwd)[0], 'outcome.json'))
     assert.strictEqual(o.status, 'stopped')
-    assert.deepStrictEqual(o.phasesCompleted, ['Requirements', 'Design', 'Build', 'Verify'])
+    // The tripped phase is FAILED, not complete. This assertion used to expect
+    // 'Verify' in the list — i.e. it asserted the defect: a resume then replayed
+    // one lens of four from cache and reported the run `completed`.
+    assert.deepStrictEqual(o.phasesCompleted, ['Requirements', 'Design', 'Build'])
+    assert.strictEqual(o.resumableFrom, 'Verify')
   })
 
   await test('the tripped breaker escapes through the blocked-gate channel', () => {
@@ -591,6 +614,555 @@ async function main() {
     }).then(r => {
       assert.strictEqual(r.result.breakerTripped, null,
         `breaker tripped on two failures: ${JSON.stringify(r.result.breakerTripped)}`)
+    })
+  })
+
+  await test('every failure record names its agent and the attempts dispatch() made', () => {
+    const dir = runDirs(breakCwd)[0]
+    const lines = fs.readFileSync(path.join(dir, 'failures.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+    assert.ok(lines.every(l => /^(sdlc-suite:)?[a-z-]+-(reviewer|engineer)$/.test(String(l.agentType))), JSON.stringify(lines.map(l => l.agentType)))
+    assert.ok(lines.every(l => l.attempt === 2 && l.epoch === 1), JSON.stringify(lines[0]))
+  })
+
+  // ------------------------------------------------- self-healing, measured
+  console.log('\nSelf-healing — trip, fix, resume; and a single retry that recovers')
+
+  const healed = await runScript('sdlc-feature.js', {
+    cwd: breakCwd,
+    args: { initiative: 'a change whose verify lenses all die', policy: POLICY_JSON, resume: broke.result.runId },
+    onAgent: featureAgents(),
+  })
+
+  await test('a resume after the cause is fixed re-runs the tripped phase and completes', () => {
+    assert.strictEqual(healed.thrown, null, healed.thrown && healed.thrown.message)
+    assert.strictEqual(healed.result.status, 'completed', JSON.stringify(healed.result).slice(0, 300))
+    assert.deepStrictEqual(healed.result.resumedPhases, ['Requirements', 'Design', 'Build'])
+    const verifyRan = healed.calls.filter(c => /^verify:/.test(c.label)).map(c => c.label).sort()
+    assert.deepStrictEqual(verifyRan, ['verify:performance', 'verify:qa', 'verify:review', 'verify:security'])
+    assert.strictEqual(healed.result.breakerTripped, null,
+      'the breaker re-tripped on the PREVIOUS attempt\'s failures')
+  })
+
+  await test('the healed run is attempt 2 and its phases each appear once', () => {
+    const dir = runDirs(breakCwd)[0]
+    const o = readJson(path.join(dir, 'outcome.json'))
+    assert.strictEqual(o.attempt, 2)
+    const m = readJson(path.join(dir, 'manifest.json'))
+    assert.deepStrictEqual(m.phases.map(p => `${p.title}:${p.status}`),
+      ['Requirements:complete', 'Design:complete', 'Build:complete', 'Verify:complete', 'Readiness:complete'])
+  })
+
+  const flakyCwd = tmpdir('flaky')
+  const flaky = await runScript('sdlc-feature.js', {
+    cwd: flakyCwd,
+    args: { initiative: 'qa returns nothing once', policy: POLICY_JSON },
+    onAgent: featureAgents({
+      'verify:qa': null,
+      'verify:qa (retry)': (prompt) => {
+        assert.ok(/previous attempt at this exact task returned NO result/.test(prompt), 'the retry prompt was not rewritten')
+        return { verdict: 'ok on retry', findings: [] }
+      },
+    }),
+  })
+
+  await test('a null result is re-dispatched once, rewritten, and the recovery is recorded', () => {
+    assert.strictEqual(flaky.result.status, 'completed')
+    const r = flaky.result.retries.find(x => x.label === 'verify:qa')
+    assert.ok(r && r.attempts === 2 && r.recovered === true, JSON.stringify(flaky.result.retries))
+    assert.ok(!fs.existsSync(path.join(runDirs(flakyCwd)[0], 'failures.jsonl')),
+      'a recovered call was still recorded as a failure')
+    const o = readJson(path.join(runDirs(flakyCwd)[0], 'outcome.json'))
+    assert.deepStrictEqual(o.retries, flaky.result.retries)
+  })
+
+  await test('improve.py reads REAL run records and proposes folding a habitual retry into the first prompt', () => {
+    const cwd = tmpdir('improve')
+    const flakyAgents = () => featureAgents({
+      'verify:qa': null,
+      'verify:qa (retry)': () => ({ verdict: 'ok on retry', findings: [] }),
+    })
+    const args = { initiative: 'qa returns nothing once', policy: POLICY_JSON }
+    return runScript('sdlc-feature.js', { cwd, args, onAgent: flakyAgents() })
+      .then(() => runScript('sdlc-feature.js', { cwd, args, onAgent: flakyAgents() }))
+      .then(() => {
+        const py = process.platform === 'win32' ? 'python' : 'python3'
+        const out = execFileSync(py, [path.join(__dirname, '..', 'tools', 'improve.py'), '--root', cwd], { encoding: 'utf8' })
+        assert.ok(/verify:qa needs its retry to succeed/.test(out), out)
+        assert.ok(/FIRST prompt/.test(out), out)
+      })
+  })
+
+  await test('retry: false makes exactly one attempt', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('noretry'),
+      args: { initiative: 'x', policy: POLICY_JSON, retry: false },
+      onAgent: featureAgents({ 'verify:qa': null }),
+    }).then(r => {
+      assert.strictEqual(r.calls.filter(c => c.label === 'verify:qa (retry)').length, 0)
+    })
+  })
+
+  const deadRefCwd = tmpdir('deadrefuter')
+  const deadRef = await runScript('sdlc-feature.js', {
+    cwd: deadRefCwd,
+    args: { initiative: 'x', policy: POLICY_JSON },
+    // Two, not four: below the breaker threshold, so the run reaches readiness.
+    onAgent: featureAgents({ 'refute:review': null, 'refute:qa': null }),
+  })
+
+  await test('a dead refuter does not delete the finding it was handed', () => {
+    const c = deadRef.result.findings.confirmed
+    assert.strictEqual(c.filter(f => f.unverified === true).length, 2, JSON.stringify(deadRef.result.findings).slice(0, 300))
+    assert.deepStrictEqual(deadRef.result.findings.unverified.map(f => f.lens).sort(), ['qa', 'review'])
+  })
+
+  await test('an unverified finding is labelled as such to readiness, never as confirmed', () => {
+    const p = deadRef.calls.find(c => c.label === 'readiness').prompt
+    const [conf, unv] = p.split('UNVERIFIED FINDINGS')
+    assert.ok(unv && unv.includes('verify:qa found something'), 'the unverified finding is not in its own section')
+    assert.ok(!conf.includes('verify:qa found something'), 'an unverified finding was listed as CONFIRMED')
+  })
+
+  await test('a dead refuter is a recorded failure, not a silent healthy run', () => {
+    const lines = fs.readFileSync(path.join(runDirs(deadRefCwd)[0], 'failures.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+    assert.strictEqual(lines.filter(l => /^refute:/.test(l.label)).length, 2, JSON.stringify(lines.map(l => l.label)))
+  })
+
+  await test('four dead refuters trip the breaker — cross-checking that never happened stops the run', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('deadrefuter4'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: featureAgents({ 'refute:review': null, 'refute:qa': null, 'refute:security': null, 'refute:performance': null }),
+    }).then(r => {
+      assert.strictEqual(r.result.status, 'stopped')
+      assert.ok(r.result.breakerTripped, 'no breaker entry')
+    })
+  })
+
+  await test('registry-audit keeps a finding whose verifier returned nothing', () => {
+    const assertSeen = { done: false }
+    return runScript('registry-audit.js', {
+      cwd: tmpdir('deadverifier'),
+      args: { root: '.', policy: POLICY_JSON },
+      onAgent: (prompt, opts) => {
+        // One dimension raises one finding, so one dead verifier stays under the
+        // breaker threshold and the run reaches its report.
+        if (/^audit:/.test(opts.label) && !assertSeen.done) {
+          assertSeen.done = true
+          return { findings: [{ id: 'F-1', severity: 'HIGH', summary: `${opts.label} orphan`, path: 'agents/x.md', evidence: 'agents/x.md:1', file: 'agents/x.md' }] }
+        }
+        if (/^audit:/.test(opts.label)) return { findings: [] }
+        if (/^verify:/.test(opts.label)) return null
+        return 'ok'
+      },
+    }).then(r => {
+      assert.ok(r.result.findings && r.result.findings.length === 1,
+        `a null verifier dropped the finding: ${JSON.stringify(r.result).slice(0, 300)}`)
+      assert.ok(r.result.findings.every(f => f.unverified === true))
+      const rp = r.calls.find(c => c.label === 'report').prompt
+      assert.ok(/UNVERIFIED FINDINGS/.test(rp) && rp.split('UNVERIFIED FINDINGS')[1].includes('orphan'))
+    })
+  })
+
+  // --------------------------------------------- the loop's own wiring (R1)
+  console.log('\nThe loop reports its own absence — a bare-string args is not a clean run')
+
+  const bare = await runScript('sdlc-feature.js', {
+    cwd: tmpdir('bare'),
+    args: 'add a CSV export',
+    onAgent: featureAgents(),
+  })
+
+  await test('a bare-string args is status incomplete, never completed', () => {
+    assert.strictEqual(bare.result.status, 'incomplete')
+    assert.strictEqual(bare.result.selfHealDisabled, true)
+  })
+
+  await test('a relative runtimeDir is refused — it would run the reviewed repo\'s own modules', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('relrt'),
+      args: { initiative: 'x', runtimeDir: '.claude/workflows' },
+      onAgent: featureAgents(),
+    }).then(r => {
+      assert.strictEqual(r.result.selfHealDisabled, true)
+      assert.ok(!r.calls.some(c => c.label.startsWith('bridge:')), 'a bridge ran against a relative runtimeDir')
+    })
+  })
+
+  await test('a mixed-separator UNC runtimeDir (/\\host\\share) is refused', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('uncrt'),
+      args: { initiative: 'x', runtimeDir: '/\\host\\share\\workflows' },
+      onAgent: featureAgents(),
+    }).then(r => {
+      assert.strictEqual(r.result.selfHealDisabled, true)
+      assert.ok(!r.calls.some(c => c.label.startsWith('bridge:')), 'a bridge ran against a UNC runtimeDir')
+    })
+  })
+
+  await test('a root-level manifest file does not own a finding in a subdirectory of the same name', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('owns'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        'build:backend': { ...manifest('build:backend', ['index.ts']), notAddressed: [] },
+        'build:frontend': { ...manifest('build:frontend', ['ui/index.ts']), notAddressed: [] },
+        'verify:qa': { verdict: 'b', findings: [{ severity: 'Must Fix', summary: 'ui crash', evidence: 'ui/index.ts:1', file: 'ui/index.ts' }] },
+        'verify:review': { verdict: 'c', findings: [] },
+        'verify:security': { verdict: 'c', findings: [] },
+        'verify:performance': { verdict: 'c', findings: [] },
+        'refute:qa': { refuted: false, reasoning: 'reproduced' },
+        'repair:frontend': { ...manifest('repair:frontend', ['ui/index.ts']), notAddressed: [] },
+        'reverify:qa': { verdict: 'fixed', findings: [] },
+      }),
+    }).then(r => {
+      const repairs = r.calls.filter(c => /^repair:/.test(c.label)).map(c => c.label)
+      assert.deepStrictEqual(repairs, ['repair:frontend'], `routed to ${repairs.join(', ')}`)
+    })
+  })
+
+  await test('a terminal agent that returns nothing makes the run incomplete, with a gate', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('noreadiness'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: featureAgents({ readiness: null }),
+    }).then(r => {
+      assert.strictEqual(r.result.status, 'incomplete')
+      assert.ok(r.result.blockedGates.some(g => g.gate === 'run.deliverableMissing'))
+    })
+  })
+
+  await test('builders are not retried — a mutating agent\'s null is not re-dispatched', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('buildnull'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: featureAgents({ 'build:frontend': null }),
+    }).then(r => {
+      assert.strictEqual(r.calls.filter(c => c.label === 'build:frontend (retry)').length, 0)
+    })
+  })
+
+  await test('a bare-string args surfaces runtime.unreachable as a blocked gate', () => {
+    assert.strictEqual(bare.result.outcomeRecorded, false)
+    const g = bare.result.blockedGates.find(x => x.gate === 'runtime.unreachable')
+    assert.ok(g, `gates: ${JSON.stringify(bare.result.blockedGates.map(x => x.gate))}`)
+    assert.ok(/runtimeDir/.test(g.unblocks), g.unblocks)
+  })
+
+  await test('an object args with runtimeDir alone reaches the recorder', () => {
+    const cwd = tmpdir('rtdir')
+    return runScript('sdlc-feature.js', {
+      cwd,
+      args: { initiative: 'x', runtimeDir: SRC },
+      onAgent: featureAgents(),
+    }).then(r => {
+      assert.strictEqual(r.result.outcomeRecorded, true)
+      assert.ok(!r.result.blockedGates.some(x => /^runtime\./.test(x.gate)))
+    })
+  })
+
+  await test('a repo .claude/autonomy.json overrides the plugin default end to end', () => {
+    const cwd = tmpdir('repopolicy')
+    const repo = JSON.parse(fs.readFileSync(POLICY_JSON, 'utf8'))
+    repo.preAuthorized.decide.roadmapCommit = false
+    fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true })
+    fs.writeFileSync(path.join(cwd, '.claude', 'autonomy.json'), JSON.stringify(repo))
+    return runScript('sdlc-feature.js', {
+      cwd,
+      // Exactly what the commands pass.
+      args: { initiative: 'x', runtimeDir: SRC, policyDefault: POLICY_JSON },
+      onAgent: featureAgents(),
+    }).then(r => {
+      assert.ok(/[\\/]\.claude[\\/]autonomy\.json$/.test(r.result.policySource), r.result.policySource)
+      const p0 = r.nonBridgePrompts[0]
+      assert.ok(/NOT pre-authorized:[^\n]*decide\.roadmapCommit/.test(p0), p0.slice(0, 400))
+    })
+  })
+
+  await test('an explicit policy INTERSECTS the repo file (stricter only), and act.* grants are surfaced', () => {
+    const cwd = tmpdir('explicitpolicy')
+    const repo = JSON.parse(fs.readFileSync(POLICY_JSON, 'utf8'))
+    repo.preAuthorized.act.deploy = true
+    fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true })
+    fs.writeFileSync(path.join(cwd, '.claude', 'autonomy.json'), JSON.stringify(repo))
+    return runScript('sdlc-feature.js', {
+      cwd,
+      args: { initiative: 'x', runtimeDir: SRC, policyDefault: POLICY_JSON },
+      onAgent: featureAgents(),
+    }).then(granted => {
+      assert.deepStrictEqual(granted.result.actGranted, ['deploy'], 'a repo act.* grant was not surfaced')
+      return runScript('sdlc-feature.js', {
+        cwd,
+        args: { initiative: 'x', runtimeDir: SRC, policy: POLICY_JSON, policyDefault: POLICY_JSON },
+        onAgent: featureAgents(),
+      })
+    }).then(strict => {
+      assert.ok(strict.result.policySource.includes(POLICY_JSON) && strict.result.policySource.includes(' ∩ '),
+        strict.result.policySource)
+      assert.deepStrictEqual(strict.result.actGranted, [])
+    })
+  })
+
+  // --------------------------------------------- learnings reach the agent
+  console.log('\nLearnings — a ratified lesson reaches the agent it names, and only that agent')
+
+  const learnCwd = tmpdir('learn')
+  fs.mkdirSync(path.join(learnCwd, 'learnings', 'candidates'), { recursive: true })
+  const lrn = (id, applies) => [
+    '---', `id: ${id}`, 'title: "qa keeps missing the empty-export path"', 'kind: heuristic',
+    `appliesTo: [${applies}]`, 'confidence: observed', 'firstSeen: 2026-09-01', 'lastConfirmed: 2026-09-20',
+    'signature: 0123456789abcdef', 'provenance:', '  - run: r1', 'supersedes: []', '---', '',
+    'Two runs shipped without exercising the empty export.', '', '**Check:** run the empty-export case.', '',
+  ].join('\n')
+  fs.writeFileSync(path.join(learnCwd, 'learnings', 'LRN-0001.md'), lrn('LRN-0001', 'qa-engineer'))
+  fs.writeFileSync(path.join(learnCwd, 'learnings', 'candidates', 'LRN-0002.md'), lrn('LRN-0002', 'qa-engineer'))
+  // A malformed merge: must be refused AND named, never silently absent.
+  fs.writeFileSync(path.join(learnCwd, 'learnings', 'LRN-0003.md'), '# forgot the front matter\n')
+  const learned = await runScript('sdlc-feature.js', {
+    cwd: learnCwd,
+    args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+    onAgent: featureAgents(),
+  })
+
+  await test('the qa lens prompt carries the ratified learning; no other agent does', () => {
+    const qa = learned.calls.find(c => c.label === 'verify:qa')
+    assert.ok(qa && qa.prompt.includes('LRN-0001') && qa.prompt.includes('LEARNINGS FROM PRIOR RUNS'), 'qa prompt lacks the learning')
+    const others = learned.calls.filter(c => c.label !== 'verify:qa' && !c.label.startsWith('bridge:') && c.prompt.includes('LRN-0001'))
+    assert.deepStrictEqual(others.map(c => c.label), [])
+  })
+
+  await test('learnings sit AFTER the gate table — the prompt still begins AUTONOMY POLICY', () => {
+    const qa = learned.calls.find(c => c.label === 'verify:qa')
+    assert.ok(qa.prompt.startsWith('AUTONOMY POLICY'), qa.prompt.slice(0, 120))
+    assert.ok(qa.prompt.indexOf('LEARNINGS FROM PRIOR RUNS') > qa.prompt.indexOf('AUTONOMY POLICY'))
+  })
+
+  await test('a resumed run keeps the learnings its replayed phases were given', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: learnCwd,
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON, resume: learned.result.runId },
+      onAgent: (p, o) => { throw new Error(`agent ${o.label} ran during a full replay`) },
+    }).then(r => {
+      assert.deepStrictEqual(r.result.learningsLoaded, learned.result.learningsLoaded)
+      const o = readJson(path.join(runDirs(learnCwd)[0], 'outcome.json'))
+      assert.deepStrictEqual(o.learningsLoaded, learned.result.learningsLoaded)
+    })
+  })
+
+  await test('an unmerged candidate is never loaded', () => {
+    assert.ok(!learned.calls.some(c => c.prompt.includes('LRN-0002') && !c.label.startsWith('bridge:')))
+  })
+
+  await test('learningsLoaded is on the return and in outcome.json', () => {
+    assert.deepStrictEqual(learned.result.learningsLoaded,
+      [{ label: 'verify:qa', agentType: learned.calls.find(c => c.label === 'verify:qa').opts.agentType, ids: ['LRN-0001'] }])
+    const o = readJson(path.join(runDirs(learnCwd)[0], 'outcome.json'))
+    assert.deepStrictEqual(o.learningsLoaded, learned.result.learningsLoaded)
+    // QA T2: dropping learningsSkipped from the record left this suite green.
+    assert.ok(o.learningsSkipped.some(s => s.includes('LRN-0003.md')), JSON.stringify(o.learningsSkipped))
+    assert.strictEqual(o.learningsError, null)
+  })
+
+  // ------------------------------------------------------- the repair loop
+  console.log('\nRepair — confirmed blocking findings are fixed and independently re-verified')
+
+  const MUST = { verdict: 'blocking', findings: [{ severity: 'Must Fix', summary: 'empty export crashes', evidence: 'src/export.ts:12', file: 'src/export.ts' }] }
+  const repairBase = {
+    'verify:qa': MUST,
+    'verify:review': { verdict: 'clean', findings: [] },
+    'verify:security': { verdict: 'clean', findings: [] },
+    'verify:performance': { verdict: 'clean', findings: [] },
+    'refute:qa': { refuted: false, reasoning: 'reproduced: the guard is missing' },
+    'repair:backend': { ...manifest('repair:backend', ['src/export.ts'], 'added the empty-export guard'), notAddressed: [] },
+  }
+
+  const repCwd = tmpdir('repair')
+  const rep = await runScript('sdlc-feature.js', {
+    cwd: repCwd,
+    args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+    onAgent: featureAgents({ ...repairBase, 'reverify:qa': { verdict: 'fixed', findings: [] } }),
+  })
+
+  await test('a confirmed Must-Fix goes to the builder that owns the file, and only that lens re-verifies', () => {
+    assert.strictEqual(rep.result.status, 'completed', JSON.stringify(rep.result).slice(0, 300))
+    const labels = rep.calls.map(c => c.label)
+    assert.ok(labels.includes('repair:backend'), labels.join(', '))
+    assert.ok(!labels.includes('repair:frontend'), 'a builder whose files were not implicated was dispatched')
+    assert.deepStrictEqual(labels.filter(l => /^reverify:/.test(l)), ['reverify:qa'])
+    const rp = rep.calls.find(c => c.label === 'repair:backend')
+    assert.ok(rp.opts.isolation === undefined, 'the repair must work on the original change, not a fresh worktree')
+    assert.ok(rp.prompt.includes('HEAD~1..HEAD'), 'the repair was not told where the change lives')
+  })
+
+  await test('a closed repair records its round and clears the blocking finding', () => {
+    assert.strictEqual(rep.result.repairRounds.outcome, 'closed')
+    assert.strictEqual(rep.result.repairRounds.rounds.length, 1)
+    assert.ok(!rep.result.findings.confirmed.some(f => /Must Fix/.test(f.severity)))
+    const o = readJson(path.join(runDirs(repCwd)[0], 'outcome.json'))
+    assert.deepStrictEqual(o.repairRounds, rep.result.repairRounds)
+  })
+
+  await test('a closed repair KEEPS the lens\'s other confirmed findings (code review + QA repro)', () => {
+    const LOW = { severity: 'Low', summary: 'LOW-B: csv header casing', evidence: 'src/csv.ts:3', file: 'src/csv.ts' }
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('repair-keep'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        ...repairBase,
+        'verify:qa': { verdict: 'two', findings: [...MUST.findings, LOW] },
+        'reverify:qa': { verdict: 'fixed', findings: [] },
+      }),
+    }).then(r => {
+      assert.strictEqual(r.result.repairRounds.outcome, 'closed')
+      const sums = r.result.findings.confirmed.map(f => f.summary)
+      assert.ok(sums.includes(LOW.summary), `LOW-B vanished: ${JSON.stringify(sums)}`)
+      assert.ok(!sums.includes('empty export crashes'), 'the repaired finding is still listed')
+      assert.ok(r.calls.find(c => c.label === 'readiness').prompt.includes('LOW-B'))
+    })
+  })
+
+  await test('a repair that never closes stops at the bound and becomes a blocked gate', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('repair-exhausted'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: featureAgents({ ...repairBase, 'reverify:qa': MUST }),
+    }).then(r => {
+      assert.strictEqual(r.result.repairRounds.outcome, 'exhausted')
+      assert.strictEqual(r.result.repairRounds.rounds.length, 2)
+      assert.strictEqual(r.calls.filter(c => c.label === 'repair:backend').length, 2)
+      assert.ok(r.result.blockedGates.some(g => g.gate === 'repair.exhausted'),
+        JSON.stringify(r.result.blockedGates.map(g => g.gate)))
+    })
+  })
+
+  await test('a re-verifier that returns nothing certifies nothing — the finding stays open', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('repair-dead'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: featureAgents({ ...repairBase, 'reverify:qa': null }),
+    }).then(r => {
+      assert.notStrictEqual(r.result.repairRounds.outcome, 'closed',
+        'silence from the re-verifier was read as a fix')
+      assert.ok(r.result.findings.confirmed.some(f => /Must Fix/.test(f.severity)))
+    })
+  })
+
+  await test('a re-verifier that re-reports the defect keeps it open even if its refuter dies (N1)', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('repair-deadrefuter'),
+      args: { initiative: 'x', policy: POLICY_JSON },
+      onAgent: (prompt, opts) => {
+        // The Verify-phase refuter confirms; every re-verify refuter is dead.
+        if (opts.label.startsWith('refute:qa') && opts.phase === 'Re-verify') return null
+        return featureAgents({ ...repairBase, 'reverify:qa': MUST })(prompt, opts)
+      },
+    }).then(r => {
+      assert.notStrictEqual(r.result.repairRounds.outcome, 'closed',
+        `a re-confirmed Must Fix was reported closed: ${JSON.stringify(r.result.repairRounds)}`)
+    })
+  })
+
+  await test('repair: false leaves the finding for a human and dispatches no repair', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('repair-off'),
+      args: { initiative: 'x', policy: POLICY_JSON, repair: false },
+      onAgent: featureAgents(repairBase),
+    }).then(r => {
+      assert.strictEqual(r.result.repairRounds.outcome, 'disabled')
+      assert.ok(!r.calls.some(c => /^repair:/.test(c.label)))
+    })
+  })
+
+  // ------------------------------------------- the whole loop, end to end
+  console.log('\nThe loop closes — two runs, distil, ratify, and the third run is taught')
+
+  // Nothing here is stubbed past the agents themselves: the runs write real
+  // outcome.json files, the real distil.py reads them and the real redactor
+  // clears the candidate, and the third run's bridge loads it off disk. Before
+  // 2026-09-24 every link of this failed or was absent — no command reached the
+  // recorder, distil could not see recurrence, and nothing loaded a learning.
+  const loopCwd = tmpdir('loop')
+  const py = process.platform === 'win32' ? 'python' : 'python3'
+  const distilPy = path.join(__dirname, '..', 'tools', 'distil.py')
+  const loopArgs = { initiative: 'add a CSV export', policy: POLICY_JSON }
+  // Only the qa lens raises a finding, and its refuter always dismisses it the
+  // same way — the recurring reasoning is the signature.
+  const loopAgents = featureAgents({
+    'verify:review': { verdict: 'clean', findings: [] },
+    'verify:security': { verdict: 'clean', findings: [] },
+    'verify:performance': { verdict: 'clean', findings: [] },
+    'refute:qa': { refuted: true, reasoning: 'the empty-export guard already exists in csv.ts' },
+    // One signal only. The default fixture also recurs a blocked deploy gate
+    // (a playbook signature) and a notAddressed "AC-2", which the redactor
+    // correctly quarantines as a ticket-id shape — both real, neither this test.
+    'build:backend': { ...manifest('build:backend', BACKEND_FILES), notAddressed: [] },
+    'build:frontend': { ...manifest('build:frontend', FRONTEND_FILES), notAddressed: [] },
+    readiness: 'Recommendation: GO. No gate outstanding.',
+  })
+  const loop1 = await runScript('sdlc-feature.js', { cwd: loopCwd, args: loopArgs, onAgent: loopAgents })
+  const loop2 = await runScript('sdlc-feature.js', { cwd: loopCwd, args: loopArgs, onAgent: loopAgents })
+  let distilOut = ''
+  let distilCode = null
+  try {
+    distilOut = execFileSync(py, [distilPy, '--emit', '--root', loopCwd], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    distilCode = 0
+  } catch (e) {
+    distilOut = String(e.stdout || '') + String(e.stderr || '')
+    distilCode = e.status
+  }
+  const candDir = path.join(loopCwd, 'learnings', 'candidates')
+  const cands = fs.existsSync(candDir) ? fs.readdirSync(candDir).filter(n => n.endsWith('.md')) : []
+
+  await test('two recorded runs, and distil --emit proposes a candidate from them', () => {
+    assert.ok(loop1.result.outcomeRecorded && loop2.result.outcomeRecorded)
+    assert.strictEqual(runDirs(loopCwd).length, 2)
+    assert.strictEqual(distilCode, 0, distilOut)
+    assert.strictEqual(cands.length, 1, `candidates: ${cands.join(', ')}\n${distilOut}`)
+    const text = fs.readFileSync(path.join(candDir, cands[0]), 'utf8')
+    assert.ok(/appliesTo: \[qa-engineer\]/.test(text), text.slice(0, 400))
+  })
+
+  // Ratification is a human merge; here it is the file move a merge produces.
+  if (cands.length) {
+    fs.renameSync(path.join(candDir, cands[0]), path.join(loopCwd, 'learnings', cands[0]))
+  }
+  const loop3 = await runScript('sdlc-feature.js', { cwd: loopCwd, args: loopArgs, onAgent: loopAgents })
+  const lrnId = cands.length ? cands[0].replace(/\.md$/, '') : 'LRN-none'
+
+  await test('the third run hands the ratified learning to the qa lens, and records it', () => {
+    const qa = loop3.calls.find(c => c.label === 'verify:qa')
+    assert.ok(qa && qa.prompt.includes(lrnId), `verify:qa prompt does not carry ${lrnId}`)
+    assert.ok(qa.prompt.includes('the empty-export guard already exists in csv.ts'))
+    const o = readJson(path.join(runDirs(loopCwd).sort().pop(), 'outcome.json'))
+    assert.ok(o.learningsLoaded.some(x => x.label === 'verify:qa' && x.ids.includes(lrnId)),
+      JSON.stringify(o.learningsLoaded))
+  })
+
+  // --------------------------------- repo-local lessons: no distil, no human
+  console.log('\nRepo-local lessons — the next run in the SAME repo is taught, with no human in the loop')
+
+  const localCwd = tmpdir('repolocal')
+  await runScript('sdlc-feature.js', { cwd: localCwd, args: loopArgs, onAgent: loopAgents })
+  await runScript('sdlc-feature.js', { cwd: localCwd, args: loopArgs, onAgent: loopAgents })
+  const taught = await runScript('sdlc-feature.js', { cwd: localCwd, args: loopArgs, onAgent: loopAgents })
+
+  await test('after two runs with the same refutation, the third run\'s qa lens is told — no distil, no merge', () => {
+    assert.ok(!fs.existsSync(path.join(localCwd, 'learnings')), 'this scenario must not involve distil or a ratified file')
+    const qa = taught.calls.find(c => c.label === 'verify:qa').prompt
+    assert.ok(/REPO-[0-9a-f]{8} \(repo-local, unratified\)/.test(qa), qa.slice(0, 1500))
+    assert.ok(/not a reason to raise fewer findings/.test(qa))
+    const lessonBlock = qa.slice(qa.indexOf('LEARNINGS FROM PRIOR RUNS'), qa.indexOf('LEARNINGS FROM PRIOR RUNS') + 4000)
+    assert.ok(!lessonBlock.includes('the empty-export guard already exists'), 'repo-local free text was rendered')
+    assert.ok(taught.result.repoLessonsLoaded.some(x => x.label === 'verify:qa'), 'repo-local lessons not surfaced')
+    assert.ok(qa.startsWith('AUTONOMY POLICY'), 'the lesson displaced the gate table')
+    assert.ok(taught.result.learningsLoaded.some(x => x.label === 'verify:qa' && x.ids.some(i => /^REPO-/.test(i))))
+  })
+
+  await test('repoLessons: false turns the repo-local tier off', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: localCwd, args: { ...loopArgs, repoLessons: false }, onAgent: loopAgents,
+    }).then(r => {
+      assert.ok(!r.calls.find(c => c.label === 'verify:qa').prompt.includes('REPO-'))
     })
   })
 
@@ -932,6 +1504,27 @@ async function main() {
     const s = fs.readFileSync(path.join(SRC, 'system-archaeology.js'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
     assert.ok(!/writtenTo:\s*\[\s*'\.claude\/discovery/.test(s), 'the literal writtenTo list is still there')
+  })
+
+  await test('every workflow carries the canonical runtime block byte-for-byte', () => {
+    // The block cannot be imported (no `require` in the sandbox), so it is
+    // pasted into six files. Measured when this assertion was added: one copy
+    // had silently lost the resume-path traversal guard the other five had.
+    // The canonical copy always comes from THIS directory, so a `--src` run
+    // checks the other tree against the same source of truth.
+    const BEGIN = '// >>> RUNTIME BLOCK — generated from _runtime.block.js by tools/runtime_block.py; do not hand-edit >>>'
+    const END = '// <<< RUNTIME BLOCK <<<'
+    const between = t => {
+      assert.strictEqual(t.split(BEGIN).length, 2, 'exactly one BEGIN marker')
+      assert.strictEqual(t.split(END).length, 2, 'exactly one END marker')
+      return t.split(BEGIN)[1].split(END)[0]
+    }
+    const canon = between(fs.readFileSync(path.join(__dirname, '_runtime.block.js'), 'utf8'))
+    assert.ok(canon.length > 5000, 'the canonical block is implausibly short')
+    for (const f of WORKFLOWS) {
+      const body = between(fs.readFileSync(path.join(SRC, f), 'utf8'))
+      assert.ok(body === canon, `${f}: runtime block drifted — run python sdlc-suite/tools/runtime_block.py --write`)
+    }
   })
 
   console.log(`\n${passed} passed, ${failures.length} failed`)

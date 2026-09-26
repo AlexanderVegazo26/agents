@@ -87,9 +87,13 @@ test('a bad enum value is rejected', () => {
 console.log('\nloadPolicy() — no policy means degraded, never "authorized"')
 
 test('no resolvable policy => degraded, every gate false', () => {
+  const none = p.loadPolicy({ cwd: '/nonexistent' })
+  assert.strictEqual(none.degraded, true)
+  assert.strictEqual(none.source, null)
+  // A missing EXPLICIT path is degraded too, and says which path was missing.
   const r = p.loadPolicy({ explicitPath: '/nonexistent/a.json', cwd: '/nonexistent' })
   assert.strictEqual(r.degraded, true)
-  assert.strictEqual(r.source, null)
+  assert.ok(r.errors.some(e => /does not exist/.test(e)), JSON.stringify(r.errors))
   const all = Object.values(r.gates.decide).concat(Object.values(r.gates.act))
   assert.ok(all.length === 14 && all.every(v => v === false))
 })
@@ -111,6 +115,79 @@ test('the shipped policy resolves to 5 decide on, 0 act on', () => {
   assert.strictEqual(r.degraded, false)
   assert.strictEqual(Object.values(r.gates.decide).filter(Boolean).length, 5)
   assert.strictEqual(Object.values(r.gates.act).filter(Boolean).length, 0)
+})
+
+// Precedence. The shipped autonomy.json says "copy this file to a consuming repo
+// as .claude/autonomy.json to override" — so the repo's own file must win over
+// the plugin default the command layer passes as `policy`. Measured before the
+// fix: repo roadmapCommit=false + explicit plugin path => true. Once every
+// command passes that path (R1), the old order would override a repo's lockdown
+// on EVERY run, so this is the gate for the args fix.
+function withRepoPolicy(mutate, fn) {
+  const fs = require('fs'), os = require('os')
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'policy-prec-'))
+  const repo = JSON.parse(fs.readFileSync(POLICY, 'utf8'))
+  mutate(repo)
+  fs.mkdirSync(path.join(cwd, '.claude'))
+  fs.writeFileSync(path.join(cwd, '.claude', 'autonomy.json'), JSON.stringify(repo))
+  try { fn(cwd) } finally { fs.rmSync(cwd, { recursive: true, force: true }) }
+}
+
+test('a repo .claude/autonomy.json wins over the plugin DEFAULT', () => {
+  withRepoPolicy(r => { r.preAuthorized.decide.roadmapCommit = false }, cwd => {
+    const r = p.loadPolicy({ defaultPath: POLICY, cwd })
+    assert.strictEqual(r.source, path.join(cwd, '.claude', 'autonomy.json'))
+    assert.strictEqual(r.gates.decide.roadmapCommit, false)
+  })
+})
+
+test('explicit and repo INTERSECT — an invoker can run stricter than the repo', () => {
+  withRepoPolicy(r => { r.preAuthorized.act.deploy = true }, cwd => {
+    const r = p.loadPolicy({ explicitPath: POLICY, defaultPath: POLICY, cwd })
+    assert.deepStrictEqual(r.sources, [POLICY, path.join(cwd, '.claude', 'autonomy.json')])
+    assert.strictEqual(r.gates.act.deploy, false)
+  })
+})
+
+test('...and never looser: a permissive explicit policy cannot lift a repo lockdown (R2)', () => {
+  withRepoPolicy(r => { r.preAuthorized.decide.roadmapCommit = false }, cwd => {
+    // The shipped default grants roadmapCommit. Passed under the OLD `policy`
+    // name, it used to override the repo's `false`.
+    const r = p.loadPolicy({ explicitPath: POLICY, cwd })
+    assert.strictEqual(r.gates.decide.roadmapCommit, false)
+  })
+})
+
+test('an explicit policy path that does not exist degrades — it does not fall through to the repo', () => {
+  withRepoPolicy(r => { r.preAuthorized.act.deploy = true }, cwd => {
+    const r = p.loadPolicy({ explicitPath: path.join(cwd, 'typo-autonomy.json'), cwd })
+    assert.strictEqual(r.degraded, true)
+    assert.strictEqual(r.gates.act.deploy, false)
+  })
+})
+
+test('an INVALID repo policy degrades — it never falls through to the permissive default', () => {
+  withRepoPolicy(r => { r.preAuthorized.act.deploi = true }, cwd => {
+    const r = p.loadPolicy({ defaultPath: POLICY, cwd })
+    assert.strictEqual(r.degraded, true)
+    assert.ok(Object.values(r.gates.decide).every(v => v === false))
+  })
+})
+
+test('an UNREADABLE repo policy (a directory) degrades rather than falling through', () => {
+  const fs = require('fs'), os = require('os')
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'policy-dir-'))
+  fs.mkdirSync(path.join(cwd, '.claude', 'autonomy.json'), { recursive: true })
+  try {
+    const r = p.loadPolicy({ defaultPath: POLICY, cwd })
+    assert.strictEqual(r.degraded, true, `source ${r.source}`)
+  } finally { fs.rmSync(cwd, { recursive: true, force: true }) }
+})
+
+test('with no repo policy, the default is the fallback', () => {
+  const r = p.loadPolicy({ defaultPath: POLICY, cwd: '/nonexistent' })
+  assert.strictEqual(r.source, POLICY)
+  assert.strictEqual(r.degraded, false)
 })
 
 test('the degraded prompt says so, and says it is not a lockdown', () => {

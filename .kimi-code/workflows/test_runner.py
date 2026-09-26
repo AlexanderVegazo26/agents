@@ -147,6 +147,27 @@ def test_parallel_empty():
 
 
 if __name__ == "__main__":
-    import pytest
+    # The docstring promises "or directly" — and CI runs it directly on a runner
+    # with no pytest, where `import pytest` failed the whole job (every run on
+    # main since 2026-09-03). This repository has no dependency floor, so the
+    # tests are plain asserts and run under a stdlib loop when pytest is absent.
+    try:
+        import pytest
+    except ImportError:
+        pytest = None
+    if pytest is not None:
+        raise SystemExit(pytest.main([__file__, "-v"]))
+    import traceback
 
-    raise SystemExit(pytest.main([__file__, "-v"]))
+    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    failed = 0
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  pass  {name}")
+        except Exception:  # noqa: BLE001 -- report every failure, not the first
+            failed += 1
+            print(f"  FAIL  {name}")
+            traceback.print_exc()
+    print(f"\n{len(tests) - failed} passed, {failed} failed")
+    raise SystemExit(1 if failed or not tests else 0)

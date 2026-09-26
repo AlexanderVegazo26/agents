@@ -1,6 +1,6 @@
 ---
 name: retrospectives
-version: 1.0.0
+version: 1.1.0
 description: Running a retrospective that produces real, tracked changes in behavior — structure, psychological safety, and turning takeaways into lessons-learned rather than a document that's filed and forgotten. Load at the end of a project phase, release, or incident cycle.
 ---
 
@@ -21,6 +21,26 @@ People only surface the real, uncomfortable findings (a shortcut that almost cau
 ## Turning takeaways into lessons learned
 
 Every actionable takeaway needs an owner and a tracked follow-up, same as an incident action item — an insight with no owner decays back into "yeah, we all kind of know that" within a month. Persist genuinely durable lessons to `.claude/memory/<project>/lessons-learned.md`, cross-referenced with the source event (release, incident, project phase).
+
+## Look for the faster way, from evidence
+
+A retrospective asks what went wrong; it should also ask what was slow or wasted.
+When the work ran through the suite's workflows, that question has a measured
+answer: invoke `Skill(sdlc-suite:improve)` (the command resolves the plugin's
+path; a `${CLAUDE_PLUGIN_ROOT}` written in this skill would not expand). It reads the recorded runs
+and proposes a concrete change for each recurring waste signal — a phase that
+dominates wall-clock, an agent that needs its retry every run, a repair loop that
+exhausts both rounds, a gate that repeatedly blocks waiting for a person. Treat each
+as a takeaway: an owner, a decision, a follow-up.
+
+The same applies to steps a *person* keeps repeating by hand. If the same
+sequence of actions appears in two or more cycles, propose it as a skill or a
+tool with its trigger and a required report line — a procedure that exists only
+in someone's habit is a procedure the next agent will not follow.
+
+A faster way is never less checking. A proposal that would skip a lens, lower a
+review's effort or drop a verification is rejected on sight; speed comes from
+removing repeated dispatches, dead rounds and serial waits.
 
 ## Closing the loop
 

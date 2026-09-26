@@ -119,10 +119,6 @@ regex = '''(?i)(?:[a-z]:[\\/]{1,2}users[\\/]{1,2}|/users/|/home/)([a-z0-9._][a-z
 secretGroup = 1
 tags = ["repo-identifier", "home-path", "chg-04"]
   [[rules.allowlists]]
-  description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
-  paths = [
-  ]
-  [[rules.allowlists]]
   description = "Placeholder account names. CHG-04's fix replaces each real path with a placeholder plus a substitute-your-own-path sentence, so the rule must not fire on the fix itself. These regexes match the extracted account name (secretGroup 1), not the whole path. Delimiter-style placeholders (<you>, dollar-brace USER, percent USERPROFILE percent) need no entry and must not be given one: the account-name group starts [a-z0-9._], so the rule cannot produce them as a secret at all, and an entry for them would be an allowlist nothing reads. Verified 2026-09-02, gitleaks 8.28.0 - with this regex stripped, /home/username and /Users/you both fire; with it present, neither does."
   regexTarget = "secret"
   regexes = [
@@ -133,7 +129,3 @@ id = "agents-vex-requirement-id"
 description = "Requirement identifier from the private project's specification (DEC-VEX.1, FR-VEX.1-14, NFR-VEX.2, AE-VEX.2)"
 regex = '''\b[A-Za-z]{1,6}-VEX\.[0-9A-Za-z]'''
 tags = ["repo-identifier", "private-project", "chg-03"]
-  [[rules.allowlists]]
-  description = "The retained platform review and its corrections quote the identifiers they recommend removing; redacting them would destroy the documents as evidence, and they are the reason this rule exists. Excused by exact filename, from this rule only - a real credential in either of them still fails the scan. This config itself needs no entry: the upstream default allowlist already carries an unanchored path pattern for gitleaks.toml, which matches this file. Measured 2026-09-02 - adding an explicit self-entry changed nothing, so it would be an allowlist nothing reads. If useDefault is ever turned off, add one back."
-  paths = [
-  ]

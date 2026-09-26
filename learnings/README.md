@@ -1,8 +1,40 @@
 # `learnings/` — cross-project heuristics, ratified by a human
 
-One file per concept. Each is a short, actionable note that an agent loads at
-task start and names on its `Skills loaded` line, alongside the skills it
-already loads.
+One file per concept. Each is a short, actionable note that reaches the agents
+it names **in code, not by instruction**: every workflow loads the ratified
+files at run start (`sdlc-suite/workflows/_learnings.js`, via the policy bridge)
+and prefixes the matching ones to each dispatched agent's prompt, capped and
+with the cap announced. The agent reports what it applied on a
+`Learnings applied: <ids> / none` line, and the run records which learning
+reached which agent in `outcome.json` → `learningsLoaded`.
+
+What is loaded, from `learnings/`, `.claude/learnings/` and the plugin's own
+`learnings/`: top-level `*.md` with an `id: LRN-nnnn` and a non-empty
+`appliesTo`. Never `candidates/` (unratified), `quarantine/` (unredacted by
+definition) or `retired/` — enforced by not descending into subdirectories at
+all, so a new one is excluded by default. Inside a git repository, only a file
+that is committed and unmodified loads; one planted in the working tree is
+refused and named in `outcome.json` → `learningsSkipped`.
+
+**Repo-local lessons, the tier with no human gate.** Separately from this
+directory, each run also reads its own repository's recent `.claude/runs/`. A
+refutation reason that recurs for the same lens, or an agent that returned
+nothing in the same phase, in two or more distinct runs, reaches that agent on
+the next run as `REPO-xxxxxxxx (repo-local, unratified)`. It is written nowhere
+and never leaves the repository, which is why it needs no merge. It carries
+**fixed wording only**: the recurring reason groups the signal but is never
+shown, because unreviewed text telling a reviewer why findings were dismissed is
+a reason to look less — the thing a learning must never be. The reason stays in
+`.claude/runs/` for a human to read. What crosses
+repositories still comes only from this directory, through distil, redaction and
+a human. `args.repoLessons: false` turns the repo-local tier off.
+
+A learning is **data in an agent's prompt, never authority**. It is placed after
+the autonomy gate table, inside a frame that says it cannot grant or revoke a
+gate; its title, Check line and body are flattened to one line and capped; and
+the words `AUTONOMY POLICY`, the `BLOCKED —` marker and `---` separators are
+neutralised, because security review showed a learning file forging a policy
+block that sat in front of the real one.
 
 This directory is the **only** part of the state layer that is committed.
 `.claude/runs/` is transient and gitignored; `.claude/memory/<project>/` is
@@ -93,7 +125,40 @@ produced it and read the outcome for themselves. Attribution lives in the file
 rather than in a commit message, so it survives a rebase, a squash, and being
 copied into another repository.
 
+## How distil decides what is new
+
+`distil.py` groups over the **whole** run store and uses `.last-distil` only to
+decide what is new: a signature is proposed when it has at least two distinct
+runs, is neither ratified nor already waiting in `candidates/`, and either has
+evidence newer than the marker or was left unresolved last time. The marker
+advances on every emit and carries, by signature, everything still unresolved —
+deferred by the cap, quarantined, or dropped — so each is reconsidered (and a
+quarantine fails the job again) on every run until a human acts, without holding
+everything else back. It also records the highest id ever issued, so a rejected
+candidate's id is never handed to a different signature.
+Until 2026-09-24 the marker filtered runs *before* grouping, so a signature seen
+once in each of two per-run distils never reached the two-run floor; that case
+is the first test in `sdlc-suite/tools/test_distil.py`.
+
+A candidate a reviewer rejects and deletes is not re-proposed from the same old
+evidence. It returns only when new runs bring new evidence for it.
+
 ## Decay is by recurrence, not by calendar
+
+**Measured against exposure, since 2026-09-24.** Every run records which
+learnings it handed to which agent (`outcome.json` → `learningsLoaded`), so
+`--stamp` now separates three cases instead of one:
+
+- **Effective** — loaded in a run where its signature did *not* recur. That
+  stamps `lastConfirmed`, so a learning that works stays alive. Before, the only
+  thing that stamped was recurrence, so a learning that fixed its own failure
+  retired at 180 days.
+- **Ignored** — loaded in a run where its signature recurred anyway. Printed as
+  `IGNORED … escalate it`: the note is not changing behaviour, so reword it or
+  promote it into the agent or skill definition rather than re-confirming it.
+- **Still recurring, never loaded** — stamped as before; the problem exists.
+
+A stamp never moves `lastConfirmed` backwards.
 
 `lastConfirmed` is stamped by `distil.py --stamp` whenever a signature recurs
 across two or more distinct runs. A separate monthly pass runs `--stamp` and
@@ -123,7 +188,7 @@ deliberately has no generated index.
 | `learnings/candidates/` | yes, on the `learnings/*` branch | `distil.py --emit` |
 | `learnings/retired/` | yes | `distil.py --retire` |
 | `learnings/quarantine/` | **never** — gitignored | `distil.py --emit`, for anything that matched a redaction class |
-| `learnings/.last-distil` | no — gitignored | `distil.py --emit`, only on a clean run |
+| `learnings/.last-distil` | no — gitignored | `distil.py --emit`, on every emit; carries unresolved signatures and the id high-water mark |
 
 `learnings/candidates/` has no `.gitkeep`: it is created on demand and is empty
 between pull requests, which is the normal state. `learnings/quarantine/` cannot

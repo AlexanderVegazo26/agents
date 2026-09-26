@@ -132,6 +132,15 @@ jobs:
           done
           echo "--- .kimi-code/workflows/test_runner.py"
           python .kimi-code/workflows/test_runner.py
+          # The distiller's selection logic. Its first two cases went red
+          # against the pre-fix marker handling, under which a per-run distil
+          # could never emit a candidate at all.
+          echo "--- sdlc-suite/tools/test_distil.py"
+          python sdlc-suite/tools/test_distil.py
+          # Process proposals from run records; includes the guard that no
+          # proposal ever asks for less checking.
+          echo "--- sdlc-suite/tools/test_improve.py"
+          python sdlc-suite/tools/test_improve.py
 
       - name: Autonomy schema and its JS mirror agree
         # Two implementations of one spec drift. This reads the gate names out of
@@ -160,6 +169,13 @@ jobs:
       # of failing: hand-editing one generated file makes it exit 1 naming the tree.
       - name: Generated trees are in sync with sdlc-suite
         run: python sdlc-suite/tools/generate_trees.py --check
+
+      # The runtime block is pasted into six workflows because the sandbox has
+      # no `require`. Proven capable of failing: before this gate existed one
+      # copy had lost the resume-path traversal guard, and --check exited 1
+      # naming sdlc-feature.js.
+      - name: Workflow runtime block matches its canonical copy
+        run: python sdlc-suite/tools/runtime_block.py --check
 
       # ---------------------------------------------------------------------
       # Not yet live.
