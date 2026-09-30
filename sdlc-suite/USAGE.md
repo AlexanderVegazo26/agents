@@ -182,3 +182,19 @@ Stated plainly so you don't find out at 3am:
 
 - No agent certifies its own work. That's a self-certification ban, not a confirmation gate, and the policy doesn't touch it.
 - The honesty bar goes **up**, not down. Nothing gets upgraded from "could not verify" to "verified" because no one will ask, and a degraded run (tool failed, suite never executed, MCP unauthenticated) says so at the top level of the result.
+
+## Running on a local HALO endpoint
+
+HALO serves an Anthropic-compatible `/v1/messages` (streaming, `count_tokens`, tool use), so Claude Code can drive this suite against a local Qwen3.8-27B. Every agent here uses `model: inherit`, so whatever model the session runs is what the agents get; there is no pinned hosted model to override.
+
+```
+halo serve --model Qwen3.8-27B-UD-Q4_K_XL.gguf --backend vulkan --ctx 131072 --parallel 2
+ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=x \
+  ANTHROPIC_MODEL=Qwen3.8-27B ANTHROPIC_SMALL_FAST_MODEL=Qwen3.8-27B \
+  CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 claude
+```
+
+- `--parallel 2` matters: Claude Code sends a small title/summary request alongside the main one, and the second slot serves it.
+- Set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the `context_length` that HALO's `/v1/models` reports; Claude Code assumes 200k for unknown models otherwise. An explicit `--ctx` that HALO cannot honour is now a startup error instead of a silent clamp, so if it starts, the window is real.
+- 128k of KV in fp32 needs a large pool; `HALO_KV_FP16=1` (or `HALO_KV_TYPE=q8`) halves or more of that and is required for 256k. These are opt-in and were not benchmarked when written.
+- **Caveat:** a 27B Q4 model follows the long, strict agent definitions less reliably than the hosted models. Start with one or two low-risk agents or workflows as an acceptance test before relying on the full routing policy, and remember the implementer-never-certifies rule still applies to whatever the local model reports.
