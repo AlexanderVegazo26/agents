@@ -13,7 +13,7 @@ sdlc-suite/
 ├── agents/            agent definitions
 ├── skills/            skills (procedural knowledge agents load on demand)
 ├── workflows/          workflows (scripted multi-agent orchestration)
-├── commands/           slash commands, one per workflow plus install-routing
+├── commands/           slash commands: one per workflow, plus install-routing, init, improve and prototype
 ├── ROUTING.md          the platform routing policy, shipped with the plugin
 ├── memory-template/   the per-project memory layout, ready to copy
 ├── autonomy.json      unattended-run policy (see USAGE.md)
@@ -26,7 +26,7 @@ sdlc-suite/
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
 | `.claude/` | 24 | 62 | 6 | — |
-| `sdlc-suite/` | 24 | 62 | 6 | 9 |
+| `sdlc-suite/` | 24 | 62 | 6 | 10 |
 | `commandcode-suite/` | 24 | 62 | 6 | 6 |
 | `.kimi-code/` | 24 | 68 | 6 | — |
 | `.copilot/` | 24 | 62 | — | — |

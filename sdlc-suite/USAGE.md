@@ -39,6 +39,10 @@ That namespacing is why the suite can coexist with the copies in `~/.claude/agen
 
 ## Transcripts go to the prototyper
 
+Run it directly with `/prototype <transcript path or pasted notes> [target repo]`.
+The bare name resolves while no other command is called `prototype`;
+`/sdlc-suite:prototype` always does. With no argument it asks for the transcript.
+
 The plugin ships one hook, `hooks/hooks.json`, which runs
 `hooks/transcript_detect.py` on every prompt. When a prompt contains a meeting
 transcript, it adds an instruction for the session. It detects WebVTT/SRT cues,

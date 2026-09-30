@@ -56,6 +56,10 @@ because `ux-designer` is: a major on any agent or skill is a major on the plugin
   its own browser pass is not verification. `orchestrator` routes to it and skips
   the requirements and design phases on that route. `qa-runner` runs its long
   test suites, and `project-memory` gains a `prototypes/` directory for it.
+- **`/prototype` command.** `/prototype <transcript path or pasted notes> [repo]`
+  dispatches `prototyper`. It passes a file path, not a summary of the file, and
+  pasted text verbatim, and it asks for the transcript when given none. Its
+  relay says that `code-reviewer` is still owed.
 - **A transcript now reaches the prototyper.** The plugin ships its first
   hook, `hooks/transcript_detect.py`, which runs on every prompt. When the
   prompt contains a meeting transcript (WebVTT/SRT cues, repeated speaker
