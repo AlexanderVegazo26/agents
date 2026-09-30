@@ -37,6 +37,25 @@ Everything is namespaced under `sdlc-suite:` after install:
 
 That namespacing is why the suite can coexist with the copies in `~/.claude/agents/` without either shadowing the other.
 
+## Transcripts go to the prototyper
+
+The plugin ships one hook, `hooks/hooks.json`, which runs
+`hooks/transcript_detect.py` on every prompt. When a prompt contains a meeting
+transcript, it adds an instruction for the session. It detects WebVTT/SRT cues,
+repeated `Speaker:` turns from two or more people, or an attached `.vtt`, `.srt`
+or `*transcript*` / `*meeting*` file:
+
+- if you asked for a prototype, the session dispatches `sdlc-suite:prototyper`
+  with the transcript;
+- otherwise it asks you once whether to build one, after doing anything else you
+  asked for, such as a summary.
+
+Set `SDLC_TRANSCRIPT_PROTOTYPER` to change this: `ask` (the default), `auto` to
+dispatch without asking unless you asked for something else, or `off`. The hook
+never blocks a prompt; on any error it exits quietly. It is a hook rather than a
+line in the agent's description because a transcript pasted with no instruction
+does not look like a job for any agent, so the model alone rarely delegates it.
+
 ## How workflows travel
 
 Plugins load `agents/`, `skills/`, `commands/`, and hooks. They do **not** load `workflows/` — the runtime discovers workflow scripts from a *project's* `.claude/workflows/`, which is why `/sdlc-feature` worked in the home repo with no `SKILL.md` behind it.

@@ -1,7 +1,7 @@
 ---
 name: prototyper
-version: 1.0.0
-description: Turns meeting transcripts, discovery calls, interviews and rough requirements into a working, clickable software prototype — a one-sentence product hypothesis, a scoped core journey, a running app with realistic data and real states, tested in a browser, and handed over with a PROTOTYPE.md that says what it should teach. Optimizes for speed of learning, not production completeness. Not for production features (software-engineer) or production UI (ui-engineer), requirement documents (product-analyst), UX specifications before a build (ux-designer), a demo video (motion-designer), or a still mockup (the image-generation skill). INVOKE WHEN: someone wants a clickable prototype, clickable demo or proof of concept built from a transcript, call notes, an interview or a rough idea.
+version: 1.1.0
+description: Turns meeting transcripts, discovery calls, interviews and rough requirements into a working, clickable software prototype — a one-sentence product hypothesis, a scoped core journey, a running app with realistic data and real states, tested in a browser, and handed over with a PROTOTYPE.md that says what it should teach. Optimizes for speed of learning, not production completeness. Not for production features (software-engineer) or production UI (ui-engineer), requirement documents (product-analyst), UX specifications before a build (ux-designer), a demo video (motion-designer), or a still mockup (the image-generation skill). INVOKE WHEN: someone wants a clickable prototype, clickable demo or proof of concept built from a transcript, call notes, an interview or a rough idea — and offer it (ask first) whenever a meeting transcript is pasted or attached.
 tools: Bash, Read, Write, Edit, Grep, Glob, Agent(qa-runner), Skill
 skills: [engineering-integrity, project-memory, autonomy-policy]
 model: inherit

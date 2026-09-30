@@ -26,6 +26,12 @@ because `ux-designer` is: a major on any agent or skill is a major on the plugin
   Claude models are not available. Every agent in every tree now follows the
   session model.
 
+- `_wiring.test.js` picked the third run's directory with `.sort().pop()`. Run
+  ids have one-second resolution plus a random suffix, so runs started in the
+  same second sorted randomly, and the test failed about one time in ten,
+  including on this release's first CI run. It now looks the directory up by
+  the run's own id.
+
 ### Added
 
 - **`motion-designer` agent 1.0.0**, which produces motion-graphics video from
@@ -36,7 +42,7 @@ because `ux-designer` is: a major on any agent or skill is a major on the plugin
   `autonomy-policy` for its approval gates. `orchestrator` 2.0.0 routes to it
   and grants it; that grant change is the major. `project-memory` 1.0.1 adds
   its `motion/` directory, and `qa-runner` names it as a caller.
-- **`prototyper` agent 1.0.0**, which turns a meeting transcript, call notes or
+- **`prototyper` agent 1.1.0**, which turns a meeting transcript, call notes or
   a rough idea into a clickable, browser-tested prototype with a
   `PROTOTYPE.md` handover. It was hand-added to `.claude/agents/` only, so a
   generator run deleted it; it now lives in `sdlc-suite/agents/`, with
@@ -50,6 +56,15 @@ because `ux-designer` is: a major on any agent or skill is a major on the plugin
   its own browser pass is not verification. `orchestrator` routes to it and skips
   the requirements and design phases on that route. `qa-runner` runs its long
   test suites, and `project-memory` gains a `prototypes/` directory for it.
+- **A transcript now reaches the prototyper.** The plugin ships its first
+  hook, `hooks/transcript_detect.py`, which runs on every prompt. When the
+  prompt contains a meeting transcript (WebVTT/SRT cues, repeated speaker
+  turns from two or more people, or an attached transcript file), the session
+  is told to dispatch `prototyper` if a prototype was asked for, and otherwise
+  to ask once. `SDLC_TRANSCRIPT_PROTOTYPER=ask|auto|off` sets the behaviour.
+  YAML blocks and bracketed log lines stay silent, and the tests were seen red
+  with each of those guards removed. ROUTING.md gains the matching row.
+
 - **`motion-graphics` skill 1.0.0.** It was dropped into the six generated
   trees but not `sdlc-suite/skills/`, so the next `generate_trees.py` run would
   have deleted every copy. It now lives in the canonical tree with frontmatter.
