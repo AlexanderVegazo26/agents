@@ -13,7 +13,7 @@ Audited: 2026-08-04 · Root: `<repo>/.claude` · Read-only through Phase 5.
 > | `PATH-01` | **fixed** | 20 sites across 16 files canonicalized to `.claude/memory/<project>/`; zero bare paths remain |
 > | `SCHEMA-01` | **fixed (scoped)** | Negative scope added to the 8 adjacent-pair skills, not all 51, as recommended |
 > | `STRUCT-01` | **fixed** | `technical-writer.md` rewritten to family structure, 33 → 150 lines; original preserved at `originals/` |
-> | `SCHEMA-02` | **fixed** | `model: sonnet` on `qa-runner` only; other 14 inherit deliberately |
+> | `SCHEMA-02` | **fixed** | `model: sonnet` on `qa-runner` only; other 14 inherit deliberately. (reversed 2026-09-29 by qa-runner 1.0.1: every agent inherits; Command Code has no Claude models) |
 > | `SCHEMA-03` | **fixed** | `skills: [engineering-integrity, project-memory]` on the 6 agents that load unconditionally; prose reworded to "are preloaded" |
 > | `TOOL-01` | **fixed** | `Write` dropped from `qa-runner` |
 > | `TOOL-02` | **fixed** | `code-reviewer` body now scopes `Bash` to read-only inspection explicitly |
@@ -152,6 +152,8 @@ At least **36 of 51** skills are named by no agent body; 21 of those are named b
 
 #### `SCHEMA-02` — No agent declares `model:`; all 15 inherit
 **Evidence:** all frontmatter is `name`/`description`/`tools` only. **Impact:** inheritance is right for the reasoning-heavy 14, but `agents/qa-runner.md:13,17` defines an explicitly no-judgment, memory-less executor that will inherit Opus for work that is mechanical by design. **Fix:** set a lighter tier on `qa-runner` only; leave the other 14 inheriting and say so deliberately.
+
+> **Reversed 2026-09-29.** qa-runner 1.0.1 inherits like every other agent. The pin was not portable: under Command Code it became `claude-sonnet-5`, and Command Code offers no Claude models. `generate_trees.py` now rejects any `model:` other than `inherit`.
 
 #### `SCHEMA-03` — The `skills:` preload field is unused
 **Evidence:** six agents commit in their *description* to loading two skills unconditionally (`agents/ux-designer.md:3`, `solution-architect.md:3`, `security-engineer.md:3`, `site-reliability.md:3`, `software-engineer.md:3`) and repeat it as the first body line (`ux-designer.md:11` et al.). No agent uses `skills:`. **Impact:** the prose works, but spends a tool round-trip per agent per session on two always-wanted skills, and the guarantee depends on the model obeying line 11 rather than being structural. **Fix:** `skills: [engineering-integrity, project-memory]` on the agents that load unconditionally; drop the redundant prose.

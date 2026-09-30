@@ -21,7 +21,7 @@ This directory contains the `.claude/` SDLC Agent Suite converted to the current
 ```
 .kimi-code/
 ├── agents/              # custom agents (Markdown with YAML frontmatter) — see the counts table in the root README.md
-├── skills/              # 60 domain skills + 6 flow skills
+├── skills/              # 61 domain skills + 6 flow skills
 ├── workflows/           # 6 Python workflow scripts (programmatic orchestration)
 ├── GLOBAL-SETUP.md      # Global tool-wallet setup & operations guide
 ├── memory/              # Pointer to the shared .claude/memory/ root
@@ -31,7 +31,7 @@ This directory contains the `.claude/` SDLC Agent Suite converted to the current
 └── validate.py          # Structural sanity check
 ```
 
-The 60 domain skills are generated from `sdlc-suite/skills/` (the canonical source; they were mirrored from `.claude/skills/` before that tree itself became generated) because the current Kimi Code only auto-discovers `.kimi-code/skills/` and `.agents/skills/`, not `.claude/skills/`. The 6 flow skills were rebuilt from the canonical workflow scripts and are local to this port — the generator is told never to prune them. Shared per-project memory remains in `.claude/memory/` (see `.kimi-code/memory/README.md`).
+The 61 domain skills are generated from `sdlc-suite/skills/` (the canonical source; they were mirrored from `.claude/skills/` before that tree itself became generated) because the current Kimi Code only auto-discovers `.kimi-code/skills/` and `.agents/skills/`, not `.claude/skills/`. The 6 flow skills were rebuilt from the canonical workflow scripts and are local to this port — the generator is told never to prune them. Shared per-project memory remains in `.claude/memory/` (see `.kimi-code/memory/README.md`).
 
 ## Quick start
 

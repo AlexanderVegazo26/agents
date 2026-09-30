@@ -228,7 +228,7 @@ TARGETS = {
         # rejects it as unknown. Its own converter dropped these grants; so do we.
         agent_grants="drop",
         # "inherit" is omitted so the agent follows the session model.
-        model_map={"inherit": None, "sonnet": "claude-sonnet-5"},
+        model_map={"inherit": None},
     ),
 
     # Kimi Code. Adds whenToUse and a subagents list; the six flow skills live
@@ -378,10 +378,15 @@ def emit_json(name: str, front: dict, body: str, t: Target, src_rel: str) -> str
 
 def emit_toml(name: str, front: dict, body: str, t: Target, src_rel: str) -> str:
     desc = front.get("description", "").replace("\n", " ").strip()
-    # TOML wants `version = "1.0.0"`. A bare `1.0.0` is not a TOML value at all,
-    # and `version: 1.0.0` is not TOML syntax — the same field, a third spelling.
-    version = (f'version = "{toml_dq(front["version"])}"\n'
-               if front.get("version") else "")
+    # A comment, not a key. Codex deserialises agent files strictly, and a
+    # `version = "1.0.0"` key made it reject every one of them with "unknown
+    # field `version`" -- so no suite agent loaded under Codex at all. The
+    # revision stays readable for bug reports; bump.py reads the source tree.
+    v = front.get("version")
+    if v and not re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", str(v)):
+        # Unescaped into the file, so anything but x.y.z could add TOML keys.
+        raise SystemExit(f"{src_rel}: version {v!r} is not x.y.z")
+    version = f"# version: {v}{chr(10)}" if v else ""
     return (
         f'# GENERATED from {src_rel} — do not edit. '
         f'Run python sdlc-suite/tools/generate_trees.py\n'
@@ -406,6 +411,12 @@ def render_agent(md_path: Path, t: Target) -> str:
         text = denamespace(text)
     front, body = parse_frontmatter(text)
     src_rel = f"sdlc-suite/agents/{md_path.name}"
+    # Every agent follows the session model. A pin is not portable: qa-runner's
+    # `sonnet` became `claude-sonnet-5` under Command Code, which offers no Claude
+    # models, and an unmapped id would pass through verbatim with no warning.
+    if front.get("model", "inherit") != "inherit":
+        raise SystemExit(f"{src_rel}: model {front['model']!r} -- agents must "
+                         f"use `model: inherit` (or omit it) to follow the session")
     return EMITTERS[t.agent_format](md_path.stem, front, body, t, src_rel)
 
 
@@ -425,7 +436,7 @@ def desired_files(t: Target) -> dict[Path, str]:
         # exploration-charter/personas-schema-template.yaml without any check
         # noticing.
         for f in sorted(skill_dir.rglob("*")):
-            if not f.is_file():
+            if not f.is_file() or is_bytecode(f):
                 continue
             rel = Path("skills") / f.relative_to(SRC_SKILLS)
             raw = _read_lf(f)
@@ -457,6 +468,15 @@ def desired_files(t: Target) -> dict[Path, str]:
     return out
 
 
+def is_bytecode(f: Path) -> bool:
+    """Python's own cache files. A skill that ships a script (image-generation)
+    gets a __pycache__ beside it the moment anything imports it, and copying
+    that into six trees -- or decoding it as UTF-8, which is how it first
+    surfaced -- is never wanted. Skipped on both sides so --check stays
+    symmetric."""
+    return "__pycache__" in f.parts or f.suffix in (".pyc", ".pyo")
+
+
 def existing_files(base: Path, t: Target) -> dict[Path, str]:
     out: dict[Path, str] = {}
     subs = ["agents", "skills"] + (["workflows"] if t.workflows else [])
@@ -470,6 +490,8 @@ def existing_files(base: Path, t: Target) -> dict[Path, str]:
             if sub == "agents" and (t.agent_ext is None or f.suffix != t.agent_ext):
                 continue
             if sub == "workflows" and (f.suffix != ".js" or f.name.endswith(".test.js")):
+                continue
+            if is_bytecode(f):
                 continue
             try:
                 # read_bytes, NOT read_text: Python text mode universal-newline-

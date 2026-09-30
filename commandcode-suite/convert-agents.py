@@ -23,7 +23,6 @@ TOOL_MAP = {
 # Claude model id -> Command Code model catalog id (or None = follow session model)
 MODEL_MAP = {
     "inherit": None,  # omit -> session model
-    "sonnet": "claude-sonnet-5",
 }
 
 # Command Code reserved subagent names
@@ -159,7 +158,7 @@ def main():
     print()
     print("=== Model mapping ===")
     for name, subagents, model_note in audit:
-        if model_note and "UNMAPPED" not in model_note:
+        if model_note:
             print(f"  {name}: {model_note}")
 
     # Cross-check: every delegated agent must exist as a file (or be a reserved built-in)

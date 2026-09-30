@@ -1133,7 +1133,12 @@ async function main() {
     const qa = loop3.calls.find(c => c.label === 'verify:qa')
     assert.ok(qa && qa.prompt.includes(lrnId), `verify:qa prompt does not carry ${lrnId}`)
     assert.ok(qa.prompt.includes('the empty-export guard already exists in csv.ts'))
-    const o = readJson(path.join(runDirs(loopCwd).sort().pop(), 'outcome.json'))
+    // By runId, not by sorting: run ids have one-second resolution and a
+    // random suffix, so three runs started in the same second sort in random
+    // order and .sort().pop() picked loop1 or loop2 about one time in ten.
+    const dir = runDirs(loopCwd).find(d => path.basename(d) === loop3.result.runId)
+    assert.ok(dir, `no run directory for ${loop3.result.runId}`)
+    const o = readJson(path.join(dir, 'outcome.json'))
     assert.ok(o.learningsLoaded.some(x => x.label === 'verify:qa' && x.ids.includes(lrnId)),
       JSON.stringify(o.learningsLoaded))
   })

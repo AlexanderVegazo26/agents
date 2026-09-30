@@ -25,7 +25,7 @@ python sdlc-suite/tools/bump.py --marketplace
 
 `marketplace.json` used to carry the same number independently and had to be edited to match by hand — two files, one of which could silently disagree. `plugin.json` is now the single source and `bump.py --marketplace --check` fails if they drift apart.
 
-Each agent and skill also carries its own `version:` — `.codex` spells it `version = "1.0.0"` and `.copilot` uses a `"version"` key, but it is the same field. That is what lets a bug report be pinned to a specific revision of a 463-line agent rather than to "the version you had". `python sdlc-suite/tools/bump.py --versions` prints the whole table. See `CONTRIBUTING.md` for when each component moves.
+Each agent and skill also carries its own `version:` — `.codex` carries it as a `# version: 1.0.0` comment (Codex rejects agent files with unknown keys) and `.copilot` uses a `"version"` key, but it is the same field. That is what lets a bug report be pinned to a specific revision of a 463-line agent rather than to "the version you had". `python sdlc-suite/tools/bump.py --versions` prints the whole table. See `CONTRIBUTING.md` for when each component moves.
 
 Everything is namespaced under `sdlc-suite:` after install:
 
@@ -36,6 +36,29 @@ Everything is namespaced under `sdlc-suite:` after install:
 | Command | `/sdlc-feature` | `/sdlc-suite:sdlc-feature` |
 
 That namespacing is why the suite can coexist with the copies in `~/.claude/agents/` without either shadowing the other.
+
+## Transcripts go to the prototyper
+
+Run it directly with `/prototype <transcript path or pasted notes> [target repo]`.
+The bare name resolves while no other command is called `prototype`;
+`/sdlc-suite:prototype` always does. With no argument it asks for the transcript.
+
+The plugin ships one hook, `hooks/hooks.json`, which runs
+`hooks/transcript_detect.py` on every prompt. When a prompt contains a meeting
+transcript, it adds an instruction for the session. It detects WebVTT/SRT cues,
+repeated `Speaker:` turns from two or more people, or an attached `.vtt`, `.srt`
+or `*transcript*` / `*meeting*` file:
+
+- if you asked for a prototype, the session dispatches `sdlc-suite:prototyper`
+  with the transcript;
+- otherwise it asks you once whether to build one, after doing anything else you
+  asked for, such as a summary.
+
+Set `SDLC_TRANSCRIPT_PROTOTYPER` to change this: `ask` (the default), `auto` to
+dispatch without asking unless you asked for something else, or `off`. The hook
+never blocks a prompt; on any error it exits quietly. It is a hook rather than a
+line in the agent's description because a transcript pasted with no instruction
+does not look like a job for any agent, so the model alone rarely delegates it.
 
 ## How workflows travel
 

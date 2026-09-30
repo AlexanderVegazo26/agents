@@ -7,7 +7,7 @@ This project contains a full software-development-lifecycle agent suite converte
 
 ## Skills
 
-Project-scope skills are auto-discovered from `.kimi-code/skills/`. This includes **60 domain skills** (generated from `sdlc-suite/skills/`) plus **6 flow skills** (local to this port, rebuilt from the canonical workflow scripts). Load any skill by mentioning it or with `/skill:<name>` — including the 6 flow skills (there is no separate `/flow:` namespace; `type: flow` skills are manual-invocation only, so they don't appear in the model's auto-invocation listing).
+Project-scope skills are auto-discovered from `.kimi-code/skills/`. This includes **61 domain skills** (generated from `sdlc-suite/skills/`) plus **6 flow skills** (local to this port, rebuilt from the canonical workflow scripts). Load any skill by mentioning it or with `/skill:<name>` — including the 6 flow skills (there is no separate `/flow:` namespace; `type: flow` skills are manual-invocation only, so they don't appear in the model's auto-invocation listing).
 
 > Note: `.claude/skills/` is **not** auto-discovered by the current Kimi Code. The domain skills are copied into `.kimi-code/skills/` so they are visible.
 
@@ -26,6 +26,8 @@ Available agents:
 - **database-engineer** — schema, migrations, data integrity
 - **ui-engineer** — frontend implementation
 - **ux-designer** — user experience and interaction design
+- **motion-designer** — motion-graphics video, from storyboard to probed render
+- **prototyper** — clickable prototype from a transcript or rough idea
 - **solution-architect** — system design and ADRs
 - **product-manager** — strategy and prioritization
 - **product-analyst** — requirements and acceptance criteria

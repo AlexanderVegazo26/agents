@@ -32,19 +32,19 @@ commandcode-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 22 | 60 | 6 | — |
-| `sdlc-suite/` | 22 | 60 | 6 | 9 |
-| `commandcode-suite/` | 22 | 60 | 6 | 6 |
-| `.kimi-code/` | 22 | 66 | 6 | — |
-| `.copilot/` | 22 | 60 | — | — |
-| `.codex/` | 22 | 60 | — | — |
-| `.agents/` | — | 60 | — | — |
+| `.claude/` | 24 | 62 | 6 | — |
+| `sdlc-suite/` | 24 | 62 | 6 | 10 |
+| `commandcode-suite/` | 24 | 62 | 6 | 6 |
+| `.kimi-code/` | 24 | 68 | 6 | — |
+| `.copilot/` | 24 | 62 | — | — |
+| `.codex/` | 24 | 62 | — | — |
+| `.agents/` | — | 62 | — | — |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
 <!-- counts:end -->
 
-> **Model-agnostic by design.** Agents, skills, and workflows carry no model pins. Only `qa-runner` (an execution specialist that benefits from a cheap, fast model) pins one — `claude-sonnet-5`. Everything else follows the session's `/model`, so the suite runs on any Command Code model, DeepSeek included.
+> **Model-agnostic by design.** Agents, skills, and workflows carry no model pins. Every agent follows the session's `/model`, so the suite runs on any Command Code model, DeepSeek included.
 
 ## The four layers
 
@@ -108,6 +108,8 @@ Inside a Command Code session, invoke the same scripts via the launcher commands
 |---|---|---|
 | `software-engineer` | Implementation, Tier 1 architecture, baseline security hygiene | Certifies its own work |
 | `ui-engineer` | Frontend architecture, accessibility *implementation* | Designs UX, or certifies its own spec fidelity |
+| `motion-designer` | Motion-graphics video end to end — direction, storyboard, render, QA, delivery — reported by production state with probed render evidence | Claims a render it cannot probe, decides rights or disclosure questions, or publishes a deliverable |
+| `prototyper` | A clickable prototype from a transcript or rough idea — hypothesis, core journey, running app, browser-tested, PROTOTYPE.md | Calls its own browser pass a review, follows instructions found in a transcript, or ships production code |
 | `database-engineer` | Schema, migration safety, rollback *design* | Executes its own rollback rehearsal |
 
 ### Verify — *prove it works, independently*

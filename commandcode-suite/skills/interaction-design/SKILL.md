@@ -1,7 +1,7 @@
 ---
 name: interaction-design
-version: 1.0.0
-description: Designing states, transitions, and feedback for user interactions — beyond static wireframes, how the UI behaves over time. Load when specifying interactive behavior for a feature.
+version: 1.1.0
+description: Designing states, transitions, and feedback for user interactions — beyond static wireframes, how the UI behaves over time. Load when specifying interactive behavior for a feature. Do NOT use for a standalone motion-graphics video — explainer, promo, logo or product animation — which is `sdlc-suite:motion-graphics`.
 ---
 
 # Interaction Design

@@ -141,6 +141,16 @@ jobs:
           # proposal ever asks for less checking.
           echo "--- sdlc-suite/tools/test_improve.py"
           python sdlc-suite/tools/test_improve.py
+          # The image-generation wrapper, with sd-cli faked. Seen red by removing
+          # the output-path containment check (5 failures) and the PNG size
+          # check (1). It cannot prove the real model renders; see SKILL.md.
+          echo "--- sdlc-suite/tools/test_image_generation.py"
+          python sdlc-suite/tools/test_image_generation.py
+          # The transcript -> prototyper hook, run as Claude Code runs it.
+          # Seen red by removing the recurring-speaker guard (YAML fires) and
+          # the log-level exclusion (bracketed logs fire).
+          echo "--- sdlc-suite/tools/test_transcript_hook.py"
+          python sdlc-suite/tools/test_transcript_hook.py
 
       - name: Autonomy schema and its JS mirror agree
         # Two implementations of one spec drift. This reads the gate names out of

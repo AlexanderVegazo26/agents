@@ -1,0 +1,11 @@
+# Qwen3.8-27B for the sdlc suite under Codex. Build once:
+#   ollama pull qwen3.8:27b
+#   ollama create qwen3.8-27b-sdlc -f .codex/Modelfile.qwen3.8-27b
+#
+# num_ctx is the reason this file exists. Ollama's default context is far below
+# what one suite agent needs (its developer_instructions run to ~23 KB, plus
+# Codex's own system prompt, the skills list and tool schemas), and a prompt
+# over the limit is truncated silently, not refused. Keep it equal to
+# model_context_window in run-qwen-local.ps1 / run-qwen-local.sh.
+FROM qwen3.8:27b
+PARAMETER num_ctx 32768
