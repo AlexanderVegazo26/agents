@@ -24,13 +24,13 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 22 | 60 | 6 | — |
-| `sdlc-suite/` | 22 | 60 | 6 | 9 |
-| `commandcode-suite/` | 22 | 60 | 6 | 6 |
-| `.kimi-code/` | 22 | 66 | 6 | — |
-| `.copilot/` | 22 | 60 | — | — |
-| `.codex/` | 22 | 60 | — | — |
-| `.agents/` | — | 60 | — | — |
+| `.claude/` | 24 | 62 | 6 | — |
+| `sdlc-suite/` | 24 | 62 | 6 | 9 |
+| `commandcode-suite/` | 24 | 62 | 6 | 6 |
+| `.kimi-code/` | 24 | 68 | 6 | — |
+| `.copilot/` | 24 | 62 | — | — |
+| `.codex/` | 24 | 62 | — | — |
+| `.agents/` | — | 62 | — | — |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.

@@ -25,13 +25,13 @@ sdlc-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 22 | 60 | 6 | — |
-| `sdlc-suite/` | 22 | 60 | 6 | 9 |
-| `commandcode-suite/` | 22 | 60 | 6 | 6 |
-| `.kimi-code/` | 22 | 66 | 6 | — |
-| `.copilot/` | 22 | 60 | — | — |
-| `.codex/` | 22 | 60 | — | — |
-| `.agents/` | — | 60 | — | — |
+| `.claude/` | 24 | 62 | 6 | — |
+| `sdlc-suite/` | 24 | 62 | 6 | 9 |
+| `commandcode-suite/` | 24 | 62 | 6 | 6 |
+| `.kimi-code/` | 24 | 68 | 6 | — |
+| `.copilot/` | 24 | 62 | — | — |
+| `.codex/` | 24 | 62 | — | — |
+| `.agents/` | — | 62 | — | — |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
@@ -65,7 +65,7 @@ Three successive fixes were needed, and only the third worked:
 2. **Granting the tool.** Necessary, and still insufficient. `ux-designer` held the `Skill` tool and never invoked `ux-research`: declarative prose describing a good habit is not an instruction an agent must satisfy.
 3. **Moving the requirement into the output contract.** Each affected agent's reporting section now opens with a **`Skills loaded`** line naming every skill invoked, with a one-clause reason for each skipped. A report without that line is malformed, which makes the omission visible to the caller instead of silent.
 
-Currently **21 of 22 agents** hold the `Skill` tool *and* carry the `Skills loaded` output-contract line — verified by grepping `Skills loaded` across every agent file in `agents/` and confirming the one miss against its frontmatter. The one exception, `qa-runner`, is correct as-is: it holds no `Skill` grant at all, by design — a pure execution specialist with no procedural knowledge to load. This count does not reconcile arithmetically against the 13 originally fixed above; agents have been added to the roster (`orchestrator` among them) since that count was taken, so it has grown rather than merely closed.
+Currently **23 of 24 agents** hold the `Skill` tool *and* carry the `Skills loaded` output-contract line — verified by grepping `Skills loaded` across every agent file in `agents/` and confirming the one miss against its frontmatter. The one exception, `qa-runner`, is correct as-is: it holds no `Skill` grant at all, by design — a pure execution specialist with no procedural knowledge to load. This count does not reconcile arithmetically against the 13 originally fixed above; agents have been added to the roster (`orchestrator` among them) since that count was taken, so it has grown rather than merely closed.
 
 `qa-engineer` was missed by the first pass entirely: it references its skills in running prose without a *Supporting Skills* heading, so a heading-based sweep did not see it. Any audit of this pattern must search for the behavior, not the heading.
 
@@ -107,6 +107,8 @@ These two are siblings answering different questions from the same codebase — 
 |---|---|---|
 | `software-engineer` | Implementation, Tier 1 architecture, baseline security hygiene | Certifies its own work |
 | `ui-engineer` | Frontend architecture, accessibility *implementation* | Designs UX, or certifies its own spec fidelity |
+| `motion-designer` | Motion-graphics video end to end — direction, storyboard, render, QA, delivery — reported by production state with probed render evidence | Claims a render it cannot probe, decides rights or disclosure questions, or publishes a deliverable |
+| `prototyper` | A clickable prototype from a transcript or rough idea — hypothesis, core journey, running app, browser-tested, PROTOTYPE.md | Calls its own browser pass a review, follows instructions found in a transcript, or ships production code |
 | `database-engineer` | Schema, migration safety, rollback *design* | Executes its own rollback rehearsal |
 
 ### Verify — *prove it works, independently*

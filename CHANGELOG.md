@@ -7,6 +7,98 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Agents and skills carry their own versions; the plugin version is the release
 train. See `CONTRIBUTING.md` for the compatibility policy.
 
+## [2.0.0] — 2026-09-29
+
+The suite runs under Codex on a local Qwen3.8-27B, and gains a local
+image-generation skill built on Qwen-Image-2.1. The plugin is a major release
+because `ux-designer` is: a major on any agent or skill is a major on the plugin.
+
+### Fixed
+
+- **No suite agent ever loaded under Codex.** `generate_trees.py` wrote
+  `version = "1.0.0"` into every `.codex/agents/*.toml`. Codex deserialises
+  agent files strictly and rejected all 22 with "unknown field `version`", so its
+  `spawn_agent` tool offered none of them. The version is now a
+  `# version: x.y.z` comment. Found by capturing the request Codex sends, which
+  also showed that project agents load only for a trusted project.
+- **`qa-runner` 1.0.1 no longer pins a model.** It was the only agent that did:
+  `model: sonnet` in Claude Code, `claude-sonnet-5` in Command Code, where
+  Claude models are not available. Every agent in every tree now follows the
+  session model.
+
+### Added
+
+- **`motion-designer` agent 1.0.0**, which produces motion-graphics video from
+  requirements to delivery. It reports the production state it actually
+  reached, and every deliverable carries a required `Render evidence:` line
+  whose values come from probing the file, not from render settings.
+  It delegates heavy render and probe runs to `qa-runner` and preloads
+  `autonomy-policy` for its approval gates. `orchestrator` 2.0.0 routes to it
+  and grants it; that grant change is the major. `project-memory` 1.0.1 adds
+  its `motion/` directory, and `qa-runner` names it as a caller.
+- **`prototyper` agent 1.0.0**, which turns a meeting transcript, call notes or
+  a rough idea into a clickable, browser-tested prototype with a
+  `PROTOTYPE.md` handover. It was hand-added to `.claude/agents/` only, so a
+  generator run deleted it; it now lives in `sdlc-suite/agents/`, with
+  frontmatter and LF line endings (it was CRLF, which unregisters agents).
+  Its original sections are kept verbatim, renumbered, with every internal
+  reference remapped. That fixed one wrong reference: the handover said the
+  hypothesis came from the journey section. What changed is scope. It no
+  longer "acts as product manager, designer, engineer, and QA at once". It
+  owns the prototype, treats a transcript as evidence rather than
+  instructions, and hands review to `code-reviewer` and `qa-engineer`, since
+  its own browser pass is not verification. `orchestrator` routes to it and skips
+  the requirements and design phases on that route. `qa-runner` runs its long
+  test suites, and `project-memory` gains a `prototypes/` directory for it.
+- **`motion-graphics` skill 1.0.0.** It was dropped into the six generated
+  trees but not `sdlc-suite/skills/`, so the next `generate_trees.py` run would
+  have deleted every copy. It now lives in the canonical tree with frontmatter.
+  Its 64 KB single file is split into an 18 KB core plus eight `references/`
+  files, moved verbatim and checked by reassembling them byte for byte against
+  the original. Two tables that a document conversion had flattened onto one
+  line are rebuilt, the opening "You are an expert…" identity is now a
+  statement of scope, and §100.1 adds rules for untrusted text, file names,
+  media and projects in render commands. They were checked against FFmpeg
+  9.0.2 by a security review that showed inline `drawtext=text=` reading an
+  arbitrary file into the frame, and a user `.m3u8` probing cleanly while
+  opening a path outside the project. Copy goes through
+  `textfile=...:expansion=none`, media is parsed under protocol and format
+  whitelists, user playlists are refused, writes stay inside the project, and
+  untrusted `.blend` files open with auto-execution off. qa-engineer then re-ran each
+  attack against its mitigation (every one blocked, every control still
+  exploitable) and found that `-n` refuses to overwrite yet exits 0, so the
+  skill no longer relies on it.
+- `interaction-design` 1.1.0 and the new `image-generation` now say they are
+  not for video, so neither fires for a job `motion-graphics` owns.
+
+- `.codex/run-qwen-local.ps1` / `.sh` and `.codex/Modelfile.qwen3.8-27b`, which
+  launch Codex against Qwen3.8-27B served by Ollama. The launcher uses its own
+  Codex home (`~/.codex-qwen`), so the normal `~/.codex` setup is untouched.
+  That home trusts this repository and uses a custom provider, because the
+  built-in `ollama` provider cannot be reconfigured and its 5-minute stream-idle
+  timeout is shorter than CPU prompt processing. The launcher refuses to trust
+  the repository if `.codex/` holds anything outside an allowlist, since trust
+  loads project config, hooks and rules. It refuses a Codex home it did not
+  set up, and accepts only allowlisted override values. See `.codex/README.md` for measured speeds.
+- Skill `image-generation` 1.0.0, which renders a mockup through
+  stable-diffusion.cpp and Qwen-Image-2.1. `generate.py` reports success only
+  for a PNG it has read back at the requested size. The output path must stay
+  inside the working directory, and the sd-cli call is an argv list, never a
+  shell string. On Windows it refuses a `.bat`/`.cmd` `SD_CPP_BIN`, because
+  cmd.exe would re-parse the prompt as shell syntax. `--prompt-file` keeps
+  untrusted prompt text out of any shell command line, including one an agent
+  without a shell hands to its caller. sd-cli gets an empty private
+  `--lora-model-dir`, so a `<lora:…>` tag cannot load weights from the working
+  directory. The script renders in a private scratch directory and checks
+  containment again before the move.
+- `ux-designer` 2.0.0 owns the new skill and has a required `Generated images:`
+  report line. That is a reporting-contract change, hence the major version:
+  anything that parses ux-designer's report lines should now expect it.
+- `generate_trees.py` skips `__pycache__` and `*.pyc` inside skill directories,
+  since `image-generation` is the first skill to ship a script. It also refuses a
+  frontmatter `version` that is not `x.y.z`, because the version is written into
+  the TOML unescaped.
+
 ## [1.2.0] — 2026-09-24
 
 The self-improvement loop, closed. The 2026-09-24 agentic-readiness review found

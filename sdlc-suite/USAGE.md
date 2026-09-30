@@ -25,7 +25,7 @@ python sdlc-suite/tools/bump.py --marketplace
 
 `marketplace.json` used to carry the same number independently and had to be edited to match by hand — two files, one of which could silently disagree. `plugin.json` is now the single source and `bump.py --marketplace --check` fails if they drift apart.
 
-Each agent and skill also carries its own `version:` — `.codex` spells it `version = "1.0.0"` and `.copilot` uses a `"version"` key, but it is the same field. That is what lets a bug report be pinned to a specific revision of a 463-line agent rather than to "the version you had". `python sdlc-suite/tools/bump.py --versions` prints the whole table. See `CONTRIBUTING.md` for when each component moves.
+Each agent and skill also carries its own `version:` — `.codex` carries it as a `# version: 1.0.0` comment (Codex rejects agent files with unknown keys) and `.copilot` uses a `"version"` key, but it is the same field. That is what lets a bug report be pinned to a specific revision of a 463-line agent rather than to "the version you had". `python sdlc-suite/tools/bump.py --versions` prints the whole table. See `CONTRIBUTING.md` for when each component moves.
 
 Everything is namespaced under `sdlc-suite:` after install:
 
