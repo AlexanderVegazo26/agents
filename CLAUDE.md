@@ -20,6 +20,7 @@ and that scope matters.** `sdlc-suite/tools/generate_trees.py` produces:
 |---|---|
 | `agents/` and `skills/` | `.claude/`, `commandcode-suite/`, `.kimi-code/`, `.copilot/`, `.codex/`, `.agents/` |
 | `workflows/*.js` | `.claude/` only |
+| `commands/*.md` (as pi prompt templates) and `pi/AGENTS.md` | `.pi/prompts/` and the repository-root `AGENTS.md` |
 
 Editing any of those raises no error and is silently overwritten on the next run.
 `python sdlc-suite/tools/generate_trees.py --check` is the gate.

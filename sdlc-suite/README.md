@@ -32,9 +32,11 @@ sdlc-suite/
 | `.copilot/` | 22 | 60 | — | — |
 | `.codex/` | 22 | 60 | — | — |
 | `.agents/` | — | 60 | — | — |
+| `.pi/` | — | — | — | 9 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
+`.pi/` ships prompt templates only; its skills are the auto-discovered `.agents/skills/`.
 <!-- counts:end -->
 
 The audit trail (`AUDIT.md`, `findings.json`, remediation record) lives in the source repository and is deliberately not shipped with the plugin — see **Registry health** below.

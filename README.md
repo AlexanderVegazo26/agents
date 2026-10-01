@@ -17,6 +17,7 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 | `.claude/agents/`, `.claude/skills/`, `.claude/workflows/` | **Live** definitions backing the bare names (`qa-engineer`) when working in this repository. Generated from `sdlc-suite/` — agents, skills and workflows all three. |
 | `sdlc-suite/` | **The canonical, hand-edited tree.** Packaged as a Claude Code plugin, backing `sdlc-suite:*` names, published through `.claude-plugin/marketplace.json`. Has its own [README](sdlc-suite/README.md) and `USAGE.md`. |
 | `commandcode-suite/`, `.kimi-code/`, `.codex/`, `.copilot/`, `.agents/` | Ports to other harnesses. Their `agents/` and `skills/` are generated from `sdlc-suite/`; their runners, commands and workflow scripts are hand-maintained, because those target different runtimes. **Not invocable from Claude Code** — stated by the maintainer; not independently exercised here. |
+| `.pi/prompts/` + root `AGENTS.md` | **Pi harness port.** Generated from `sdlc-suite/`: the commands as prompt templates (with `${CLAUDE_PLUGIN_ROOT}` rewritten to repository-relative paths) and the pi instance configuration. Pi discovers skills from `.agents/skills/` directly, so no skills are copied. |
 | `.claude/audit/` | The registry's own audit report and remediation record. Not shipped with the plugin. |
 
 <!-- counts:start -->
@@ -31,9 +32,11 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 | `.copilot/` | 22 | 60 | — | — |
 | `.codex/` | 22 | 60 | — | — |
 | `.agents/` | — | 60 | — | — |
+| `.pi/` | — | — | — | 9 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
+`.pi/` ships prompt templates only; its skills are the auto-discovered `.agents/skills/`.
 <!-- counts:end -->
 
 ### Where to start
@@ -46,7 +49,7 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 
 ## Two things worth knowing before you use this
 
-**The duplication is a hazard, not just redundancy.** The same agents exist in several trees, and editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the hand-edited source; the `agents/` and `skills/` of every other tree are generated from it, as is `.claude/workflows/`, and a hand edit to any of those is silently overwritten. `.agents/` ships skills only, with no agents directory — deliberate, not a gap.
+**The duplication is a hazard, not just redundancy.** The same agents exist in several trees, and editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the hand-edited source; the `agents/` and `skills/` of every other tree are generated from it, as is `.claude/workflows/`, as are `.pi/prompts/` and the root `AGENTS.md`, and a hand edit to any of those is silently overwritten. `.agents/` ships skills only, with no agents directory — deliberate, not a gap.
 
 The scope is worth knowing precisely, because getting it wrong has already cost something here: `commandcode-suite/workflows/`, `.kimi-code/workflows/`, the per-harness runners and every README are **not** generated. A change to a workflow script has to be made in three places by hand. See `CLAUDE.md` for the table and `CONTRIBUTING.md` for what CI checks.
 

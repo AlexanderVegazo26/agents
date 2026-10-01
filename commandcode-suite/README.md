@@ -39,9 +39,11 @@ commandcode-suite/
 | `.copilot/` | 22 | 60 | — | — |
 | `.codex/` | 22 | 60 | — | — |
 | `.agents/` | — | 60 | — | — |
+| `.pi/` | — | — | — | 9 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
+`.pi/` ships prompt templates only; its skills are the auto-discovered `.agents/skills/`.
 <!-- counts:end -->
 
 > **Model-agnostic by design.** Agents, skills, and workflows carry no model pins. Only `qa-runner` (an execution specialist that benefits from a cheap, fast model) pins one — `claude-sonnet-5`. Everything else follows the session's `/model`, so the suite runs on any Command Code model, DeepSeek included.

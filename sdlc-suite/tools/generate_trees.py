@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One canonical tree, six generated. Replaces the four convert-agents.py /
+"""One canonical tree, seven generated. Replaces the four convert-agents.py /
 sync-skills.py pairs and the skip-if-exists mirror that froze them.
 
     python sdlc-suite/tools/generate_trees.py            # regenerate everything
@@ -42,6 +42,26 @@ skill that was copied without the transform. `.agents` carries 0.
 
 So the prefix is per-target, not global, and mirroring the canonical tree
 verbatim into the bare-name trees would push 120 dead references into each.
+
+The pi target
+-------------
+Pi is the one port that is not a dot-directory mirror. It discovers skills
+itself — the Agent Skills location `.agents/skills/`, already generated for
+another harness — so copying a seventh skills tree into it would create the
+duplication hazard this repository's README warns about. What it gets is:
+
+* `.pi/prompts/` — the commands, de-namespaced, with
+  `${CLAUDE_PLUGIN_ROOT}` rewritten to the repository-relative `sdlc-suite`.
+  The commands backed by `workflows/*.js` carry an inserted note that the
+  `Workflow` tool does not exist in pi. The note is generation, not canon:
+  the canonical command must keep working in Claude Code, where the tool
+  exists.
+* the repository-root `AGENTS.md` — from the hand-edited
+  `sdlc-suite/pi/AGENTS.md`, with a GENERATED header.
+
+Those two locations span one target, so its base is the repository root
+itself, and only the generator-owned paths are diffed: a hand-maintained
+`.pi/settings.json` or `.pi/extensions/` is never touched or pruned.
 """
 
 from __future__ import annotations
@@ -58,6 +78,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC_AGENTS = ROOT / "sdlc-suite" / "agents"
 SRC_SKILLS = ROOT / "sdlc-suite" / "skills"
 SRC_WORKFLOWS = ROOT / "sdlc-suite" / "workflows"
+SRC_COMMANDS = ROOT / "sdlc-suite" / "commands"
+SRC_PI_AGENTS = ROOT / "sdlc-suite" / "pi" / "AGENTS.md"
+#: Claude Code's plugin-root variable. Undefined in pi, where the equivalent
+#: content lives at the repository-relative canonical path.
+PLUGIN_ROOT = "${CLAUDE_PLUGIN_ROOT}"
 
 NS = "sdlc-suite:"
 
@@ -209,6 +234,10 @@ class Target:
     #: also generate `workflows/*.js`. True only where the tree is a straight
     #: de-namespaced copy of the canonical scripts — see desired_files().
     workflows: bool = False
+    #: directory (relative to the repository root) the tree lives in; defaults
+    #: to the target name. `.pi` spans `.pi/prompts/` and the repository-root
+    #: `AGENTS.md`, so its base is the root itself — see "The pi target".
+    base: Path | None = None
 
 
 TARGETS = {
@@ -257,6 +286,13 @@ TARGETS = {
     # Skills only. No agents directory and no converter has ever produced one —
     # which is why it silently fell one skill behind: it was in no sync script.
     ".agents": Target(".agents", namespaced=False, agent_ext=None),
+
+    # pi. No agents, no skills of its own: pi discovers `.agents/skills/`
+    # itself, so a seventh skills copy would be the duplication hazard the
+    # README warns about. What it gets is `.pi/prompts/` (the commands,
+    # de-namespaced, `${CLAUDE_PLUGIN_ROOT}` rewritten repository-relative)
+    # and the repository-root `AGENTS.md` — see "The pi target" above.
+    ".pi": Target(".pi", namespaced=False, agent_ext=None, base=Path(".")),
 }
 
 
@@ -400,6 +436,50 @@ EMITTERS = {"markdown": emit_markdown, "kimi": emit_kimi,
 # Generation
 # --------------------------------------------------------------------------- #
 
+# Inserted into the generated copy of the workflow-backed commands: the
+# `Workflow` tool does not exist in pi, and the honest response is a note in
+# the generated tree, not a rewritten canonical command.
+PI_WORKFLOW_NOTE = (
+    "> **Pi — not runnable yet.** This command invokes the `Workflow` tool,\n"
+    "> which does not exist in the pi harness. The script path below is\n"
+    "> repository-relative and correct, but until a pi Workflow extension\n"
+    "> lands this command cannot run its gates. Say so to the user; do not\n"
+    "> improvise a substitute run, and do not report a result this pipeline\n"
+    "> did not produce.\n"
+)
+
+
+def render_pi_prompt(md: Path) -> str:
+    """One `sdlc-suite/commands/*.md` file as a pi prompt template.
+
+    The frontmatter passes through untouched: pi prompt templates use the
+    same `description` / `argument-hint` fields and the same `$ARGUMENTS` /
+    `$1` substitutions the commands already carry, and the filename — not a
+    `name:` field — is the command name in both harnesses. The body gets the
+    two transforms that make it true under pi: bare names, and the plugin
+    root rewritten to the canonical path it actually resolves to here.
+    """
+    raw = _read_lf(md)
+    front, body = parse_frontmatter(raw)
+    lines = ["---"]
+    lines += [f"{k}: {v}" for k, v in front.items()]
+    lines += ["---", ""]
+    if md.stem in FLOW_SKILLS:
+        lines.append(PI_WORKFLOW_NOTE)
+    lines.append(denamespace(body).replace(PLUGIN_ROOT, "sdlc-suite").strip())
+    lines.append("")
+    return "\n".join(lines)
+
+
+def pi_agents_md() -> str:
+    # Same discipline as the prompt bodies: LF-normalised bytes, never
+    # universal-newline text (see _read_lf).
+    body = _read_lf(SRC_PI_AGENTS).strip()
+    return (
+        GENERATED_MD.format(src="sdlc-suite/pi/AGENTS.md") + "\n\n" + body + "\n"
+    )
+
+
 def render_agent(md_path: Path, t: Target) -> str:
     text = _read_lf(md_path)
     if not t.namespaced:
@@ -409,8 +489,18 @@ def render_agent(md_path: Path, t: Target) -> str:
     return EMITTERS[t.agent_format](md_path.stem, front, body, t, src_rel)
 
 
+def desired_pi_files() -> dict[Path, str]:
+    out: dict[Path, str] = {}
+    for md in sorted(SRC_COMMANDS.glob("*.md")):
+        out[Path(".pi/prompts") / md.name] = render_pi_prompt(md)
+    out[Path("AGENTS.md")] = pi_agents_md()
+    return out
+
+
 def desired_files(t: Target) -> dict[Path, str]:
     """Every file this target should contain, as {relative path: content}."""
+    if t.name == ".pi":
+        return desired_pi_files()
     out: dict[Path, str] = {}
 
     if t.agent_ext:
@@ -457,7 +547,27 @@ def desired_files(t: Target) -> dict[Path, str]:
     return out
 
 
+def existing_pi_files() -> dict[Path, str]:
+    """Only the paths the generator owns.
+
+    Anything else under `.pi/` — `settings.json`, `extensions/` — is
+    hand-maintained, per machine or per project, and must never be diffed,
+    rewritten or pruned: the same regression-as-sync failure the `local_skills`
+    guard exists to prevent.
+    """
+    out: dict[Path, str] = {}
+    prompts = ROOT / ".pi" / "prompts"
+    if prompts.is_dir():
+        for f in sorted(prompts.glob("*.md")):
+            out[f.relative_to(ROOT)] = f.read_bytes().decode("utf-8")
+    if (ROOT / "AGENTS.md").is_file():
+        out[Path("AGENTS.md")] = (ROOT / "AGENTS.md").read_bytes().decode("utf-8")
+    return out
+
+
 def existing_files(base: Path, t: Target) -> dict[Path, str]:
+    if t.name == ".pi":
+        return existing_pi_files()
     out: dict[Path, str] = {}
     subs = ["agents", "skills"] + (["workflows"] if t.workflows else [])
     for sub in subs:
@@ -496,7 +606,7 @@ class TreeDelta:
 
 
 def diff_tree(name: str, t: Target) -> TreeDelta:
-    base = ROOT / name
+    base = ROOT / (t.base or name)
     want = desired_files(t)
     have = existing_files(base, t)
     d = TreeDelta()
@@ -518,7 +628,7 @@ def diff_tree(name: str, t: Target) -> TreeDelta:
 
 
 def apply_tree(name: str, t: Target, d: TreeDelta) -> None:
-    base = ROOT / name
+    base = ROOT / (t.base or name)
     want = desired_files(t)
     for rel in d.added + d.updated:
         p = base / rel
