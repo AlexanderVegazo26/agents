@@ -9,6 +9,12 @@ Dispatch the prototyper agent with the `Agent` tool. Use `subagent_type:
 Do not build the prototype inline. The agent owns the method, the quality gate
 and the `PROTOTYPE.md` handover.
 
+The agent runs in **Fast mode** by default (§2.1 of that agent): a single-file
+CDN-based page, one smoke pass, a short `PROTOTYPE.md`. Say so in the prompt. Ask
+for the full workflow instead only if the user said `full`, named a framework
+(Next.js, Astro, ...) or a test suite, pointed at an existing app, or the
+prototype uses real data or a real model call; quote what they said.
+
 What the user gave:
 
 ```
