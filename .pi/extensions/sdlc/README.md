@@ -52,8 +52,12 @@ gives the pipeline its file I/O; the sandbox itself stays I/O-free.
   allocates a PTY; the prompt travels through the environment, never the
   shell command, and output is cleaned of CRLF/ANSI before parsing. On older
   Node (pipe stdio) the dispatch spawns pi directly. If `script` is missing
-  on a Node ≥ 26 host the dispatch falls back to the direct spawn and will
-  hang on that host — the selftest documents the boundary.
+  on a Node ≥ 26 host the dispatch REFUSES to spawn and returns a failure
+  that names the fix (install util-linux, or run pi under node < 26) — a
+  silent fallback to the direct route would be a 15-minute hang per agent,
+  not a degraded run. The decision is the pure, selftested
+  `resolveSpawnRoute(nodeMajor, hasScript)`: <26 → direct; ≥26 + script →
+  pty; ≥26 without script → refused.
 
 ## Degradation policy
 

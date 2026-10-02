@@ -86,6 +86,31 @@ export function nodeNeedsPtySpawn() {
   return parseInt(process.versions.node, 10) >= 26;
 }
 
+/**
+ * Which transport a nested session must use — and whether spawning is
+ * possible at all. Pure in its inputs (node major version, `script`
+ * availability) so the selftest can exercise every branch on any runtime.
+ *
+ * Node >= 26 hands spawned children socketpair stdio even when an explicit
+ * pipe is requested, and pi's print mode deadlocks on socket stdio (no
+ * output, 0% CPU) — so there the PTY route is MANDATORY. Without `script`
+ * (util-linux on Linux, built in on macOS) the direct route would not be a
+ * fallback but a 15-minute hang per agent, so the route is refused with a
+ * fixable message instead of silently burning the whole per-agent budget.
+ */
+export function resolveSpawnRoute(nodeMajor, hasScript) {
+  if (nodeMajor < 26) return { route: 'direct' };
+  if (hasScript) return { route: 'pty' };
+  return {
+    route: 'none',
+    error:
+      `node ${nodeMajor}+ hands spawned children socket stdio, which pi's print ` +
+      `mode deadlocks on — the nested run needs the PTY route, which needs the ` +
+      `"script" utility (util-linux on Linux) on PATH. Install it, or run pi ` +
+      `under node < 26.`,
+  };
+}
+
 /** Shell-token safety for values embedded in the static `script -c` command. */
 export function isSafeShellToken(token) {
   return /^[A-Za-z0-9._\-/]+$/.test(String(token));
@@ -211,9 +236,14 @@ function dbg(...parts) {
  */
 export function nestedSessionEnv(base = process.env) {
   const env = { ...base };
+  const stripped = [];
   for (const key of Object.keys(env)) {
-    if (key.startsWith('PI_SESSION') || key === 'PI_CODING_AGENT') delete env[key];
+    if (key.startsWith('PI_SESSION') || key === 'PI_CODING_AGENT') {
+      delete env[key];
+      stripped.push(key);
+    }
   }
+  if (stripped.length) dbg('nestedSessionEnv', `stripped session markers: ${stripped.join(',')}`);
   return env;
 }
 
@@ -221,7 +251,13 @@ export function spawnPi({ prompt, extraArgs = [], cwd, timeoutMs }) {
   return new Promise((resolve) => {
     const t0 = Date.now();
     const bin = findPiBinary();
-    const usePty = nodeNeedsPtySpawn() && commandExists('script');
+    const rt = resolveSpawnRoute(parseInt(process.versions.node, 10), commandExists('script'));
+    if (rt.error) {
+      dbg('spawnPi', `route=none — refusing to spawn: ${rt.error}`);
+      resolve({ exitCode: 1, stdout: '', stderr: rt.error, timedOut: false, spawnError: true });
+      return;
+    }
+    const usePty = rt.route === 'pty';
     let file;
     let args;
     let env;
@@ -695,6 +731,13 @@ return { r1, par, pip, seq, threwDate, threwRandom, args: args, workflowIsObj: t
   const inv2 = buildPtyInvocation('/opt/pi/bin/pi', ['--model', 'a b; rm']);
   check('buildPtyInvocation drops unsafe tokens', inv2.dropped === 1 && !inv2.args[1].includes('rm') && !inv2.args[1].includes('a b'));
   check('nodeNeedsPtySpawn is a boolean', typeof nodeNeedsPtySpawn() === 'boolean');
+
+  // Spawn-route decision: pure, so every branch is testable on any runtime.
+  check('route: node < 26 is always direct', resolveSpawnRoute(20, true).route === 'direct' && resolveSpawnRoute(25, false).route === 'direct');
+  check('route: node >= 26 with script is pty', resolveSpawnRoute(26, true).route === 'pty' && resolveSpawnRoute(99, true).route === 'pty');
+  const noScript = resolveSpawnRoute(26, false);
+  check('route: node >= 26 without script is refused', noScript.route === 'none' && typeof noScript.error === 'string');
+  check('route: the refusal says what to fix', /script/.test(noScript.error) && /util-linux|node < 26/.test(noScript.error));
 
   fs2.rmSync(dir, { recursive: true, force: true });
 
