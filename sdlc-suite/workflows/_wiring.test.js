@@ -1133,7 +1133,13 @@ async function main() {
     const qa = loop3.calls.find(c => c.label === 'verify:qa')
     assert.ok(qa && qa.prompt.includes(lrnId), `verify:qa prompt does not carry ${lrnId}`)
     assert.ok(qa.prompt.includes('the empty-export guard already exists in csv.ts'))
-    const o = readJson(path.join(runDirs(loopCwd).sort().pop(), 'outcome.json'))
+    // The directory comes from the run's own return, not the lexicographic max
+    // of `.claude/runs/`: run ids carry only second resolution, so two runs
+    // started in the same wall-clock second sort by hex suffix and the "last"
+    // directory was sometimes the earlier run — whose outcome.json does not
+    // yet carry the learning (observed flake, ~1 in 4 runs on fast machines).
+    assert.ok(loop3.result.runDir, 'the third run did not report its run directory')
+    const o = readJson(path.join(loop3.result.runDir, 'outcome.json'))
     assert.ok(o.learningsLoaded.some(x => x.label === 'verify:qa' && x.ids.includes(lrnId)),
       JSON.stringify(o.learningsLoaded))
   })
