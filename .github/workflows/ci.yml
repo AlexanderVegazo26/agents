@@ -18,9 +18,11 @@
 #
 #   2. A gate has to be capable of failing. Every live step here was run
 #      against a deliberately broken tree before it was committed, and the
-#      failure observed. One validator that exists — `verify-bodies.py` —
-#      is NOT wired live, because it prints its failures and then exits 0;
-#      see the commented block in the `validate` job for the detail.
+#      failure observed. The rule exists because of `verify-bodies.py`: it
+#      used to print its failures and then exit 0 — a permanently green step,
+#      which is worse than no step because it invites skipping the check. It
+#      is wired live now that it exits 1 on a mismatch (2 on a zero-file
+#      scan); the `validate` job records the proof.
 #
 # Third-party actions are pinned to a full commit SHA rather than a tag,
 # because a tag is mutable and a moved tag is a silent supply-chain change.
