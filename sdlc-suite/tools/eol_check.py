@@ -52,7 +52,7 @@ DEFAULT_ROOTS = [
 ]
 
 # Root-level files that are part of the tooling and equally able to break.
-DEFAULT_FILES = ["kflow", "sync-all.py", ".gitattributes", "CLAUDE.md"]
+DEFAULT_FILES = ["kflow", ".gitattributes", "CLAUDE.md"]
 
 # Also scanned. Independent review found these uncovered by injecting CRLF into
 # each in turn and watching this tool exit 0 every time. .gitattributes pins them

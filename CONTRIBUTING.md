@@ -71,13 +71,16 @@ learnings loader, outcome record) is pasted into all six workflows between
 and run `runtime_block.py --write`; never edit a workflow's copy. Before this
 check existed, one copy had silently lost a security guard the other five had.
 
-`python sync-all.py` is superseded and now **refuses to run** (exit 2), pointing
-at the generator instead. It is still on disk, and the refusal is the point:
+`sync-all.py` (repo root) is **deleted** (2026-09-30); regenerate with
+`python sdlc-suite/tools/generate_trees.py`. For a time it refused to run
+(exit 2) and pointed at the generator instead — the refusal was the point:
 measured 2026-09-02, none of the four `convert-agents.py` scripts it calls knows
 about the `version:` field, so one run strips the version from every agent in
 `.codex/`, `.copilot/`, `.kimi-code/` and `commandcode-suite/` — and none of them
 de-namespaces. Neither failure raises an error, which is exactly why a warning
-would not have been enough.
+would not have been enough. The override environment variable that ran it
+anyway was the last reason to delete it outright: a loud refusal plus a
+one-line bypass is a footgun with instructions.
 
 `bump.py --check` with no `--base` compares the working tree against `HEAD`, so
 run it before committing. On a branch whose changes are already committed, pass
