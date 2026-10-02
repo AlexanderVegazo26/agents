@@ -32,7 +32,9 @@ The organizing idea is that the agent which *does* the work is never the agent t
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
-`.pi/` ships prompt templates only; its skills are the auto-discovered `.agents/skills/`.
+`.pi/` ships the generated prompt templates plus the hand-maintained `extensions/sdlc/`
+(the `agent` and `workflow` tools) and `validate.py`; its skills are the
+auto-discovered `.agents/skills/`.
 <!-- counts:end -->
 
 ---

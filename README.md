@@ -17,7 +17,8 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 | `.claude/agents/`, `.claude/skills/`, `.claude/workflows/` | **Live** definitions backing the bare names (`qa-engineer`) when working in this repository. Generated from `sdlc-suite/` — agents, skills and workflows all three. |
 | `sdlc-suite/` | **The canonical, hand-edited tree.** Packaged as a Claude Code plugin, backing `sdlc-suite:*` names, published through `.claude-plugin/marketplace.json`. Has its own [README](sdlc-suite/README.md) and `USAGE.md`. |
 | `commandcode-suite/`, `.kimi-code/`, `.codex/`, `.copilot/`, `.agents/` | Ports to other harnesses. Their `agents/` and `skills/` are generated from `sdlc-suite/`; their runners, commands and workflow scripts are hand-maintained, because those target different runtimes. **Not invocable from Claude Code** — stated by the maintainer; not independently exercised here. |
-| `.pi/prompts/` + root `AGENTS.md` | **Pi harness port.** Generated from `sdlc-suite/`: the commands as prompt templates (with `${CLAUDE_PLUGIN_ROOT}` rewritten to repository-relative paths) and the pi instance configuration. Pi discovers skills from `.agents/skills/` directly, so no skills are copied. |
+| `.pi/prompts/` + root `AGENTS.md` | **Pi harness port, generated part.** Generated from `sdlc-suite/`: the commands as prompt templates (with `${CLAUDE_PLUGIN_ROOT}` rewritten to repository-relative paths) and the pi instance configuration. Pi discovers skills from `.agents/skills/` directly, so no skills are copied. |
+| `.pi/extensions/sdlc/` | **Pi harness port, hand-maintained part.** The pi extension that provides the two primitives the suite is written against: the `agent` tool (one sub-agent dispatch as a separate `pi -p` session running the named role file) and the `workflow` tool (`sdlc-suite/workflows/*.js` in a `node:vm` sandbox reproducing the Claude Code Workflow allowlist). See its [README](.pi/extensions/sdlc/README.md); `node .pi/extensions/sdlc/lib.js --selftest` is the offline gate, wired into CI by `.pi/validate.py`. |
 | `.claude/audit/` | The registry's own audit report and remediation record. Not shipped with the plugin. |
 
 <!-- counts:start -->
@@ -36,7 +37,9 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
-`.pi/` ships prompt templates only; its skills are the auto-discovered `.agents/skills/`.
+`.pi/` ships the generated prompt templates plus the hand-maintained `extensions/sdlc/`
+(the `agent` and `workflow` tools) and `validate.py`; its skills are the
+auto-discovered `.agents/skills/`.
 <!-- counts:end -->
 
 ### Where to start

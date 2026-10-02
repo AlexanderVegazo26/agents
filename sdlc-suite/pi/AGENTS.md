@@ -13,27 +13,41 @@ suite under the pi harness.
 |---|---|
 | Skills | `.agents/skills/` — pi discovers the Agent Skills location automatically, from the working directory up to this repository root. No configuration, no copy. |
 | Slash commands | `.pi/prompts/`, generated from `sdlc-suite/commands/`. |
-| Role agents | `sdlc-suite/agents/` (canonical) and the generated trees. |
-| Workflows | Not runnable here yet — see below. |
+| Role agents | `sdlc-suite/agents/` (canonical) and the generated trees, invocable via the `agent` tool (see below). |
+| Workflows | Runnable via the `workflow` tool (see below). |
 
-**Pi has no sub-agent tool.** The role agents are therefore not invocable as
-separate agents. When a trigger in `ROUTING.md` fires, the running agent takes
-on that role itself: open the role's file, follow it for the duration of the
-task, and say in the response which role is speaking.
+**Sub-agents: the `agent` tool.** The hand-maintained extension at
+`.pi/extensions/sdlc/` registers an `agent` tool (parameters: `name`, `task`).
+A call dispatches a separate, non-interactive `pi` session whose prompt is the
+role file's body (resolved from `sdlc-suite/agents/` or `.claude/agents/`,
+namespace prefix optional) followed by the task. The nested session keeps pi's
+default system prompt — project context, skills, tools — and the role file's
+`model:` frontmatter is honored via `--model`, degrading to the default model
+with a note when that model is unavailable. A failed or timed-out dispatch
+returns null, which the suite's retry/breaker logic is built around. This is
+the structural process boundary the independence rule relies on: the role
+runs in a different session, with a different conversation.
 
-**The Workflow tool does not exist in pi either.** The commands backed by
-`workflows/*.js` carry a note in their `.pi/prompts/` copies saying exactly
-that. They are placeholders until a pi Workflow extension lands; do not
-improvise a substitute run, and do not report a result the pipeline did not
-produce.
+**Workflows: the `workflow` tool.** The same extension registers a `workflow`
+tool (parameters: `scriptPath`, `args`). It executes `sdlc-suite/workflows/*.js`
+in a `node:vm` sandbox whose globals are the runtime's explicit allowlist
+(`agent`, `parallel`, `pipeline`, `workflow`, `phase`, `log`, `args`, `budget`,
+`setTimeout`, `clearTimeout`, `console` — no `require`, `process` or `fs`;
+`Math.random()`, `Date.now()` and argless `new Date()` are replaced with
+throwers so a resume stays deterministic). `agent()` inside the sandbox is the
+`agent` tool above, so every pipeline stage is a real separate session. The
+relative `runtimeDir` / `policy` / `policyDefault` argument values are resolved
+against this repository before the script sees them (the `${CLAUDE_PLUGIN_ROOT}`
+expansion the command layer does in Claude Code), and the scripts' own absolute
+path validation still runs. Commands that were placeholders in `.pi/prompts/`
+now run for real — use the `workflow` tool when a command's body says to.
 
-**The independence rule survives as discipline, not as architecture.** In this
-harness the same process that implements can verify, which is the failure the
-suite's organizing idea exists to prevent. The triggers still name the role
-and the role's file still binds, but the process boundary that made
-implementer-never-certifies structural is gone — so the evidence standards in
-`ROUTING.md` (Confirmed vs Claimed-not-verified) have to be applied harder,
-not looser, and a self-check must say so in the response.
+**The independence rule is structural again, but the evidence standards still
+bind.** The role runs in a separate session, so implementer-never-certifies is
+enforced by process boundary as designed. That does not lower the bar:
+`ROUTING.md`'s Confirmed vs Claimed-not-verified distinction still applies to
+whatever each session reports, and a self-check performed by the same session
+that did the work must say so in the response.
 
 ## Local paths
 
