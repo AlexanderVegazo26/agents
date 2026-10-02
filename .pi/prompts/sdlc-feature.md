@@ -3,12 +3,13 @@ description: Run a feature end-to-end through the SDLC agent suite — requireme
 argument-hint: <initiative description>
 ---
 
-> **Pi — not runnable yet.** This command invokes the `Workflow` tool,
-> which does not exist in the pi harness. The script path below is
-> repository-relative and correct, but until a pi Workflow extension
-> lands this command cannot run its gates. Say so to the user; do not
-> improvise a substitute run, and do not report a result this pipeline
-> did not produce.
+> **Pi.** This command invokes the `Workflow` tool, which under pi is the
+> `workflow` tool registered by the `.pi/extensions/sdlc/` extension. Call
+> it with the `scriptPath` and the `args` OBJECT below — an object, never
+> a bare string — and report the pipeline's result, not a substitute. If
+> the `workflow` tool is not available in this session (the extension is
+> not loaded), say so to the user; do not improvise a substitute run, and
+> do not report a result this pipeline did not produce.
 
 Invoke the `Workflow` tool with:
 

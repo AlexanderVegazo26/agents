@@ -53,9 +53,9 @@ duplication hazard this repository's README warns about. What it gets is:
 * `.pi/prompts/` — the commands, de-namespaced, with
   `${CLAUDE_PLUGIN_ROOT}` rewritten to the repository-relative `sdlc-suite`.
   The commands backed by `workflows/*.js` carry an inserted note that the
-  `Workflow` tool does not exist in pi. The note is generation, not canon:
-  the canonical command must keep working in Claude Code, where the tool
-  exists.
+  `Workflow` tool is the `workflow` tool of the hand-maintained
+  `.pi/extensions/sdlc/` extension. The note is generation, not canon: the
+  canonical command must keep working in Claude Code, where the tool exists.
 * the repository-root `AGENTS.md` — from the hand-edited
   `sdlc-suite/pi/AGENTS.md`, with a GENERATED header.
 
@@ -436,16 +436,19 @@ EMITTERS = {"markdown": emit_markdown, "kimi": emit_kimi,
 # Generation
 # --------------------------------------------------------------------------- #
 
-# Inserted into the generated copy of the workflow-backed commands: the
-# `Workflow` tool does not exist in pi, and the honest response is a note in
-# the generated tree, not a rewritten canonical command.
+# Inserted into the generated copy of the workflow-backed commands: under pi
+# the `Workflow` tool is the `workflow` tool registered by the hand-maintained
+# .pi/extensions/sdlc/ extension. The note keeps the generated copy honest in
+# both directions — how to run the pipeline here, and what to do when the
+# extension is not loaded.
 PI_WORKFLOW_NOTE = (
-    "> **Pi — not runnable yet.** This command invokes the `Workflow` tool,\n"
-    "> which does not exist in the pi harness. The script path below is\n"
-    "> repository-relative and correct, but until a pi Workflow extension\n"
-    "> lands this command cannot run its gates. Say so to the user; do not\n"
-    "> improvise a substitute run, and do not report a result this pipeline\n"
-    "> did not produce.\n"
+    "> **Pi.** This command invokes the `Workflow` tool, which under pi is the\n"
+    "> `workflow` tool registered by the `.pi/extensions/sdlc/` extension. Call\n"
+    "> it with the `scriptPath` and the `args` OBJECT below — an object, never\n"
+    "> a bare string — and report the pipeline's result, not a substitute. If\n"
+    "> the `workflow` tool is not available in this session (the extension is\n"
+    "> not loaded), say so to the user; do not improvise a substitute run, and\n"
+    "> do not report a result this pipeline did not produce.\n"
 )
 
 
