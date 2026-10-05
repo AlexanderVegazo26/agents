@@ -19,6 +19,12 @@ throwers, so resume stays deterministic. The scripts' own bridge pattern
 (a mechanical agent that writes and runs a scratch Node script) is what
 gives the pipeline its file I/O; the sandbox itself stays I/O-free.
 
+**`lib.js` has a second consumer.** `.hermes/plugins/sdlc/runner.mjs` imports
+it for role resolution, `runAgent`, and the workflow sandbox, and injects its
+own `hermes chat` spawner through `runAgent`'s `_spawn` parameter. Changing an
+export's signature here breaks the Hermes port. `python .hermes/validate.py`
+runs that port's selftest against this file.
+
 ## Behavior worth knowing
 
 - **Sub-agent sessions keep pi's default system prompt** (project context,

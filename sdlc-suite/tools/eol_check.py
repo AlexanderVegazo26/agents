@@ -46,6 +46,7 @@ DEFAULT_ROOTS = [
     ".codex",
     ".commandcode",
     ".copilot",
+    ".hermes",
     ".kimi-code",
     "commandcode-suite",
     "sdlc-suite",
@@ -64,6 +65,9 @@ DEFAULT_ROOTS += [".github", "docs"]
 DEFAULT_FILES += [
     ".pre-commit-config.yaml", ".gitleaks.toml", "README.md",
     "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md",
+    # Harness instance files at the root: each is the one context file its
+    # harness loads, so a CRLF one is a whole-session regression.
+    "AGENTS.md", ".hermes.md",
 ]
 
 # Never descend into these. nawi / nawi-vex / snagit-clone are separate

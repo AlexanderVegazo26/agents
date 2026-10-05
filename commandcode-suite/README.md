@@ -40,6 +40,7 @@ commandcode-suite/
 | `.codex/` | 22 | 60 | — | — |
 | `.agents/` | — | 60 | — | — |
 | `.pi/` | — | — | — | 9 |
+| `.hermes/` | — | — | — | 8 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.

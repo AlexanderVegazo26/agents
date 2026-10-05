@@ -189,6 +189,17 @@ jobs:
       - name: .pi structure and sdlc extension selftest
         run: python .pi/validate.py
 
+      # The Hermes port has the same two halves: the generated `.hermes/skills/`
+      # (the commands as skills) and `.hermes.md`, covered by --check above,
+      # and the hand-maintained `.hermes/plugins/sdlc/` plugin, whose runner
+      # imports the pi extension's lib.js. validate.py checks each command
+      # skill's frontmatter, leftover placeholders and scriptPath, registers
+      # the plugin against a stub ctx, and runs the runner's selftest (no
+      # hermes, no network, no LLM). Proven capable of failing: a scriptPath
+      # pointing at a missing script exits 1 naming the skill.
+      - name: .hermes structure and sdlc plugin selftest
+        run: python .hermes/validate.py
+
       # The runtime block is pasted into six workflows because the sandbox has
       # no `require`. Proven capable of failing: before this gate existed one
       # copy had lost the resume-path traversal guard, and --check exited 1

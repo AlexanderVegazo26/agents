@@ -1,0 +1,7 @@
+name: sdlc
+version: "0.1.0"
+description: "sdlc-suite sub-agent dispatch (`agent`) and workflow runner (`workflow`) for Hermes — each suite role runs in its own hermes chat process. Requires node."
+author: "sdlc-suite"
+provides_tools:
+  - agent
+  - workflow

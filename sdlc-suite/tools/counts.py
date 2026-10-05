@@ -44,6 +44,7 @@ TREES = [
     (".codex/", ".toml"),
     (".agents/", None),
     (".pi/", None),
+    (".hermes/", None),
 ]
 
 # Documents that carry a generated block. Adding a document here is all that is
@@ -108,6 +109,14 @@ def measure() -> list[dict]:
         # directory would report a tree that ships commands as shipping none,
         # the exact stale-count failure this tool exists to stop.
         commands_dir = "prompts" if tree == ".pi/" else "commands"
+        if tree == ".hermes/":
+            # Hermes has no prompt-template directory: its slash commands ARE
+            # skills, one `.hermes/skills/<command>/` each, and its domain
+            # skills are the auto-discovered `.agents/skills/`. Counting that
+            # directory as skills would report commands as skills.
+            rows.append({"tree": tree, "agents": None, "skills": None, "workflows": None,
+                         "commands": _count_dirs(base / "skills")})
+            continue
         rows.append(
             {
                 "tree": tree,
