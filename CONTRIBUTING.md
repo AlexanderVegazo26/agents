@@ -165,9 +165,9 @@ what does check it:
 ## Versioning and compatibility
 
 Every agent and skill carries a `version:` in its frontmatter, and the generated
-trees carry it in their own dialect — `version = "1.0.0"` in
-`.codex/agents/*.toml`, a `"version"` key in `.copilot/agents/*.json`,
-frontmatter everywhere else. All 82 start at `1.0.0`.
+trees carry it in their own dialect — a `# version: 1.0.0` comment in
+`.codex/agents/*.toml` (Codex rejects an unknown `version` key), a `"version"` key in `.copilot/agents/*.json`,
+frontmatter everywhere else.
 
 Agents and skills carry independent semantic versions. The plugin version is the
 release train.

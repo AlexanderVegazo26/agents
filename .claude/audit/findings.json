@@ -241,7 +241,7 @@
       "PATH-01": "fixed - 20 sites across 16 files canonicalized; zero bare paths remain",
       "SCHEMA-01": "fixed (scoped) - negative scope added to 8 adjacent-pair skills, not all 51",
       "STRUCT-01": "fixed - technical-writer.md rewritten to family structure, 33 -> 150 lines",
-      "SCHEMA-02": "fixed - model: sonnet on qa-runner only",
+      "SCHEMA-02": "fixed - model: sonnet on qa-runner only; reversed 2026-09-29 by qa-runner 1.0.1, every agent inherits",
       "SCHEMA-03": "fixed - skills: preload on the 6 unconditional loaders",
       "TOOL-01": "fixed - Write dropped from qa-runner",
       "TOOL-02": "fixed - code-reviewer body scopes Bash to read-only inspection",

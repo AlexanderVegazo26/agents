@@ -12,7 +12,7 @@ repository on this machine, with this repo as the single source of truth.
 <agents-repo>/       ← your checkout; source of truth (edit here)
 └── .kimi-code/
     ├── agents/      22 custom agents (Markdown + YAML frontmatter)
-    ├── skills/      60 domain skills + 6 flow skills
+    ├── skills/      61 domain skills + 6 flow skills
     └── workflows/   6 Python orchestration scripts + runner.py
 
 ~/.kimi-code/
@@ -69,7 +69,7 @@ Full list in [`AGENTS.md`](./AGENTS.md) (software-engineer, code-reviewer, qa-en
 qa-runner, security-engineer, performance-engineer, database-engineer, ui-engineer,
 ux-designer, solution-architect, product-manager, product-analyst, product-archaeologist,
 persona-discovery, persona-runner, boundary-prober, journey-orchestrator, release-manager,
-technical-writer, site-reliability, incident-commander, plus `orchestrator`).
+technical-writer, site-reliability, incident-commander, motion-designer, prototyper, plus `orchestrator`).
 
 > **Frontmatter discipline:** `description:` / `whenToUse:` values must be quoted
 > YAML scalars. An unquoted value containing `: ` (e.g. "INVOKE WHEN: ...") is

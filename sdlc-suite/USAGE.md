@@ -25,7 +25,7 @@ python sdlc-suite/tools/bump.py --marketplace
 
 `marketplace.json` used to carry the same number independently and had to be edited to match by hand — two files, one of which could silently disagree. `plugin.json` is now the single source and `bump.py --marketplace --check` fails if they drift apart.
 
-Each agent and skill also carries its own `version:` — `.codex` spells it `version = "1.0.0"` and `.copilot` uses a `"version"` key, but it is the same field. That is what lets a bug report be pinned to a specific revision of a 463-line agent rather than to "the version you had". `python sdlc-suite/tools/bump.py --versions` prints the whole table. See `CONTRIBUTING.md` for when each component moves.
+Each agent and skill also carries its own `version:` — `.codex` carries it as a `# version: 1.0.0` comment (Codex rejects agent files with unknown keys) and `.copilot` uses a `"version"` key, but it is the same field. That is what lets a bug report be pinned to a specific revision of a 463-line agent rather than to "the version you had". `python sdlc-suite/tools/bump.py --versions` prints the whole table. See `CONTRIBUTING.md` for when each component moves.
 
 Everything is namespaced under `sdlc-suite:` after install:
 
@@ -36,6 +36,29 @@ Everything is namespaced under `sdlc-suite:` after install:
 | Command | `/sdlc-feature` | `/sdlc-suite:sdlc-feature` |
 
 That namespacing is why the suite can coexist with the copies in `~/.claude/agents/` without either shadowing the other.
+
+## Transcripts go to the prototyper
+
+Run it directly with `/prototype <transcript path or pasted notes> [target repo]`.
+The bare name resolves while no other command is called `prototype`;
+`/sdlc-suite:prototype` always does. With no argument it asks for the transcript.
+
+The plugin ships one hook, `hooks/hooks.json`, which runs
+`hooks/transcript_detect.py` on every prompt. When a prompt contains a meeting
+transcript, it adds an instruction for the session. It detects WebVTT/SRT cues,
+repeated `Speaker:` turns from two or more people, or an attached `.vtt`, `.srt`
+or `*transcript*` / `*meeting*` file:
+
+- if you asked for a prototype, the session dispatches `sdlc-suite:prototyper`
+  with the transcript;
+- otherwise it asks you once whether to build one, after doing anything else you
+  asked for, such as a summary.
+
+Set `SDLC_TRANSCRIPT_PROTOTYPER` to change this: `ask` (the default), `auto` to
+dispatch without asking unless you asked for something else, or `off`. The hook
+never blocks a prompt; on any error it exits quietly. It is a hook rather than a
+line in the agent's description because a transcript pasted with no instruction
+does not look like a job for any agent, so the model alone rarely delegates it.
 
 ## How workflows travel
 
@@ -159,3 +182,19 @@ Stated plainly so you don't find out at 3am:
 
 - No agent certifies its own work. That's a self-certification ban, not a confirmation gate, and the policy doesn't touch it.
 - The honesty bar goes **up**, not down. Nothing gets upgraded from "could not verify" to "verified" because no one will ask, and a degraded run (tool failed, suite never executed, MCP unauthenticated) says so at the top level of the result.
+
+## Running on a local HALO endpoint
+
+HALO serves an Anthropic-compatible `/v1/messages` (streaming, `count_tokens`, tool use), so Claude Code can drive this suite against a local Qwen3.8-27B. Every agent here uses `model: inherit`, so whatever model the session runs is what the agents get; there is no pinned hosted model to override.
+
+```
+halo serve --model Qwen3.8-27B-UD-Q4_K_XL.gguf --backend vulkan --ctx 131072 --parallel 2
+ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=x \
+  ANTHROPIC_MODEL=Qwen3.8-27B ANTHROPIC_SMALL_FAST_MODEL=Qwen3.8-27B \
+  CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 claude
+```
+
+- `--parallel 2` matters: Claude Code sends a small title/summary request alongside the main one, and the second slot serves it.
+- Set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the `context_length` that HALO's `/v1/models` reports; Claude Code assumes 200k for unknown models otherwise. An explicit `--ctx` that HALO cannot honour is now a startup error instead of a silent clamp, so if it starts, the window is real.
+- 128k of KV in fp32 needs a large pool; `HALO_KV_FP16=1` (or `HALO_KV_TYPE=q8`) halves or more of that and is required for 256k. These are opt-in and were not benchmarked when written.
+- **Caveat:** a 27B Q4 model follows the long, strict agent definitions less reliably than the hosted models. Start with one or two low-risk agents or workflows as an acceptance test before relying on the full routing policy, and remember the implementer-never-certifies rule still applies to whatever the local model reports.

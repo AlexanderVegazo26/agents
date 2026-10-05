@@ -47,7 +47,7 @@ Independent of each other; can land as one reviewable batch.
 | Finding | Files | Change | Diff size |
 |---|---|---|---|
 | `SCHEMA-03` | 5 agent frontmatters + their line 11 | add `skills: [engineering-integrity, project-memory]`; delete the now-redundant prose directive | +5 / −5 |
-| `SCHEMA-02` | `agents/qa-runner.md:1-5` | add an explicit lighter `model:` | +1 |
+| `SCHEMA-02` | `agents/qa-runner.md:1-5` | add an explicit lighter `model:` (reversed 2026-09-29: every agent inherits) | +1 |
 | `TOOL-01` | `agents/qa-runner.md:4` | drop `Write` | 1 changed |
 | `TOOL-02` | `agents/code-reviewer.md` body | add one line scoping `Bash` to read-only inspection (`git diff`, `git log`, file listing) — no `tools` change | +1 |
 | `STRUCT-01` | `agents/technical-writer.md` | full rewrite from `proposed/technical-writer.md` | 33 → ~95 lines |
