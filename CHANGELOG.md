@@ -7,6 +7,25 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Agents and skills carry their own versions; the plugin version is the release
 train. See `CONTRIBUTING.md` for the compatibility policy.
 
+## [Unreleased]
+
+### Added
+
+- **`video-editor` agent 1.0.0 and `video-editing` skill 1.0.0** for recorded
+  footage: talking-head cleanup (silence, filler and retake cuts, denoise,
+  two-pass EBU R128 loudness, captions retimed through the cuts), ad cutdowns,
+  reframing, and a self-recording playbook (outline plus a capture command the
+  user runs; the agent never starts a capture). An edit decision list is the
+  source of truth, and `scripts/edl_tools.py` derives the filter graph and the
+  caption timing from it. Re-authored from the capabilities listed at
+  kimi.ai/resources/multimedia-skills-for-agents; no upstream code is vendored
+  (licences unspecified), and remote-API or likeness entries (TTS, avatars,
+  deepfake detection) are deliberately not implemented. `motion-designer`,
+  `prototyper`, `qa-runner` and `orchestrator` name it; `project-memory` adds a
+  `video/` directory.
+- Found while testing: FFmpeg 9.0.2 has no `-filter_complex_script`; the form is
+  `-/filter_complex <file>`. `motion-graphics`'s reference still names the old option.
+
 ## [2.0.0] — 2026-09-29
 
 The suite runs under Codex on a local Qwen3.8-27B, and gains a local

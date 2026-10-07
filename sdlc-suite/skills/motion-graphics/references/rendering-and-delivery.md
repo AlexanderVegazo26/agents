@@ -696,7 +696,7 @@ checked against FFmpeg 9.0.2, except where marked as taken from a manual.
   the approved copy, or fails the render.
 - Never place a user-supplied file name in any filter option (`textfile`,
   `fontfile`, `subtitles`, `movie`): those options open whatever path they are
-  given. For long graphs write them with `-filter_complex_script`.
+  given. For long graphs write them to a generated file and pass it with `-/filter_complex <file>` (FFmpeg 9.0.2 has no `-filter_complex_script`: it exits with "Unrecognized option").
 - Generate caption files (SRT/ASS) from the approved script rather than passing
   a user subtitle file through, and keep `fontsdir` inside the project.
 

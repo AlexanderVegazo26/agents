@@ -24,6 +24,7 @@ Unified, per-project durable memory for every agent in this SDLC framework. See 
   decisions/                      solution-architect (ADRs)
   designs/                         ux-designer
   motion/                          motion-designer
+  video/                           video-editor
   prototypes/                      prototyper
   test-plans/                       qa-engineer
   runbooks/                          technical-writer / site-reliability

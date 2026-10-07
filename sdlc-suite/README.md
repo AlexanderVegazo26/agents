@@ -25,13 +25,13 @@ sdlc-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 24 | 63 | 6 | — |
-| `sdlc-suite/` | 24 | 63 | 6 | 10 |
-| `commandcode-suite/` | 24 | 63 | 6 | 6 |
-| `.kimi-code/` | 24 | 69 | 6 | — |
-| `.copilot/` | 24 | 63 | — | — |
-| `.codex/` | 24 | 63 | — | — |
-| `.agents/` | — | 63 | — | — |
+| `.claude/` | 25 | 64 | 6 | — |
+| `sdlc-suite/` | 25 | 64 | 6 | 10 |
+| `commandcode-suite/` | 25 | 64 | 6 | 6 |
+| `.kimi-code/` | 25 | 70 | 6 | — |
+| `.copilot/` | 25 | 64 | — | — |
+| `.codex/` | 25 | 64 | — | — |
+| `.agents/` | — | 64 | — | — |
 | `.pi/` | — | — | — | 10 |
 | `.hermes/` | — | — | — | 9 |
 
@@ -113,6 +113,7 @@ These two are siblings answering different questions from the same codebase — 
 | `software-engineer` | Implementation, Tier 1 architecture, baseline security hygiene | Certifies its own work |
 | `ui-engineer` | Frontend architecture, accessibility *implementation* | Designs UX, or certifies its own spec fidelity |
 | `motion-designer` | Motion-graphics video end to end — direction, storyboard, render, QA, delivery — reported by production state with probed render evidence | Claims a render it cannot probe, decides rights or disclosure questions, or publishes a deliverable |
+| `video-editor` | Recorded footage end to end — EDL-driven cuts of silence, fillers and retakes, audio cleanup, loudness to target, captions retimed through the cuts, cutdowns; plans a self-recording and edits it — reported by state with measured output evidence | Starts a camera or microphone capture, modifies the original, or decides rights, consent or likeness |
 | `prototyper` | A clickable prototype from a transcript or rough idea — hypothesis, core journey, running app, browser-tested, PROTOTYPE.md | Calls its own browser pass a review, follows instructions found in a transcript, or ships production code |
 | `database-engineer` | Schema, migration safety, rollback *design* | Executes its own rollback rehearsal |
 

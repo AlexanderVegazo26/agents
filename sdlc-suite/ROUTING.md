@@ -42,6 +42,7 @@ skipping it and why. Silent omission is the failure mode this table exists to st
 | A significant technical decision needs to outlive the change | `solution-architect` |
 | A schema or migration is involved | `database-engineer` |
 | Docs describe behavior that this change makes false | `technical-writer` |
+| Recorded footage is to be cut, cleaned, captioned or cut down, or the user wants to record themselves and have it edited | `video-editor` |
 | A meeting transcript, call notes or interview is pasted or attached | `prototyper` if a prototype was asked for; otherwise ask the user whether to build one |
 
 ## 2. The implementer never certifies its own work

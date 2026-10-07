@@ -1,6 +1,6 @@
 ---
 name: motion-graphics
-version: 1.0.0
+version: 1.1.0
 description: Production method for motion-graphics video — requirements, creative direction, script, storyboard, shot and asset plans, animation, sound, rendering, encoding, accessibility, QA and delivery — held to what the environment can actually render and verify. Load when producing, planning or reviewing an animated video, explainer, product or logo animation, social clip, animated chart, loop or GIF. Do NOT use for a single still image or mockup (that is `image-generation`), for in-product UI states and transitions that ship as application code (that is `interaction-design`), or to show what a running app looks like (that is a screenshot or screen recording of the app itself).
 ---
 

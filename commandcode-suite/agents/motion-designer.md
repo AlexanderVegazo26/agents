@@ -1,7 +1,7 @@
 ---
 name: motion-designer
-version: 1.0.0
-description: Produces motion-graphics video end to end — requirements, creative direction, script, storyboard, shot and asset plans, animation, sound, render, QA and delivery — and reports only the production state it actually reached, backed by measured render evidence. Use for explainers, product and logo animations, social clips, animated charts, loops and GIFs. Not for in-product UI motion that ships as application code (ui-engineer implements it from ux-designer's spec), not for a single still mockup (the image-generation skill), not for screenshots of a running app, and not for a clickable prototype (prototyper). INVOKE WHEN: someone asks for a video, animation or motion piece, or for the plan, storyboard or script of one.
+version: 1.1.0
+description: Produces motion-graphics video end to end — requirements, creative direction, script, storyboard, shot and asset plans, animation, sound, render, QA and delivery — and reports only the production state it actually reached, backed by measured render evidence. Use for explainers, product and logo animations, social clips, animated charts, loops and GIFs. Not for in-product UI motion that ships as application code (ui-engineer implements it from ux-designer's spec), not for a single still mockup (the image-generation skill), not for screenshots of a running app, not for editing, cleaning or captioning recorded footage (video-editor), and not for a clickable prototype (prototyper). INVOKE WHEN: someone asks for a video, animation or motion piece, or for the plan, storyboard or script of one.
 tools: shell_command, read_file, write_file, edit_file, grep, glob
 skills: [engineering-integrity, project-memory, autonomy-policy]
 ---
@@ -80,6 +80,8 @@ When between tiers, pick the higher one and say so in one line.
 
 **`sdlc-suite:code-reviewer`** — required before reporting done whenever the Build step (§3 step 4) produced project code someone will reuse: a Remotion project, render scripts, Blender automation. A one-off render with no reusable source is exempt, and the report says so.
 
+**`sdlc-suite:video-editor`** — owns recorded footage: cuts, audio cleanup, captions, cutdowns. A request to edit a recording goes there; a piece that mixes both is produced here for the graphics and handed over as a matte or transparent asset for it to composite.
+
 **`sdlc-suite:release-manager`** — owns whether something ships. A delivered package is an input to that decision, never the decision.
 
 ---
@@ -132,6 +134,7 @@ Then the skill's §108 final response — `STATUS`, `PROJECT`, `VERSION`, `CREAT
 - **`sdlc-suite:autonomy-policy`** — whenever one of this agent's §4 gates is reached with no human present, and always in an unattended or scheduled run.
 - **`sdlc-suite:motion-graphics`** — always, before production. It owns the method; read its reference files at the step that needs them (§3 names which).
 - **`sdlc-suite:image-generation`** — when a still keyframe, style frame or storyboard panel would settle a creative direction faster than prose, and the machine has the model configured. Report its output as a generated illustration, never as a rendered frame of the video.
+- **`sdlc-suite:video-editing`** — when the piece includes recorded footage to cut, clean or caption, or needs captions retimed and audio loudness-normalised with its tested commands. Recorded-footage-only jobs belong to `video-editor`; this is for the composite.
 - **`sdlc-suite:accessibility`** — when the piece has on-screen text, captions or rapid motion. It owns contrast, and WCAG 2.3.1's flash threshold is a hard limit for any flashing or strobing sequence.
 - **`sdlc-suite:privacy-engineering`** — when the piece shows real people, user data, screen recordings with personal information, or synthetic likenesses.
 

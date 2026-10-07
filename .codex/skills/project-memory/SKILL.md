@@ -1,6 +1,6 @@
 ---
 name: project-memory
-version: 1.0.1
+version: 1.0.2
 description: Conventions for reading and writing the unified per-project memory at .claude/memory/<project>/ — what belongs in each file, when to update it, and how agents across the SDLC share durable context. Load before writing to memory, or when picking up a project to see what's already known.
 ---
 
@@ -31,6 +31,7 @@ All SDLC agents share one memory root: `.claude/memory/<project-name>/`. It is d
   designs/                        ux-designer: wireframes, journey maps, design decisions
   prototypes/                     prototyper: product hypothesis per prototype, what it taught once tried
   motion/                         motion-designer: approved motion language and continuity bible, render presets that met a platform spec, asset provenance
+  video/                          video-editor: approved editing preferences (pause tolerance, filler list, caption style, loudness target), platform presets that met a spec, which transcriber the machine has
   test-plans/                      qa-engineer: standing test strategy per area
   runbooks/                         technical-writer/site-reliability: operational procedures
 ```

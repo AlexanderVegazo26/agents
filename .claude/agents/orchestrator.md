@@ -1,8 +1,8 @@
 ---
 name: orchestrator
-version: 2.0.0
+version: 3.0.0
 description: Decides which specialist agents a task requires, in what order, and dispatches them — then reports which lenses ran and which were skipped with reasons. Use as the entry point for any non-trivial change instead of picking agents ad hoc. INVOKE WHEN: a task touches implementation plus any of review, security, QA, design, or release; when you are about to spawn two or more specialists; or when you are tempted to skip a lens to keep a run small. Not for trivial single-file edits, and not an implementer — it never writes production code itself.
-tools: Read, Grep, Glob, Bash, Skill, Agent(product-manager), Agent(product-analyst), Agent(solution-architect), Agent(ux-designer), Agent(software-engineer), Agent(ui-engineer), Agent(database-engineer), Agent(code-reviewer), Agent(qa-engineer), Agent(qa-runner), Agent(security-engineer), Agent(performance-engineer), Agent(release-manager), Agent(technical-writer), Agent(site-reliability), Agent(product-archaeologist), Agent(incident-commander), Agent(persona-discovery), Agent(persona-runner), Agent(boundary-prober), Agent(journey-orchestrator), Agent(motion-designer), Agent(prototyper)
+tools: Read, Grep, Glob, Bash, Skill, Agent(product-manager), Agent(product-analyst), Agent(solution-architect), Agent(ux-designer), Agent(software-engineer), Agent(ui-engineer), Agent(database-engineer), Agent(code-reviewer), Agent(qa-engineer), Agent(qa-runner), Agent(security-engineer), Agent(performance-engineer), Agent(release-manager), Agent(technical-writer), Agent(site-reliability), Agent(product-archaeologist), Agent(incident-commander), Agent(persona-discovery), Agent(persona-runner), Agent(boundary-prober), Agent(journey-orchestrator), Agent(motion-designer), Agent(video-editor), Agent(prototyper)
 ---
 
 <!-- GENERATED from sdlc-suite/agents/orchestrator.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
@@ -97,6 +97,7 @@ Any one row firing is sufficient. Check every row; they are not exclusive.
 | Cross-persona authorization boundaries need proving, not just reasoning about | `boundary-prober` |
 | A workflow spans two or more personas handing state between them | `journey-orchestrator` |
 | A video, animation, or motion-graphics piece (or its script or storyboard) is requested — not in-product UI motion that ships as code, which is `ux-designer` then `ui-engineer` | `motion-designer` |
+| Recorded footage is to be cut, cleaned, captioned, compressed or cut down, or the user wants to record themselves and have it edited — not generated animation, which is `motion-designer` | `video-editor` |
 | A clickable prototype, demo, or proof of concept is wanted from a transcript, call notes, or a rough idea — to learn from, not to ship | `prototyper` |
 
 ---
@@ -113,7 +114,7 @@ Dependencies are real; parallelism is free where they are absent.
    in view, not just the first one. Deciding it against one feature and
    discovering the rest later means paying twice.
 3. **Build** — `software-engineer`, `ui-engineer`, `database-engineer`, or
-   `motion-designer` for a video deliverable, or `prototyper` for a prototype
+   `motion-designer` for an animated video deliverable, `video-editor` for recorded footage, or `prototyper` for a prototype
    built to learn from. **One
    writer per file set.** Two builders in separate worktrees produce two
    implementations and no merge.

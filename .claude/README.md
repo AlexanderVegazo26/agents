@@ -21,13 +21,13 @@ The organizing idea is that the agent which *does* the work is never the agent t
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 24 | 63 | 6 | — |
-| `sdlc-suite/` | 24 | 63 | 6 | 10 |
-| `commandcode-suite/` | 24 | 63 | 6 | 6 |
-| `.kimi-code/` | 24 | 69 | 6 | — |
-| `.copilot/` | 24 | 63 | — | — |
-| `.codex/` | 24 | 63 | — | — |
-| `.agents/` | — | 63 | — | — |
+| `.claude/` | 25 | 64 | 6 | — |
+| `sdlc-suite/` | 25 | 64 | 6 | 10 |
+| `commandcode-suite/` | 25 | 64 | 6 | 6 |
+| `.kimi-code/` | 25 | 70 | 6 | — |
+| `.copilot/` | 25 | 64 | — | — |
+| `.codex/` | 25 | 64 | — | — |
+| `.agents/` | — | 64 | — | — |
 | `.pi/` | — | — | — | 10 |
 | `.hermes/` | — | — | — | 9 |
 
