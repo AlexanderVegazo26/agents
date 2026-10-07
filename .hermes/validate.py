@@ -89,8 +89,10 @@ def check_plugin(errors: list[str]) -> None:
         return
     if set(ctx.tools) != {"agent", "workflow"}:
         errors.append(f".hermes/plugins/sdlc: registers {sorted(ctx.tools)}, expected ['agent', 'workflow']")
-    if set(ctx.commands) != {"orchestrate"}:
-        errors.append(f".hermes/plugins/sdlc: slash commands {sorted(ctx.commands)}, expected ['orchestrate']")
+    if set(ctx.commands) != {"orchestrate", "idea"}:
+        errors.append(f".hermes/plugins/sdlc: slash commands {sorted(ctx.commands)}, expected ['idea', 'orchestrate']")
+    if not (PLUGIN / "prototype_pipeline.py").is_file():
+        errors.append(".hermes/plugins/sdlc: /idea is registered but prototype_pipeline.py is missing")
     if set(ctx.cli) != {"sdlc"}:
         errors.append(f".hermes/plugins/sdlc: CLI commands {sorted(ctx.cli)}, expected ['sdlc']")
     model = ctx.tools.get("agent", {}).get("schema", {}).get("parameters", {}).get("properties", {}).get("model")
@@ -136,7 +138,7 @@ def main() -> int:
         for e in errors:
             print(f"FAIL: {e}", file=sys.stderr)
         return 1
-    print(f"OK: {n} command skills, sdlc plugin registers agent (with model routing) + workflow + /orchestrate, "
+    print(f"OK: {n} command skills, sdlc plugin registers agent (with model routing) + workflow + /orchestrate + /idea, "
           "runner selftest passes")
     return 0
 

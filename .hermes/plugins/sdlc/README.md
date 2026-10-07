@@ -10,7 +10,9 @@ removes anything under `.hermes/plugins/`.
 |---|---|---|
 | `agent` | Claude Code's `Agent(<name>)` / Task sub-agent dispatch | one separate `hermes chat -Q` process per call |
 | `workflow` | Claude Code's `Workflow` tool | `sdlc-suite/workflows/*.js` in a `node:vm` sandbox |
-| `/orchestrate`, `hermes sdlc …` | — | the `orchestrator` role via `agent`; `models` reports routing |
+| `/orchestrate`, `hermes sdlc …` | — | the `orchestrator` role via `agent`; `models` reports routing; `agent <role> <task-file>` dispatches one role |
+| `/idea`, `hermes sdlc idea` | — | `prototype_pipeline.py`: local model check → prototyper → vetted copy → browser test → code-reviewer → fix loop → quick tunnel → Telegram button |
+| `prototype_pipeline.py discover` | — | cron scout: radar headlines → product-manager go-to-market case → the same pipeline |
 
 `__init__.py` is only the Hermes registration. `runner.mjs` does the work, and
 it **imports the pi extension's `lib.js`** for everything that is not
@@ -190,6 +192,124 @@ session after enabling it. `hermes tools list` should then show
   `.pi/extensions/sdlc/lib.js`. That is the same trust you give any plugin,
   but it is not pinned. To pin it, point the symlink at a separate worktree
   checked out at a reviewed commit.
+
+## `/idea`: from a Telegram message to a prototype link
+
+`/idea <text>` (or `hermes sdlc idea "<text>"`) builds a clickable prototype
+on the local models with the `prototyper` role. It then sends a public link
+to Telegram as a button.
+
+- **The command returns at once.** It takes the one-build lock and hands it to
+  `prototype_pipeline.py run`, which runs detached. A second `/idea` while one
+  is building is refused, not queued.
+- **Each idea gets two directories, and the split between them is the
+  security boundary.**
+  - **`~/prototypes/<slug>/` (WORK).** Mounted read-write into the Hermes
+    docker sandbox. The prototyper writes `site/` and `PROTOTYPE.md` here.
+    Everything in it is agent-controlled, so it is only read, with symlinks
+    refused.
+  - **`~/.local/state/sdlc-prototypes/<slug>/` (STATE).** Host-only. It holds
+    `IDEA.md`, the logs, both agents' replies, `serve.json`, and `public/`,
+    the vetted copy that is actually served.
+- **The pipeline, in order:**
+  1. **Local model check.** `llamastash status` shows whether the model the
+     role routes to is loaded. If it is not, `llm on` loads it. If the GPU is
+     short of memory, every other model is unloaded first. Routing follows the
+     role → choice → `model_aliases` chain.
+  2. **Build.** `prototyper` runs in Fast mode, unattended, with only the
+     `file,terminal` toolsets (`-t`): no web, browser, memory, skills, cron,
+     sdlc or MCP tools. Its prompt lists the mistakes the browser test
+     rejects.
+  3. **Vet.** `site/` is copied to `public/` as regular files only. A symlink,
+     hard link or special file fails the build. The copy is served on
+     127.0.0.1 with no listings, a CSP limited to `'self'` plus four CDNs,
+     `connect-src 'self'` and `Referrer-Policy: no-referrer`.
+  4. **Browser test.** `smoke.mjs` drives headless Firefox over WebDriver
+     BiDi, with no dependencies. It fails on console errors, template syntax
+     left on screen (`{{ x }}`) and a blank page, and it records what clicking
+     each control changed.
+  5. **Review.** `code-reviewer` (`file` tools only) reads the files *and*
+     that click transcript, so it judges what the page actually does.
+  6. **Fix loop.** A failed browser test or `Verdict: request changes` goes
+     back to the prototyper, for up to 2 fix rounds. Steps 3–5 then run again.
+  7. **Publish.** A Cloudflare quick tunnel opens, and nothing is sent until
+     the public URL answers 200. Telegram then gets one HTML message with an
+     **Open prototype** button, the browser and review results, and the local
+     models used. The review notes follow in a second message. A detached
+     `expire` timer takes the link down after `SDLC_PROTOTYPE_TTL_HOURS`
+     (default 24).
+
+  A failure at any step sends a ❌ message naming the step, and stops
+  whatever had been started.
+- **`prototype_pipeline.py discover`: the opportunity scout.** This is the
+  same pipeline with a product-manager front end:
+  1. Takes the AI and tech radar's headlines (`~/.hermes/scripts/ai_news_fetch.py`)
+     and skips the ones already explored (`discovered.json` in STATE).
+  2. Dispatches `product-manager` on its local model with the `go-to-market`
+     and `business-analysis` skills inlined. It picks ONE opportunity and
+     returns a JSON case: purpose, who it is for, what you can achieve,
+     business model, positioning, first channel, first ten customers,
+     riskiest assumption, kill criteria, and a prototype brief.
+  3. Builds, tests, reviews and shares that prototype. The case is part of
+     the final message.
+
+  It is silent when there is nothing new or a build is already running. The
+  cron wrapper is `~/.hermes/scripts/prototype_discover.py`, which starts it
+  detached because a run outlasts the cron script timeout.
+- **Sharing is the pipeline's job, never the prototyper's.** The prototyper's
+  §13 forbids it to deploy or share. The requester asking for a link is what
+  authorises sharing.
+- **Messages go to the Bot API directly.** They are not sent through a Hermes
+  webhook route, because a route with `mirror_to_session` would put
+  agent-written text into the chat session as a turn from you. The chat is
+  `SDLC_PROTOTYPE_CHAT`, or else the first `TELEGRAM_ALLOWED_USERS` entry.
+  The gateway checks that allowlist before any plugin command runs.
+- **Telegram stays on long polling.** Do not call `setWebhook`. Telegram
+  serves either `getUpdates` or a webhook, never both, so setting one cuts
+  the gateway off from every inbound message.
+
+**One-time machine setup.** Everything here is in `~/.hermes`, not this
+repository.
+
+1. Mount the prototypes folder into the sandbox. This is the only host
+   folder the sandbox can write:
+
+   ```yaml
+   # config.yaml
+   terminal:
+     docker_volumes:
+       - "/home/<you>/prototypes:/workspace/prototypes:rw"
+   ```
+
+2. Add the cron jobs, then restart the gateway. The reaper is a backstop
+   for the per-link `expire` timer, for example after a reboot. The scout
+   runs the opportunity pipeline above on weekdays at 10:00:
+
+   ```bash
+   printf '%s\n' 'import os, runpy, sys' \
+     'sys.argv = ["prototype_pipeline.py", "reap"] + sys.argv[1:]' \
+     'runpy.run_path(os.path.realpath(os.path.expanduser("~/.hermes/plugins/sdlc/prototype_pipeline.py")), run_name="__main__")' \
+     > ~/.hermes/scripts/prototype_reaper.py
+   hermes cron create "0 * * * *" --name prototype-reaper --script prototype_reaper.py \
+     --no-agent --deliver telegram:<your chat id>
+   hermes cron create "0 10 * * 1-5" --name prototype-scout --script prototype_discover.py \
+     --no-agent --deliver telegram:<your chat id>
+   hermes gateway restart
+   ```
+
+`prototype_pipeline.py reap --all` takes every link down now.
+`prototype_pipeline.py notify "test"` checks the Telegram path.
+
+**Residual risk, not yet accepted or closed.** The prototyper's terminal runs in the
+shared, persistent sandbox. That sandbox has `GITHUB_TOKEN` forwarded and
+holds the himalaya mail config. The idea text is the only untrusted input the
+prototyper sees, and it has no web tools. A separate Hermes profile for
+prototypes would close this gap: an ephemeral sandbox, no forwarded
+credentials, and no network beyond the CDNs.
+
+Files the sandbox writes are owned by root, because the container runs as
+root. `~/prototypes/<slug>/` and `site/` are yours, so their files can be
+deleted. Any subfolder the agent creates needs `sudo`.
 
 ## Checks
 

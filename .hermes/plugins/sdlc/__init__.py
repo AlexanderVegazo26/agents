@@ -296,6 +296,8 @@ def _handle_agent(params: dict, **_kwargs) -> str:
     request = {"anchor": _anchor(), "name": name, "task": params.get("task") or ""}
     if params.get("model"):
         request["model"] = str(params["model"])
+    if params.get("toolsets"):  # not in the schema: callers in code confine a role with it
+        request["toolsets"] = str(params["toolsets"])
     cat = catalog_path()
     if cat is not None:
         request["catalog"] = str(cat)
@@ -360,11 +362,75 @@ def orchestrate(task: str) -> str:
                           "task": ORCHESTRATE_BRIEF.format(task=task, cwd=_anchor())})
 
 
+PIPELINE = RUNNER.parent / "prototype_pipeline.py"
+IDEA_MAX = 4000
+
+
+def idea(text: str) -> str:
+    """Start the idea → prototype → link pipeline and return at once.
+
+    The build takes minutes on local models, far longer than a chat turn
+    should block, so prototype_pipeline.py runs detached and reports to
+    Telegram itself. Deterministic, like /orchestrate: no model decides
+    whether the prototyper runs. The one-build lock is taken here and handed
+    to the pipeline, so "Building" is only ever said by the run that holds it."""
+    text = (text or "").strip()
+    if not text:
+        return "usage: /idea <what you want prototyped>  (or: hermes sdlc idea \"<idea>\")"
+    if len(text) > IDEA_MAX:
+        return f"That idea is {len(text)} characters; keep it under {IDEA_MAX}."
+    import fcntl
+    import re
+    import sys
+    import time
+    work_base = Path(os.environ.get("SDLC_PROTOTYPES_DIR") or Path.home() / "prototypes")
+    state_base = Path(os.environ.get("SDLC_PROTOTYPES_STATE")
+                      or Path.home() / ".local" / "state" / "sdlc-prototypes")
+    work_base.mkdir(parents=True, exist_ok=True)
+    state_base.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock = open(state_base / ".lock", "w")
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "⏳ A prototype is already building — one at a time on this machine. Try again when its link arrives."
+        words = [w[:16] for w in re.findall(r"[a-z0-9]+", text.lower())[:5]]
+        base = f"{'-'.join(words)[:50].strip('-') or 'idea'}-{time.strftime('%m%d-%H%M%S')}"
+        for n in range(100):
+            slug = base if n == 0 else f"{base}-{n}"
+            try:
+                (state_base / slug).mkdir(mode=0o700)
+                break
+            except FileExistsError:
+                continue
+        else:
+            return "Could not pick a free name for this idea; try again in a second."
+        (work_base / slug / "site").mkdir(parents=True)
+        (state_base / slug / "IDEA.md").write_text(text + "\n", encoding="utf-8")
+        logfd = os.open(state_base / slug / "pipeline.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            subprocess.Popen([sys.executable, str(PIPELINE), "run", slug], stdin=subprocess.DEVNULL,
+                             stdout=logfd, stderr=logfd, cwd=str(RUNNER.parents[3]), start_new_session=True,
+                             pass_fds=(lock.fileno(),), env={**os.environ, "SDLC_LOCK_FD": str(lock.fileno())})
+        finally:
+            os.close(logfd)
+    finally:
+        lock.close()  # the child holds the same open file, so the lock stays held
+    return (f"🛠 Building prototype `{slug}` on the local models. "
+            "I'll send the link here when it's up, then a code review. Usually 5–20 minutes.")
+
+
 def _setup_cli(parser) -> None:
     sub = parser.add_subparsers(dest="sdlc_command")
     p = sub.add_parser("orchestrate", help="Run a task through the orchestrator role")
     p.add_argument("task", nargs="+", help="The task, in plain words")
     sub.add_parser("models", help="Show the model catalog in effect and which choices are up")
+    p = sub.add_parser("agent", help="Dispatch one role, the task read from a file (never argv)")
+    p.add_argument("role", help="Role name, e.g. prototyper")
+    p.add_argument("task_file", help="File holding the task text; - for stdin")
+    p.add_argument("--model", help="A catalog choice, overriding the role default")
+    p = sub.add_parser("idea", help="Build a prototype of an idea and send its link to Telegram")
+    p.add_argument("text", nargs="+", help="The idea, in plain words")
 
 
 def _cli(args) -> int:
@@ -375,7 +441,20 @@ def _cli(args) -> int:
     if getattr(args, "sdlc_command", None) == "models":
         print(models_report())
         return 0
-    print("usage: hermes sdlc {orchestrate <task> | models}")
+    if getattr(args, "sdlc_command", None) == "agent":
+        import sys
+        task = sys.stdin.read() if args.task_file == "-" else Path(args.task_file).read_text(encoding="utf-8")
+        params = {"name": args.role, "task": task}
+        if args.model:
+            params["model"] = args.model
+        out = _handle_agent(params)
+        print(out)
+        return 1 if out.startswith('{"success": false') else 0
+    if getattr(args, "sdlc_command", None) == "idea":
+        out = idea(" ".join(args.text))
+        print(out)
+        return 0 if out.startswith("🛠") else 1
+    print("usage: hermes sdlc {orchestrate <task> | models | agent <role> <task-file> | idea <text>}")
     return 2
 
 
@@ -462,7 +541,11 @@ def register(ctx) -> None:
     ctx.register_command("orchestrate", orchestrate,
                          description="Lead a task through the SDLC suite: the orchestrator role picks the "
                                      "specialists and a model per dispatch", args_hint="<task>")
-    ctx.register_cli_command("sdlc", help="sdlc-suite: orchestrate a task, inspect model routing",
+    ctx.register_command("idea", idea,
+                         description="Prototype an idea with the sdlc prototyper and get a public link "
+                                     "back here (Cloudflare quick tunnel)", args_hint="<idea>")
+    ctx.register_cli_command("sdlc", help="sdlc-suite: orchestrate, dispatch a role, prototype an idea, "
+                                          "inspect model routing",
                              setup_fn=_setup_cli, handler_fn=_cli)
     ctx.register_tool(name="workflow", toolset=TOOLSET, schema=WORKFLOW_SCHEMA, handler=_handle_workflow,
                       check_fn=_available, emoji="🔁")

@@ -122,7 +122,7 @@ export function killAll(sig) {
  * to 50 KB, and nothing in it is shell-interpreted. `-Q` leaves stdout as the
  * final response only; the session id goes to stderr.
  */
-export function spawnHermes({ prompt, extraArgs = [], cwd, timeoutMs, log = () => {}, model = null, provider = null }) {
+export function spawnHermes({ prompt, extraArgs = [], cwd, timeoutMs, log = () => {}, model = null, provider = null, toolsets = null }) {
   return new Promise((resolve) => {
     if (STOPPING) {
       resolve({ exitCode: 1, stdout: '', stderr: 'runner is shutting down', timedOut: false, spawnError: true });
@@ -140,6 +140,9 @@ export function spawnHermes({ prompt, extraArgs = [], cwd, timeoutMs, log = () =
     const args = ['chat', '--query-file', '-', '-Q', ...mapped];
     if (model) args.push('-m', String(model));
     if (provider) args.push('--provider', String(provider));
+    // An explicit list loads only the named toolsets (MCP servers included):
+    // how a caller confines a role that reads untrusted input.
+    if (toolsets) args.push('-t', String(toolsets));
     let child;
     try {
       child = spawn(bin, args, { cwd, env: nestedEnv(process.env, depth), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
@@ -401,7 +404,7 @@ export function harnessNote(catalog) {
  * is the project the work is about.
  */
 function dispatcher(cwd, rawLog, { spawnFn = spawnHermes, gate = limiter(maxParallel()), catalog = null,
-  probe = makeProber(), routes = [], catalogError = null } = {}) {
+  probe = makeProber(), routes = [], catalogError = null, toolsets = null } = {}) {
   // runAgent's messages are pi's wording; the session here is hermes's, and
   // its "retrying on the default model" is not what happens here — the
   // retry re-routes through the catalog (below).
@@ -442,7 +445,7 @@ function dispatcher(cwd, rawLog, { spawnFn = spawnHermes, gate = limiter(maxPara
           log(`${label}: model ${route.choice ? `${route.choice} (-m ${route.model})` : 'session default'} — ${route.why}`);
         }
         return gate(() => spawnFn({
-          ...req, cwd, model: route.model, provider: route.provider, log: (l) => log(`${label}: ${l}`),
+          ...req, cwd, model: route.model, provider: route.provider, toolsets, log: (l) => log(`${label}: ${l}`),
         }));
       },
     });
@@ -465,6 +468,10 @@ export async function handle(mode, req, log, deps = {}) {
     const task = String(req.task || '');
     const model = req.model ? String(req.model).trim() : null;
     if (!name || !task.trim()) return { ok: false, error: '`name` and `task` are both required' };
+    if (req.toolsets != null && !/^[a-z0-9_-]+(,[a-z0-9_-]+)*$/.test(String(req.toolsets))) {
+      return { ok: false, error: `invalid toolsets "${req.toolsets}" (comma-separated toolset names)` };
+    }
+    if (req.toolsets) deps = { ...deps, toolsets: String(req.toolsets) };
     if (model && !(loaded.catalog && loaded.catalog.choices[model])) {
       const valid = loaded.catalog ? Object.keys(loaded.catalog.choices).join(', ') : 'none — no model catalog';
       return { ok: false, error: `unknown model choice "${model}" (valid: ${valid})` };

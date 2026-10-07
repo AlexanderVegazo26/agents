@@ -49,6 +49,7 @@
     "boundary-prober": "balanced",
 
     "software-engineer": "fast",
+    "prototyper": "fast",
     "ui-engineer": "fast",
     "qa-runner": "fast"
   },
