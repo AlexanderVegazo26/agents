@@ -120,7 +120,8 @@ ffmpeg IN -i src.mp4 -vn -ac 1 -ar 16000 audio.wav
 ```
 
 Then run whatever the matrix found, with word-level timestamps and SRT output
-where it offers them. Flags differ by tool and version: read its `--help` on this
+where it offers them. `stt-transcribe --format verbose_json audio.wav` returns word timestamps and
+`--format srt` the cues; it takes the extracted audio file, never the original. Flags differ by tool and version: read its `--help` on this
 machine. **Pass a local model path only.** A model name can trigger an implicit
 download, and a destination or model option that accepts a URL is a remote
 fetch: both need the caller's go-ahead and §100.1's treatment. Diarisation is
