@@ -31,7 +31,7 @@ import re
 import sys
 from pathlib import Path
 
-SIL_LINE = re.compile(r"^\[(?:Parsed_)?silencedetect(?:_[0-9]+)? @ [0-9a-fA-Fx]+\]\s+silence_(start|end):\s*(-?[0-9]+(?:\.[0-9]+)?)\s*(?:\||$)")
+SIL_LINE = re.compile(r"^\[(?:Parsed_)?silencedetect(?:_[0-9]+)? @ [0-9a-fA-Fx]+\]\s+silence_(start|end):\s*(-?[0-9]+(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?)\s*(?:\||$)")
 TOL = 0.01  # seconds of slack when checking a time against the source duration
 
 
@@ -128,6 +128,8 @@ def silences_to_edl(events: list[tuple[str, float]], duration: float, pad: float
         a, b = round(max(a, 0.0), 3), round(min(b, duration), 3)
         if b <= a:
             return
+        if b - a < min_keep and b - a <= pad + 1e-6 and (a <= 0 or b >= duration):
+            return  # just the padding beside a silence at the file edge: not content
         if b - a < min_keep:
             removed.append({"start": a, "end": b, "reason": f"speech island shorter than {min_keep}s dropped: REVIEW, may be a real word"})
         elif keep and a <= keep[-1][1]:
@@ -147,10 +149,22 @@ def silences_to_edl(events: list[tuple[str, float]], duration: float, pad: float
     return {"source_duration": duration, "keep": keep, "removed": removed}
 
 
-def build_graph(edl: dict, audio: bool, fps: int) -> str:
-    """filter_complex text: trim/atrim each kept range, then concat. Numbers only."""
-    if not (1 <= fps <= 240):
+FPS = re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:/[0-9]+)?$")
+
+
+def fps_value(text: str) -> float:
+    if not FPS.match(text):
+        raise EdlError(f"--fps must be a number or a fraction such as 30000/1001, got {text!r}")
+    n, _, d = text.partition("/")
+    v = float(n) / (float(d) if d else 1.0) if (not d or float(d) != 0) else 0.0
+    if not (1 <= v <= 240):
         raise EdlError("--fps must be between 1 and 240 and should equal the probed source frame rate")
+    return v
+
+
+def build_graph(edl: dict, audio: bool, fps: str) -> str:
+    """filter_complex text: trim/atrim each kept range, then concat. Numbers only."""
+    fps_value(str(fps))  # validates; the text itself is emitted so 30000/1001 stays exact
     lines, labels = [], []
     for i, (s, e) in enumerate(edl["keep"]):
         lines.append(f"[0:v]trim=start={s}:end={e},setpts=PTS-STARTPTS,fps={fps}[v{i}];")
@@ -247,9 +261,12 @@ def main(argv: list[str]) -> int:
                 if r["reason"] != "silence":
                     print(f"warning: {r['start']}-{r['end']}: {r['reason']}", file=sys.stderr)
         elif cmd == "graph" and len(pos) == 2:
-            write_text(pos[1], build_graph(load(pos[0]), "--no-audio" not in args, int(_opt(args, "--fps", 30))), force)
+            fps = args[args.index("--fps") + 1] if "--fps" in args and args.index("--fps") + 1 < len(args) else "30"
+            write_text(pos[1], build_graph(load(pos[0]), "--no-audio" not in args, fps), force)
         elif cmd == "retime" and len(pos) == 3:
             text, stats = retime_srt(load(pos[0]), Path(pos[1]).read_text(encoding="utf-8-sig"), _opt(args, "--min-fraction", 0.5))
+            if not 0 < _opt(args, "--min-fraction", 0.5) <= 1:
+                raise EdlError("--min-fraction must be in (0, 1]")
             write_text(pos[2], text, force)
             print(f"cues: {stats}", file=sys.stderr)
         elif cmd == "report" and len(pos) == 1:

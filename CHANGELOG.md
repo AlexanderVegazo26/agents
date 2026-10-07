@@ -11,7 +11,7 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
-- **`video-editor` agent 1.0.0 and `video-editing` skill 1.0.0** for recorded
+- **`video-editor` agent 1.0.0 and `video-editing` skill 1.1.0** for recorded
   footage: talking-head cleanup (silence, filler and retake cuts, denoise,
   two-pass EBU R128 loudness, captions retimed through the cuts), ad cutdowns,
   reframing, and a self-recording playbook (outline plus a capture command the

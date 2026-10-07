@@ -31,6 +31,19 @@ class Silences(unittest.TestCase):
         e = self.edl([("start", 17)])
         self.assertEqual(e["keep"], [[0.0, 17.12]])
 
+    def test_edge_silence_raises_no_review_warning(self):
+        for pairs in ([("end", 1.3)], [("start", 17)]):
+            e = self.edl(pairs)
+            self.assertEqual([r["reason"] for r in e["removed"]], ["silence"], pairs)
+
+    def test_short_word_beside_edge_silence_is_still_flagged(self):
+        e = self.edl([("start", 0.2), ("end", 5.0)], pad=0.0)  # a 0.2 s word at the start
+        self.assertTrue(any("REVIEW" in r["reason"] for r in e["removed"]))
+
+    def test_scientific_notation_timestamp_parses(self):
+        raw = b"Input #0:\n[Parsed_silencedetect_0 @ 0000026a] silence_end: 2.08333e-05 | silence_duration: 1\n"
+        self.assertEqual(T.read_silencedetect(raw), [("end", 2.08333e-05)])
+
     def test_no_silence_keeps_everything(self):
         self.assertEqual(self.edl([])["keep"], [[0.0, 20.0]])
 
@@ -85,6 +98,13 @@ class Validation(unittest.TestCase):
         self.assertIn("fps=25", g)
         for bad in (0, -5, 100000):
             with self.assertRaises(SystemExit):
+                T.build_graph({"source_duration": 20, "keep": [[0, 1]]}, True, bad)
+
+    def test_ntsc_rational_fps_is_kept_exact(self):
+        g = T.build_graph({"source_duration": 20, "keep": [[0, 1]]}, True, "30000/1001")
+        self.assertIn("fps=30000/1001", g)
+        for bad in ("abc", "30/0", "1e3", "-5", "0"):
+            with self.assertRaises(SystemExit, msg=bad):
                 T.build_graph({"source_duration": 20, "keep": [[0, 1]]}, True, bad)
 
     def test_video_only_graph(self):

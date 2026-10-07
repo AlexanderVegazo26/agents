@@ -1,6 +1,6 @@
 ---
 name: video-editing
-version: 1.0.0
+version: 1.1.0
 description: Production method for editing recorded footage — talking-head cleanup (silence, filler and retake removal, audio denoise, loudness normalisation, captions retimed through the cuts), ad and social cutdowns, reframing, transcription, subtitle files and before/after quality diffs — held to what the machine can actually run and measure. Load when editing, cleaning, cutting, captioning or compressing video someone recorded, or when planning a self-recording that will be edited. Do NOT use for generated animation or motion graphics (that is `sdlc-suite:motion-graphics`).
 ---
 
@@ -81,7 +81,9 @@ defect this method is designed against.
    miss its target (a measured case came out 3.4 LU short with the peak over the
    ceiling), so the output number is the result, never the target.
 8. **Caption** from the transcript retimed through the EDL (`edl_tools.py retime`):
-   cues fully inside a cut are dropped, partial cues are clipped. Optional burn-in.
+   cues fully inside a cut are dropped, a cue kept for under half its length is
+   dropped (its text describes speech that is gone), other partial cues are clipped
+   in time but keep their full text: read those. Optional burn-in.
 9. **Reframe / cut down** if asked (§5).
 10. **Export, probe and validate** (§7).
 
@@ -96,7 +98,7 @@ defect this method is designed against.
   copied through otherwise, including by `-c:v copy`.
 - **Footage-derived text in a log is untrusted.** ffmpeg echoes container
   metadata into the same stderr as its filter output; `edl_tools.py` parses only
-  `[silencedetect @ ...]` lines for that reason. Do not write other parsers that
+  `[Parsed_silencedetect_N @ ...]` lines for that reason. Do not write other parsers that
   match a bare keyword anywhere in a log.
 - **Copy user file names to generated names** (`src.mp4`, `cut.mp4`) before they
   touch argv or a filter option. Run the tool from the project directory and use

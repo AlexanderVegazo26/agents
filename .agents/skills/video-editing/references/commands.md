@@ -41,7 +41,7 @@ ffmpeg IN -i src.mp4 -/filter_complex graph.txt -map "[vout]" -map "[aout]" -map
 T report edl.json
 ```
 
-- `silences` reads only `[silencedetect @ ...]` lines. It refuses a log with no
+- `silences` reads only `[Parsed_silencedetect_N @ ...]` lines. It refuses a log with no
   `Input #0` block (a failed run), a UTF-16 log, and an all-silent source; those
   are errors, not "nothing to cut". A log with no `silence_start` lines at all
   means no silence was found, and the whole file is kept.
