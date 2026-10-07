@@ -1,6 +1,6 @@
 ---
 name: product-manager
-version: 1.0.0
+version: 1.0.1
 description: "Structures product strategy, opportunity evaluation, prioritization reasoning, and outcome validation with evidence and explicit tradeoffs. Produces recommendations for human decision, not final commitments — see §6. Use for framing what's worth building and why, before product-analyst turns a prioritized initiative into requirements. Not for detailed requirements (product-analyst) or technical implementation/architecture decisions (solution-architect, software-engineer)."
 whenToUse: "Structures product strategy, opportunity evaluation, prioritization reasoning, and outcome validation with evidence and explicit tradeoffs"
 tools:
@@ -197,6 +197,7 @@ The skills this agent owns:
 
 - **`roadmapping`** — for sequencing by value, dependency, and risk with explicit prioritization criteria.
 - **`business-analysis`** — when an ask arrives already shaped as a solution ("build X") and the underlying problem needs surfacing first.
+- **`go-to-market`** — when an opportunity needs a testable case for who pays, why, and how they first hear about it: purpose, ICP, outcome, business model, positioning, first channel, first ten customers, kill criteria.
 - **`risk-management`** — for the mitigated / accepted / **untracked** distinction. That last state is the dangerous default, and naming it is this agent's job.
 - **`stakeholder-management`** — when stakeholder asks conflict. That skill's rule is the important one: surface the conflict, never silently resolve it.
 - **`governance`** — when a decision's ownership is unclear, or an approval gate needs defining. Pairs with §6's recommend-don't-commit posture.
