@@ -12,6 +12,7 @@ removes anything under `.hermes/plugins/`.
 | `workflow` | Claude Code's `Workflow` tool | `sdlc-suite/workflows/*.js` in a `node:vm` sandbox |
 | `/orchestrate`, `hermes sdlc …` | — | the `orchestrator` role via `agent`; `models` reports routing; `agent <role> <task-file>` dispatches one role |
 | `/idea`, `hermes sdlc idea` | — | `prototype_pipeline.py`: local model check → prototyper → vetted copy → browser test → code-reviewer → fix loop → quick tunnel → Telegram button |
+| `/idea-cloud`, `hermes sdlc idea-cloud` | — | the same pipeline with every role on the Command Code cloud tier (catalog choice `power`) |
 | `prototype_pipeline.py discover` | — | cron scout: radar headlines → product-manager go-to-market case → the same pipeline |
 
 `__init__.py` is only the Hermes registration. `runner.mjs` does the work, and
@@ -198,6 +199,23 @@ session after enabling it. `hermes tools list` should then show
 `/idea <text>` (or `hermes sdlc idea "<text>"`) builds a clickable prototype
 on the local models with the `prototyper` role. It then sends a public link
 to Telegram as a button.
+
+`/idea-cloud <text>` (Telegram shows it as `/idea_cloud`; or `hermes sdlc
+idea-cloud "<text>"`) runs the same pipeline with every role — prototyper,
+code review, visual review, fixes — pinned to one catalog choice, `power` by
+default (`SDLC_CLOUD_CHOICE` overrides it). `power` is the Command Code bridge
+(`cc-deepseek` → `deepseek/deepseek-v4-pro` on `commandcode-gateway.service`,
+`:11440`), so nothing is loaded on the GPU. The idea, the prototype's files and
+the reviews go to that cloud provider; use `/idea` to keep them on this
+machine.
+
+- The command writes the choice to `STATE/<slug>/MODEL_CHOICE`. The pipeline
+  refuses a choice that is not in the catalog instead of quietly building on
+  the local models.
+- If the catalog has no `power` choice, `/idea-cloud` says so and starts
+  nothing.
+- The Telegram message ends with `☁️ Cloud models: …` instead of
+  `🧠 Local models: …`.
 
 - **The command returns at once.** It takes the one-build lock and hands it to
   `prototype_pipeline.py run`, which runs detached. A second `/idea` while one

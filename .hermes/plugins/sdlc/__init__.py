@@ -366,17 +366,39 @@ PIPELINE = RUNNER.parent / "prototype_pipeline.py"
 IDEA_MAX = 4000
 
 
+# /idea-cloud pins every pipeline role to this catalog choice: the Command Code
+# bridge tier. Override per machine with SDLC_CLOUD_CHOICE.
+CLOUD_CHOICE = os.environ.get("SDLC_CLOUD_CHOICE", "power")
+
+
 def idea(text: str) -> str:
+    """/idea: build a prototype on the local models (each role's catalog default)."""
+    return _start_idea(text, choice=None, command="idea")
+
+
+def idea_cloud(text: str) -> str:
+    """/idea-cloud: the same pipeline, every role on the Command Code cloud tier."""
+    cat = _load_catalog() or {}
+    if CLOUD_CHOICE not in (cat.get("choices") or {}):
+        return (f"☁️ /idea-cloud needs a `{CLOUD_CHOICE}` choice in the sdlc model catalog "
+                f"({catalog_path() or 'none found'}); it has none. Use /idea for the local models.")
+    return _start_idea(text, choice=CLOUD_CHOICE, command="idea-cloud")
+
+
+def _start_idea(text: str, choice: str | None, command: str) -> str:
     """Start the idea → prototype → link pipeline and return at once.
 
-    The build takes minutes on local models, far longer than a chat turn
-    should block, so prototype_pipeline.py runs detached and reports to
-    Telegram itself. Deterministic, like /orchestrate: no model decides
-    whether the prototyper runs. The one-build lock is taken here and handed
-    to the pipeline, so "Building" is only ever said by the run that holds it."""
+    The build takes minutes, far longer than a chat turn should block, so
+    prototype_pipeline.py runs detached and reports to Telegram itself.
+    Deterministic, like /orchestrate: no model decides whether the prototyper
+    runs. The one-build lock is taken here and handed to the pipeline, so
+    "Building" is only ever said by the run that holds it. `choice` pins every
+    role to one catalog choice (written to the host-only state dir, where the
+    pipeline reads it); None keeps each role's default."""
     text = (text or "").strip()
     if not text:
-        return "usage: /idea <what you want prototyped>  (or: hermes sdlc idea \"<idea>\")"
+        return (f"usage: /{command} <what you want prototyped>  "
+                f"(or: hermes sdlc {command} \"<idea>\")")
     if len(text) > IDEA_MAX:
         return f"That idea is {len(text)} characters; keep it under {IDEA_MAX}."
     import fcntl
@@ -407,6 +429,8 @@ def idea(text: str) -> str:
             return "Could not pick a free name for this idea; try again in a second."
         (work_base / slug / "site").mkdir(parents=True)
         (state_base / slug / "IDEA.md").write_text(text + "\n", encoding="utf-8")
+        if choice:
+            (state_base / slug / "MODEL_CHOICE").write_text(choice + "\n", encoding="utf-8")
         logfd = os.open(state_base / slug / "pipeline.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         try:
             subprocess.Popen([sys.executable, str(PIPELINE), "run", slug], stdin=subprocess.DEVNULL,
@@ -416,8 +440,14 @@ def idea(text: str) -> str:
             os.close(logfd)
     finally:
         lock.close()  # the child holds the same open file, so the lock stays held
-    return (f"🛠 Building prototype `{slug}` on the local models. "
+    where = (f"on the Command Code cloud ({_choice_model(choice)})" if choice else "on the local models")
+    return (f"🛠 Building prototype `{slug}` {where}. "
             "I'll send the link here when it's up, then a code review. Usually 5–20 minutes.")
+
+
+def _choice_model(choice: str) -> str:
+    """The `-m` alias a catalog choice runs, for user-facing messages."""
+    return str(((_load_catalog() or {}).get("choices") or {}).get(choice, {}).get("model") or choice)
 
 
 def _setup_cli(parser) -> None:
@@ -429,7 +459,9 @@ def _setup_cli(parser) -> None:
     p.add_argument("role", help="Role name, e.g. prototyper")
     p.add_argument("task_file", help="File holding the task text; - for stdin")
     p.add_argument("--model", help="A catalog choice, overriding the role default")
-    p = sub.add_parser("idea", help="Build a prototype of an idea and send its link to Telegram")
+    p = sub.add_parser("idea", help="Build a prototype of an idea on the local models; link goes to Telegram")
+    p.add_argument("text", nargs="+", help="The idea, in plain words")
+    p = sub.add_parser("idea-cloud", help="Same as idea, on the Command Code cloud models")
     p.add_argument("text", nargs="+", help="The idea, in plain words")
 
 
@@ -450,11 +482,13 @@ def _cli(args) -> int:
         out = _handle_agent(params)
         print(out)
         return 1 if out.startswith('{"success": false') else 0
-    if getattr(args, "sdlc_command", None) == "idea":
-        out = idea(" ".join(args.text))
+    if getattr(args, "sdlc_command", None) in ("idea", "idea-cloud"):
+        start = idea if args.sdlc_command == "idea" else idea_cloud
+        out = start(" ".join(args.text))
         print(out)
         return 0 if out.startswith("🛠") else 1
-    print("usage: hermes sdlc {orchestrate <task> | models | agent <role> <task-file> | idea <text>}")
+    print("usage: hermes sdlc {orchestrate <task> | models | agent <role> <task-file> | idea <text> "
+          "| idea-cloud <text>}")
     return 2
 
 
@@ -538,12 +572,14 @@ def agent_schema(catalog: dict | None) -> dict:
 def register(ctx) -> None:
     ctx.register_tool(name="agent", toolset=TOOLSET, schema=agent_schema(_load_catalog()), handler=_handle_agent,
                       check_fn=_available, emoji="🧑‍💼")
+    # Descriptions stay within Telegram's menu limit for plugin commands (40 chars),
+    # so the menu shows them whole.
     ctx.register_command("orchestrate", orchestrate,
-                         description="Lead a task through the SDLC suite: the orchestrator role picks the "
-                                     "specialists and a model per dispatch", args_hint="<task>")
+                         description="Run a task through the SDLC agent team", args_hint="<task>")
     ctx.register_command("idea", idea,
-                         description="Prototype an idea with the sdlc prototyper and get a public link "
-                                     "back here (Cloudflare quick tunnel)", args_hint="<idea>")
+                         description="Prototype an idea on local models", args_hint="<idea>")
+    ctx.register_command("idea-cloud", idea_cloud,
+                         description="Prototype an idea on Command Code cloud", args_hint="<idea>")
     ctx.register_cli_command("sdlc", help="sdlc-suite: orchestrate, dispatch a role, prototype an idea, "
                                           "inspect model routing",
                              setup_fn=_setup_cli, handler_fn=_cli)

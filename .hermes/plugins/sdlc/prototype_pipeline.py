@@ -361,6 +361,20 @@ def _running() -> dict[str, str]:
     return out
 
 
+def _run_choice(state: Path) -> str | None:
+    """The catalog choice one run pins every role to (/idea-cloud writes it to
+    the host-only state dir), or None for each role's default. A choice the
+    catalog does not have fails the run rather than silently going local."""
+    f = state / "MODEL_CHOICE"
+    if not f.is_file():
+        return None
+    choice = f.read_text(errors="replace").strip()
+    choices = (_plugin()._load_catalog() or {}).get("choices") or {}
+    if choice not in choices:
+        raise StepError(f"model choice {choice!r} is not in the sdlc model catalog")
+    return choice
+
+
 def ensure_model(role: str, choice: str | None = None) -> str:
     """Make sure the local model a role runs on is loaded, swapping other
     models out when there is not enough GPU memory. Remote providers (Command
@@ -666,15 +680,18 @@ def run(slug: str, held_lock: object | None = None) -> int:
     step, server, tunnel, published = "start", None, None, False
     serve_dir = state / "public"
     try:
-        step = "loading the prototyper's local model"
-        models = {"prototyper": ensure_model("prototyper")}
+        step = "reading the model choice"
+        choice = _run_choice(state)
+        tier = "cloud" if choice else "local"
+        step = f"loading the prototyper's {tier} model"
+        models = {"prototyper": ensure_model("prototyper", choice)}
         step = "building (prototyper)"
         idea = (state / "IDEA.md").read_text(errors="replace")
         fence = f"<<<IDEA-{secrets.token_hex(6)}>>>"
         task = PROTOTYPER_TASK.format(sandbox=f"{SANDBOX_BASE}/{slug}", host=str(work), cdns=CDNS,
                                       review_dir=f"{SANDBOX_BASE}/{slug}/.review",
                                       fence=fence, idea=idea, gotchas=GOTCHAS)
-        ok, route, out = dispatch("prototyper", task, PROTOTYPER_TOOLS, PROTOTYPER_BUDGET, cwd=work)
+        ok, route, out = dispatch("prototyper", task, PROTOTYPER_TOOLS, PROTOTYPER_BUDGET, cwd=work, model=choice)
         write_state(state / "prototyper.out", f"{route}\n{out}")
         if not ok:
             raise StepError(out)
@@ -713,12 +730,12 @@ def run(slug: str, held_lock: object | None = None) -> int:
                 (shots_dir / f"{name}.png").write_bytes(png)
                 (review_dir / f"{name}.png").write_bytes(png)  # trusted host-written PNGs for the agents
 
-            step = "loading the reviewer's local model"
-            models["code-reviewer"] = ensure_model("code-reviewer")
+            step = f"loading the reviewer's {tier} model"
+            models["code-reviewer"] = ensure_model("code-reviewer", choice)
             step = "code review"
             rok, rroute, review = dispatch("code-reviewer", REVIEW_TASK.format(
                 sandbox=f"{SANDBOX_BASE}/{slug}", host=str(work), smoke=_smoke_brief(smoke)),
-                REVIEWER_TOOLS, REVIEWER_BUDGET, cwd=work)
+                REVIEWER_TOOLS, REVIEWER_BUDGET, cwd=work, model=choice)
             write_state(state / f"review-{rnd}.out", f"{rroute}\n{review}")
             m = re.search(r"Verdict:\s*\**\s*(approve with notes|approve|request changes)", review, re.I)
             verdict = m.group(1).lower() if (rok and m) else "no verdict"
@@ -728,7 +745,7 @@ def run(slug: str, held_lock: object | None = None) -> int:
             vok, vroute, vreview = dispatch("code-reviewer", VISUAL_TASK.format(
                 sandbox=f"{SANDBOX_BASE}/{slug}", host=str(work),
                 review_dir=f"{SANDBOX_BASE}/{slug}/.review", smoke=_smoke_brief(smoke)),
-                REVIEWER_TOOLS, REVIEWER_BUDGET, cwd=work)
+                REVIEWER_TOOLS, REVIEWER_BUDGET, cwd=work, model=choice)
             write_state(state / f"visual-{rnd}.out", f"{vroute}\n{vreview}")
             m = re.search(r"Verdict:\s*\**\s*(approve with notes|approve|request changes)", vreview, re.I)
             vverdict = m.group(1).lower() if (vok and m) else "no verdict"
@@ -739,13 +756,13 @@ def run(slug: str, held_lock: object | None = None) -> int:
             if rnd == MAX_FIX_ROUNDS:
                 break
             step = f"fixing (prototyper, round {rnd + 1})"
-            models["prototyper"] = ensure_model("prototyper")
+            models["prototyper"] = ensure_model("prototyper", choice)
             ffence = f"<<<FINDINGS-{secrets.token_hex(6)}>>>"
             ok, route, out = dispatch("prototyper", FIX_TASK.format(
                 sandbox=f"{SANDBOX_BASE}/{slug}", host=str(work), fence=ffence, gotchas=GOTCHAS,
                 review_dir=f"{SANDBOX_BASE}/{slug}/.review",
                 smoke=_smoke_brief(smoke), review=review[-2500:], visual=vreview[-2500:]),
-                PROTOTYPER_TOOLS, PROTOTYPER_BUDGET, cwd=work)
+                PROTOTYPER_TOOLS, PROTOTYPER_BUDGET, cwd=work, model=choice)
             write_state(state / f"prototyper-fix-{rnd + 1}.out", f"{route}\n{out}")
             if not ok:
                 raise StepError(out)
@@ -795,7 +812,7 @@ def run(slug: str, held_lock: object | None = None) -> int:
         lines += ["", f"<b>Browser test:</b> {checks}",
                   f"<b>Code review:</b> {esc(verdict)}" + (f" after {rnd} fix round(s)" if rnd else ""),
                   f"<b>Visual review:</b> {esc(vverdict)}",
-                  f"🧠 Local models: {esc(models.get('prototyper', ''), 80)} (build), "
+                  f"{'☁️ Cloud' if choice else '🧠 Local'} models: {esc(models.get('prototyper', ''), 80)} (build), "
                   f"{esc(models.get('code-reviewer', ''), 80)} (review)",
                   "", f"The link expires in {TTL_HOURS:g}h."]
         if external_assets(serve_dir):
