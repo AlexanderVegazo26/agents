@@ -52,7 +52,9 @@ function done(result) {
   clearTimeout(watchdog);
   kill();
   rmSync(profile, { recursive: true, force: true });
-  process.stdout.write(JSON.stringify(result) + '\n');
+  // Synchronous write: the JSON can exceed the pipe buffer (screenshot
+  // base64), and process.exit() would truncate an async write.
+  try { writeSync(1, JSON.stringify(result) + '\n'); } catch { /* pipe gone */ }
   process.exit(0);
 }
 

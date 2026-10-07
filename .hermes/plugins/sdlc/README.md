@@ -100,9 +100,9 @@ session after enabling it. `hermes tools list` should then show
     sends no request, and `hermes sdlc models` shows `no key (…)`; a key
     the server refuses shows `key rejected`.
   - Behind LlamaStash, a passing probe means the model is registered, not
-    that it can load: LlamaStash also lists models whose backend is not
-    installed. Such a model is picked, its dispatch fails, and its fallbacks
-    are not tried. Keep only loadable models in the catalog.
+    that it will load. A registered model that fails to load is still
+    picked, its dispatch fails, and its fallbacks are not tried. Keep only
+    models that load in the catalog.
   - Resolution order: explicit `model`, then role default, then role-file
     alias, then the session default. Role names match with or without the
     `sdlc-suite:` prefix; workflows always use the prefix.

@@ -299,9 +299,9 @@ export function listedModelIds(text) {
  * non-JSON reply falls back to a substring match).
  *
  * Behind a proxy that loads on demand, such as LlamaStash, "listed" means
- * registered, not loadable: LlamaStash lists a model whose backend is not
- * even installed (apodex, checked 2026-10-06). Such a model passes its probe,
- * so its fallbacks are not walked and the dispatch fails instead.
+ * registered: the probe cannot tell whether the model will load. One that
+ * is registered but fails to load still passes its probe, so its fallbacks
+ * are not walked and the dispatch fails instead.
  *
  * `probe_key_env` sends `Authorization: Bearer $<that variable>` — for a
  * proxy such as LlamaStash, whose model list needs its API key. When the

@@ -214,6 +214,10 @@ Screenshots — READ them, they are the page as it really renders:
   - `{review_dir}/mobileEnd.png` — the page after every visible control was clicked
   - `{review_dir}/desktop.png` — the first screen at 1280×800
 
+If any of the three screenshot files is missing or unreadable, your verdict
+MUST be `Verdict: request changes` and the missing screenshot is your first
+finding — you cannot visually approve what you cannot see.
+
 Judge what the requester sees in the first five seconds on their phone: layout
 and hierarchy, spacing and alignment, typography, color contrast, realism of
 the data and states, placeholder or broken-looking content, empty regions,
