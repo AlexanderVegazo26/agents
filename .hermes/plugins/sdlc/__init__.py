@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -35,6 +36,8 @@ RUNNER = Path(__file__).resolve().parent / "runner.mjs"
 TOOLSET = "sdlc"
 LOG_TAIL = 50
 DEFAULT_CATALOG = RUNNER.parent / "models.json"
+# Same rule as runner.mjs's PROBE_KEY_ENV_RE: the catalog names a variable, never holds the key.
+PROBE_KEY_ENV_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def catalog_path() -> Path | None:
@@ -45,6 +48,21 @@ def catalog_path() -> Path | None:
         if p.is_file():
             return p
     return None
+
+
+def is_loopback_url(url) -> bool:
+    """The same rule as runner.mjs's isLoopbackUrl: a keyed probe may only go
+    to this machine, so a JSON-only catalog edit cannot send a token elsewhere.
+    Only the three canonical spellings count; WHATWG URL (the JS half) also
+    normalises forms such as 127.1 or [0:…:1], which this half rejects."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(str(url))
+        host = parts.hostname
+        parts.port  # raises on an out-of-range port, as new URL() does in runner.mjs
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and host in ("127.0.0.1", "localhost", "::1")
 
 
 def catalog_error(data) -> str | None:
@@ -61,6 +79,11 @@ def catalog_error(data) -> str | None:
         for fb in c.get("fallback") or []:
             if fb not in choices:
                 return f'choice "{name}" falls back to unknown "{fb}"'
+        if "probe_key_env" in c and not (isinstance(c["probe_key_env"], str)
+                                         and PROBE_KEY_ENV_RE.fullmatch(c["probe_key_env"])):
+            return f'choice "{name}" has a probe_key_env that is not an environment variable name'
+        if "probe_key_env" in c and c.get("probe") and not is_loopback_url(c["probe"]):
+            return f'choice "{name}" sends a key (probe_key_env) to a probe that is not on loopback'
     for key in ("roles", "role_model_aliases"):
         section = data.get(key) or {}
         if not isinstance(section, dict):
@@ -363,21 +386,34 @@ def models_report() -> str:
         where = catalog_path()
         return (f"model routing is OFF — {where} is invalid (see the Hermes log)" if where
                 else "no model catalog — every role runs on the session default model")
+    import urllib.error
     import urllib.request
     lines = [f"catalog: {catalog_path()}"]
+    rows: list[tuple[str, str, str, str]] = []
     for name, c in cat["choices"].items():
         up = "no probe"
-        if c.get("probe"):
+        key_env = c.get("probe_key_env")
+        if c.get("probe") and key_env and not os.environ.get(key_env):
+            up = f"no key (${key_env} unset or empty)"
+        elif c.get("probe"):
+            req = urllib.request.Request(c["probe"])
+            if key_env:
+                # Unredirected: urllib would otherwise copy it onto a redirect to any host.
+                req.add_unredirected_header("Authorization", f"Bearer {os.environ[key_env]}")
             try:
-                with urllib.request.urlopen(c["probe"], timeout=2.5) as r:  # noqa: S310 — user-configured URL
+                with urllib.request.urlopen(req, timeout=2.5) as r:  # noqa: S310 — user-configured URL
                     body = r.read().decode("utf-8", "replace")
                     expect = c.get("expect")
                     ids = listed_model_ids(body)
                     listed = (expect in ids) if ids is not None else (expect or "") in body
                     up = "up" if not expect or listed else "model missing"
-            except Exception:
+            except urllib.error.HTTPError as e:
+                up = "key rejected" if e.code in (401, 403) else f"DOWN (HTTP {e.code})"
+            except Exception:  # never log it: a bad header value is echoed in the error, key included
                 up = "DOWN"
-        lines.append(f"  {name:<10} -m {str(c.get('model')):<10} {up:<14} {str(c.get('use_for', ''))[:70]}")
+        rows.append((name, str(c.get("model")), up, str(c.get("use_for", ""))[:70]))
+    width = max(14, *(len(r[2]) for r in rows)) if rows else 14
+    lines += [f"  {n:<10} -m {m:<10} {u:<{width}} {d}" for n, m, u, d in rows]
     by_choice: dict[str, list[str]] = {}
     for role, choice in (cat.get("roles") or {}).items():
         by_choice.setdefault(choice, []).append(role)

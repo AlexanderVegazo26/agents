@@ -47,9 +47,60 @@ session after enabling it. `hermes tools list` should then show
   which replaces it wholesale for one machine. Each choice names a
   `hermes chat -m` value (an alias from `config.yaml` `model_aliases`, or a
   model id), an optional `provider`, a `probe` URL that must list `expect`,
-  a `use_for` description, and a `fallback` list. `roles` gives each role
-  its default; `role_model_aliases` maps the role files' Claude aliases
-  (`haiku`/`sonnet`/`opus`).
+  an optional `probe_key_env`, a `use_for` description, and a `fallback`
+  list. `roles` gives each role its default; `role_model_aliases` maps the
+  role files' Claude aliases (`haiku`/`sonnet`/`opus`).
+  - The shipped defaults route through the LlamaStash proxy on `:11435`:
+    `fast` is Qwen3-Coder-30B, `balanced` is Qwen3.8-27B and `deep` is
+    Ornith-1.5-35B-A3B. LlamaStash loads a model on its first request. To
+    use them, Hermes needs a `llamastash` provider, three aliases, and the
+    key in its environment:
+
+    ```yaml
+    # ~/.hermes/config.yaml
+    providers:
+      llamastash:
+        base_url: http://127.0.0.1:11435/v1
+        api_key: ${LLAMASTASH_API_KEY}   # expanded from ~/.hermes/.env
+        api_mode: chat_completions
+        request_timeout_seconds: 900   # the first request may load the model off disk
+        stale_timeout_seconds: 900
+    model_aliases:
+      fast:   { model: Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL, provider: llamastash }
+      qwen38: { model: Qwen3.8-27B-UD-Q4_K_XL, provider: llamastash }
+      ornith: { model: Ornith-1.5-35B-Q8_0, provider: llamastash }
+    ```
+
+    ```sh
+    # ~/.hermes/.env holds the one copy of the key, for inference and probes.
+    # Edit the line if it already exists rather than appending a second one.
+    (umask 077; echo "LLAMASTASH_API_KEY=$(llamastash api-key)" >> ~/.hermes/.env)
+    chmod 600 ~/.hermes/.env   # umask only covers a newly created file
+    ```
+
+    Hermes expands `${LLAMASTASH_API_KEY}` in `config.yaml` from `.env`
+    (checked against `hermes_cli.config.load_config`, 2026-10-06), so
+    inference and the probes read one key. If `api_key` holds the literal
+    key instead, rotate both copies together. Keep
+    `LLAMASTASH_API_KEY` out of `docker_forward_env` and `env_passthrough`,
+    and out of any skill's `required_environment_variables`: those are the
+    paths that would hand it to the sandbox.
+  - A choice with `probe_key_env` must probe a loopback address, written
+    exactly as `127.0.0.1`, `localhost` or `[::1]` (other spellings of
+    loopback are not supported and may be judged differently by the two
+    halves). Otherwise the catalog is invalid,
+    so a JSON edit cannot send a token to another host. The Python half
+    also drops the header if the probe redirects.
+  - `probe_key_env` names an environment variable. The probe sends its
+    value as `Authorization: Bearer …`, because LlamaStash lists its models
+    only to a caller with the key. The key never goes in the catalog. While
+    the variable is unset or empty the choice counts as down, the probe
+    sends no request, and `hermes sdlc models` shows `no key (…)`; a key
+    the server refuses shows `key rejected`.
+  - Behind LlamaStash, a passing probe means the model is registered, not
+    that it can load: LlamaStash also lists models whose backend is not
+    installed. Such a model is picked, its dispatch fails, and its fallbacks
+    are not tried. Keep only loadable models in the catalog.
   - Resolution order: explicit `model`, then role default, then role-file
     alias, then the session default. Role names match with or without the
     `sdlc-suite:` prefix; workflows always use the prefix.

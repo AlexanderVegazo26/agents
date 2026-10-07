@@ -250,6 +250,12 @@ export function loadCatalog(file) {
     for (const fb of c.fallback || []) {
       if (!choices[fb]) return { error: `model catalog ${file}: choice "${name}" falls back to unknown "${fb}"` };
     }
+    if (c.probe_key_env !== undefined && !(typeof c.probe_key_env === 'string' && PROBE_KEY_ENV_RE.test(c.probe_key_env))) {
+      return { error: `model catalog ${file}: choice "${name}" has a probe_key_env that is not an environment variable name` };
+    }
+    if (c.probe_key_env !== undefined && c.probe && !isLoopbackUrl(c.probe)) {
+      return { error: `model catalog ${file}: choice "${name}" sends a key (probe_key_env) to a probe that is not on loopback` };
+    }
   }
   for (const [role, choice] of Object.entries(raw.roles || {})) {
     if (!choices[choice]) return { error: `model catalog ${file}: role "${role}" routes to unknown "${choice}"` };
@@ -258,6 +264,18 @@ export function loadCatalog(file) {
     if (!choices[choice]) return { error: `model catalog ${file}: alias "${alias}" routes to unknown "${choice}"` };
   }
   return { catalog: { choices, roles: raw.roles || {}, aliases: raw.role_model_aliases || {}, file } };
+}
+
+/** `probe_key_env` names an environment variable; the key itself never sits in the catalog. */
+export const PROBE_KEY_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** A keyed probe may only go to this machine: otherwise a JSON-only catalog
+ * edit could send any environment variable (a bot or GitHub token) anywhere. */
+export function isLoopbackUrl(u) {
+  let url;
+  try { url = new URL(u); } catch { return false; }
+  return (url.protocol === 'http:' || url.protocol === 'https:')
+    && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
 }
 
 /** Model ids a `/v1/models`-style reply lists: OpenAI `data[].id`,
@@ -277,27 +295,44 @@ export function listedModelIds(text) {
  * counts as available. `expect` must be an exact listed model id (a
  * non-JSON reply falls back to a substring match).
  *
+ * Behind a proxy that loads on demand, such as LlamaStash, "listed" means
+ * registered, not loadable: LlamaStash lists a model whose backend is not
+ * even installed (apodex, checked 2026-10-06). Such a model passes its probe,
+ * so its fallbacks are not walked and the dispatch fails instead.
+ *
+ * `probe_key_env` sends `Authorization: Bearer $<that variable>` — for a
+ * proxy such as LlamaStash, whose model list needs its API key. When the
+ * variable is unset or empty the choice counts as down without a request:
+ * the server would refuse it, and down is what routing has to act on.
+ *
  * Only success is cached, and only for `ttlMs`: a single timeout on a busy
  * host must not mark a model down for the rest of an hour-long workflow,
  * and a server that went down must be noticed. In-flight probes are shared.
  */
-export function makeProber(fetchFn = globalThis.fetch, timeoutMs = 2500, ttlMs = 60_000, now = () => performance.now()) {
+export function makeProber(fetchFn = globalThis.fetch, timeoutMs = 2500, ttlMs = 60_000, now = () => performance.now(),
+  env = process.env) {
   const ok = new Map();       // key -> time of last success
   const inflight = new Map(); // key -> Promise<boolean>
   const prober = (choice, { fresh = false } = {}) => {
     if (!choice.probe) return Promise.resolve(true);
-    const key = `${choice.probe}\0${choice.expect || ''}`;
+    const key = `${choice.probe}\0${choice.expect || ''}\0${choice.probe_key_env || ''}`;
     if (!fresh && ok.has(key) && now() - ok.get(key) < ttlMs) return Promise.resolve(true);
     if (inflight.has(key)) return inflight.get(key);
     const p = (async () => {
+      const init = { signal: AbortSignal.timeout(timeoutMs) };
+      if (choice.probe_key_env) {
+        const k = env[choice.probe_key_env];
+        if (!k) return false;
+        init.headers = { Authorization: `Bearer ${k}` };
+      }
       try {
-        const res = await fetchFn(choice.probe, { signal: AbortSignal.timeout(timeoutMs) });
+        const res = await fetchFn(choice.probe, init);
         if (!res.ok) return false;
         const text = await res.text();
         if (!choice.expect) return true;
         const ids = listedModelIds(text);
         return ids ? ids.has(choice.expect) : text.includes(choice.expect);
-      } catch { return false; }
+      } catch { return false; } // never log this error: a bad header value is echoed in it, key included
     })().then((up) => {
       inflight.delete(key);
       if (up) ok.set(key, now()); else ok.delete(key);
@@ -582,6 +617,31 @@ async function selftest() {
   check('a success is cached within its TTL', calls === 2, `calls=${calls}`);
   t = 2000; upNow = false;
   check('a cached success expires', !(await ttlProbe(pc)));
+  // probe_key_env: the key travels as a Bearer header, read from the environment at probe time.
+  const seenInit = [];
+  const keyFetch = async (url, init) => { seenInit.push(init); return { ok: !!init.headers, text: async () => '{"data":[{"id":"m"}]}' }; };
+  const kc = { probe: 'http://k/v1/models', expect: 'm', probe_key_env: 'SDLC_TEST_KEY' };
+  check('a keyed probe sends the key as a Bearer header',
+    (await makeProber(keyFetch, 100, 1000, () => 0, { SDLC_TEST_KEY: 's3cret' })(kc))
+      && seenInit[0]?.headers?.Authorization === 'Bearer s3cret', JSON.stringify(seenInit[0]?.headers));
+  seenInit.length = 0;
+  check('a keyed probe with the variable unset is down and sends nothing',
+    !(await makeProber(keyFetch, 100, 1000, () => 0, {})(kc)) && seenInit.length === 0, `requests=${seenInit.length}`);
+  check('an unkeyed probe sends no Authorization header',
+    (await makeProber(async (u, init) => ({ ok: !init.headers, text: async () => 'm' }), 100, 1000, () => 0, { SDLC_TEST_KEY: 'x' })(pc)));
+  const keyed = makeProber(keyFetch, 100, 1000, () => 0, { SDLC_TEST_KEY: 'k' });
+  await keyed(kc);
+  check('a keyed success is not reused for the same probe under another key variable',
+    !(await keyed({ probe: kc.probe, expect: 'm', probe_key_env: 'SDLC_UNSET_KEY' })));
+  check('a probe_key_env that is not a variable name is a catalog error',
+    /probe_key_env/.test(loadCatalog(writeTmp({ choices: { a: { model: 'x', probe_key_env: '$(cat /etc/passwd)' } } })).error || ''));
+  check('a valid probe_key_env loads', !loadCatalog(writeTmp({ choices: { a: { model: 'x', probe_key_env: 'LLAMASTASH_API_KEY' } } })).error);
+  check('a key is never sent to a probe off loopback',
+    /not on loopback/.test(loadCatalog(writeTmp({ choices: { a: { model: 'x', probe: 'https://evil.example/v1/models', probe_key_env: 'GITHUB_TOKEN' } } })).error || ''));
+  check('a loopback-looking subdomain is not loopback',
+    /not on loopback/.test(loadCatalog(writeTmp({ choices: { a: { model: 'x', probe: 'http://127.0.0.1.evil.example/v1', probe_key_env: 'K' } } })).error || ''));
+  check('keyed probes on 127.0.0.1, localhost and [::1] load', ['http://127.0.0.1:11435/v1/models', 'http://localhost:1/v1', 'http://[::1]:2/v1']
+    .every((probe) => !loadCatalog(writeTmp({ choices: { a: { model: 'x', probe, probe_key_env: 'K' } } })).error));
   // A retry re-routes when the first choice died between attempts.
   let alive = ['f', 'd'];
   const seenModels = [];
