@@ -13,6 +13,8 @@ removes anything under `.hermes/plugins/`.
 | `/orchestrate`, `hermes sdlc …` | — | the `orchestrator` role via `agent`; `models` reports routing; `agent <role> <task-file>` dispatches one role |
 | `/idea`, `hermes sdlc idea` | — | `prototype_pipeline.py`: local model check → prototyper → vetted copy → browser test → code-reviewer → fix loop → quick tunnel → Telegram button |
 | `/idea-cloud`, `hermes sdlc idea-cloud` | — | the same pipeline with every role on the Command Code cloud tier (catalog choice `power`) |
+| `/implement [@repo] <task>`, `/implement_cloud`, `hermes sdlc implement` | — | `implement_pipeline.py`: a git worktree on branch `hermes/<slug>` → orchestrator and its specialists → host-side commit → Telegram summary. Never pushes |
+| `/jobs`, `hermes sdlc jobs`, `hermes sdlc job <action> <id>` | — | `jobs.py`: every long request above is a background job with a Telegram status card and ⏸ / ▶️ / ⏹ / 🔁 buttons |
 | `prototype_pipeline.py discover` | — | cron scout: radar headlines → product-manager go-to-market case → the same pipeline |
 
 `__init__.py` is only the Hermes registration. `runner.mjs` does the work, and
@@ -124,9 +126,10 @@ session after enabling it. `hermes tools list` should then show
   - An invalid catalog (unknown fallback, role routed to an unknown choice,
     choice without `model`) turns routing off in both halves. The routes
     say why, and `hermes sdlc models` reports it.
-- **`/orchestrate <task>`** (in a session) and **`hermes sdlc orchestrate
-  "<task>"`** (in a terminal) dispatch the `orchestrator` role on its
-  catalog default, `deep`. That role runs the whole dispatch with a model
+- **`hermes sdlc orchestrate "<task>"`** (in a terminal) dispatches the
+  `orchestrator` role on its catalog default, `deep`, in the foreground. In a
+  chat, `/orchestrate` is `/implement` (below): a background job, because a
+  run takes up to two hours and a chat turn must not block on it. That role runs the whole dispatch with a model
   decision per call and returns a lens ledger with a Model column.
   - It is a plugin command on purpose. A skill version depended on the
     session's model choosing to call `agent`, and the default local model
@@ -194,6 +197,103 @@ session after enabling it. `hermes tools list` should then show
   but it is not pinned. To pin it, point the symlink at a separate worktree
   checked out at a reviewed commit.
 
+## Background jobs: status cards, buttons, parallel runs (`jobs.py`)
+
+Every long request from a chat — `/idea`, `/idea_cloud`, `/implement`,
+`/implement_cloud`, and the scout — is one **job**:
+
+- **A record** in `~/.local/state/sdlc-jobs/<id>/job.json`, host-only. The
+  id is 8 hex characters, short enough for Telegram's 64-byte `callback_data`.
+- **A transient systemd user unit**, `sdlc-job-<id>.service`, started with
+  `systemd-run --user`. A job used to be a detached child of the gateway.
+  The gateway unit runs with `KillMode=mixed` and a cgroup sweep, so every
+  `hermes gateway restart` killed every running build. Builds now survive
+  restarts. Without `systemd-run`, a job falls back to a detached process
+  group. Environment is forwarded by allowlist, because a unit's environment
+  shows in `systemctl --user show`; the pipelines read `~/.hermes/.env`
+  themselves.
+- **A status card** in Telegram, sent straight to the Bot API and edited in
+  place. It shows the state, the step, the time spent running (excluding
+  pauses) and the tier, refreshed on every step change and once a minute.
+  Its buttons are inline keyboard `callback_data` buttons:
+
+  | State | Buttons | What they do |
+  |---|---|---|
+  | queued | ⏹ Cancel · 🔄 Refresh | waiting for a slot |
+  | running | ⏸ Pause · ⏹ Stop | **Pause**: `systemctl --user freeze`. The cgroup freezer stops the whole tree, nested `hermes chat` sessions included. **Stop**: SIGTERM to the pipeline, which stops its sessions, takes down an unsent link and reports. |
+  | paused | ▶️ Resume · ⏹ Stop | **Resume**: `thaw`. The paused time is booked first, so it never counts against a step's budget. |
+  | done / failed / stopped | 🔗 links · 🔁 Run again (· 🗑 Discard branch) | **Run again** starts a new job with the same request. |
+
+  Final results also arrive as a separate message, because edits do not
+  notify the phone, and that message carries 🔁 Run again too.
+  - Buttons are handled by the plugin's Telegram handler,
+    `register_telegram_handler`, scoped to `^sdlc:` so Hermes's own buttons
+    are untouched.
+  - A tap must pass the adapter's callback allowlist **and** come from a
+    `TELEGRAM_ALLOWED_USERS` id.
+  - `/jobs` lists recent jobs and re-sends each live card, so its buttons
+    sit at the bottom of the chat.
+  - `hermes sdlc job pause|resume|stop|again|refresh|discard <id>` does the
+    same from a terminal.
+- **Pause, honestly.** A model request already in flight still completes on
+  its server; the frozen session reads the reply after it resumes. A pause
+  longer than Hermes's 15-minute stale-call limit can cost that one call a
+  retry. Under `/implement`, the orchestrator's clock is pause-aware but its
+  specialists keep the runner's 15-minute timer, so that a hung specialist
+  costs one lens, not the whole run. A pause longer than that, in the middle
+  of a specialist, loses the specialist; it is reported as a lens not run.
+- **Parallel slots.** At most `SDLC_MAX_JOBS` jobs run at once (default 4),
+  and each tier has its own pool:
+  - `SDLC_MAX_LOCAL_JOBS` (default 1): llama-server runs with `--parallel 1`,
+    so two local jobs would only queue behind each other there and trip the
+    stale-call timeout.
+  - `SDLC_MAX_CLOUD_JOBS` (default 1): the Command Code plan rate-limits.
+    Two concurrent cloud pipelines got HTTP 429 within two minutes on
+    2026-10-07. The bridge now backs off for up to about 2½ minutes before
+    passing a 429 on.
+
+  By default, one local and one cloud job run side by side. A job past its
+  slot shows "queued". Raise the limits once the server or plan allows.
+  - A job records the local model it runs on.
+  - `ensure_model` never unloads a model another running job is using. It
+    waits for that job, up to 60 minutes, showing "waiting for GPU memory".
+- **A stray kill is named as one.** SIGTERM or SIGINT from anything but the
+  ⏹ button reports "SIGTERM from outside this pipeline". It used to read
+  "runner exited 143 without a reply", which is what two builds showed on
+  2026-10-06 when another session killed them.
+
+## `/implement`: a task from the phone to a reviewed branch
+
+`/implement [@repo] <task>` (`/implement_cloud` for the Command Code tier).
+`@name` picks `~/Documents/repos/<name>` (`SDLC_REPOS_DIR`); without it,
+`SDLC_IMPLEMENT_REPO` or this repository.
+
+1. **Worktree.** `git worktree add -b hermes/<slug> ~/sdlc-work/<slug> HEAD`.
+   It branches from HEAD, so uncommitted changes in your checkout are not
+   included; the result says so when there were any. `~/sdlc-work` is
+   mounted into the sandbox at `/workspace/work`. It is the only host folder
+   besides `~/prototypes` that agents can write.
+2. **Orchestrator.** It classifies the task and dispatches the specialists,
+   each in its own session working in the worktree. The brief forbids git
+   commit, push and branch operations. The budget is
+   `SDLC_IMPLEMENT_BUDGET_MIN` (default 120 minutes). `/implement_cloud`
+   writes a pinned catalog that routes every role to `power` and hands it to
+   every nested session through `SDLC_MODELS_CATALOG`.
+3. **Commit, on the host.** `git add -A && git commit --no-verify` with
+   `GIT_DIR` pinned to the worktree's git dir, recorded before any agent
+   ran, and with `core.hooksPath=/dev/null`, `core.fsmonitor=false` and no
+   system config. A rewritten `.git` file, a planted hook or an fsmonitor
+   command in the agent-written tree is never followed or executed.
+4. **Report.** Telegram gets a diffstat, the lens ledger, a review command
+   (`git log -p <base>..hermes/<slug>`) and 🔁 Run again / 🗑 Discard branch.
+   Discard removes the worktree and the branch, and only `hermes/` branches
+   under `~/sdlc-work`. Nothing is ever pushed or merged.
+
+New files written by the root-run sandbox are root-owned, so a kept worktree
+may need `sudo rm -rf` to delete. Hermes's `docker_run_as_host_user` would
+avoid that, but it changes the shared sandbox's ownership; it was not turned
+on.
+
 ## `/idea`: from a Telegram message to a prototype link
 
 `/idea <text>` (or `hermes sdlc idea "<text>"`) builds a clickable prototype
@@ -214,12 +314,22 @@ machine.
   the local models.
 - If the catalog has no `power` choice, `/idea-cloud` says so and starts
   nothing.
+- The bridge must emulate tool calls, because `cmd -p` is an agent with its
+  own tools and no API for the caller's. Before 2026-10-07 it dropped
+  `tools`, so a cloud session could never call one. The prototyper answered
+  one sentence and stopped, which surfaced as "no site/index.html was
+  written". `~/.hermes/scripts/cmd-gateway.py` now does three things:
+  - describes the functions in the prompt;
+  - parses a `<tool_calls>` block out of the reply into OpenAI
+    `tool_calls`;
+  - runs `cmd` in an empty scratch directory whose project settings deny
+    every built-in tool (`deny: ["*"]`), so only Hermes's sandboxed tools
+    act.
 - The Telegram message ends with `☁️ Cloud models: …` instead of
   `🧠 Local models: …`.
 
-- **The command returns at once.** It takes the one-build lock and hands it to
-  `prototype_pipeline.py run`, which runs detached. A second `/idea` while one
-  is building is refused, not queued.
+- **The command returns at once.** The build is a background job (next
+  section): it gets a status card with buttons, and several can run at once.
 - **Each idea gets two directories, and the split between them is the
   security boundary.**
   - **`~/prototypes/<slug>/` (WORK).** Mounted read-write into the Hermes
@@ -250,6 +360,12 @@ machine.
      that click transcript, so it judges what the page actually does.
   6. **Fix loop.** A failed browser test or `Verdict: request changes` goes
      back to the prototyper, for up to 2 fix rounds. Steps 3–5 then run again.
+     - A fix round that times out or crashes no longer fails the build. What
+       it left is re-tested once, published with a ⚠️ note, and the fixing
+       stops.
+     - A build session that ends without `site/index.html` gets one second
+       session that is told to write it. One that dies after writing the
+       page has its page tested anyway.
   7. **Publish.** A Cloudflare quick tunnel opens, and nothing is sent until
      the public URL answers 200. Telegram then gets one HTML message with an
      **Open prototype** button, the browser and review results, and the local
@@ -289,15 +405,24 @@ machine.
 **One-time machine setup.** Everything here is in `~/.hermes`, not this
 repository.
 
-1. Mount the prototypes folder into the sandbox. This is the only host
-   folder the sandbox can write:
+1. Mount the prototypes and implement folders into the sandbox. These are
+   the only host folders the sandbox can write. Also point `terminal.cwd` at
+   this repository, so gateway (Telegram) sessions load `.hermes.md` and the
+   project skills; with the docker backend and the cwd mount off, the
+   sandbox ignores that host path:
 
    ```yaml
    # config.yaml
    terminal:
+     cwd: "/home/<you>/Documents/repos/agents"
      docker_volumes:
        - "/home/<you>/prototypes:/workspace/prototypes:rw"
+       - "/home/<you>/sdlc-work:/workspace/work:rw"
    ```
+
+   Every `fallback_providers` model must be one your plan serves. A
+   fallback to `claude-sonnet-5-5`, refused with 403 `MODEL_NOT_IN_PLAN`,
+   kept one prototyper retrying until its 30-minute budget ran out.
 
 2. Add the cron jobs, then restart the gateway. The reaper is a backstop
    for the per-link `expire` timer, for example after a reboot. The scout

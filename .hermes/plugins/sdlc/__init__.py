@@ -41,10 +41,13 @@ PROBE_KEY_ENV_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def catalog_path() -> Path | None:
-    """The model catalog: a per-machine override in the Hermes home wins over
-    the plugin's models.json. None when neither exists (routing off)."""
+    """The model catalog: SDLC_MODELS_CATALOG (set by a job that pins every
+    role to one tier, and inherited by its nested sessions), then a
+    per-machine override in the Hermes home, then the plugin's models.json.
+    None when none exists (routing off)."""
     home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
-    for p in (home / "sdlc-models.json", DEFAULT_CATALOG):
+    pinned = os.environ.get("SDLC_MODELS_CATALOG")
+    for p in (*((Path(pinned),) if pinned else ()), home / "sdlc-models.json", DEFAULT_CATALOG):
         if p.is_file():
             return p
     return None
@@ -363,61 +366,113 @@ def orchestrate(task: str) -> str:
 
 
 PIPELINE = RUNNER.parent / "prototype_pipeline.py"
+IMPLEMENT = RUNNER.parent / "implement_pipeline.py"
+SUITE_REPO = RUNNER.parents[3]
 IDEA_MAX = 4000
 
 
-# /idea-cloud pins every pipeline role to this catalog choice: the Command Code
-# bridge tier. Override per machine with SDLC_CLOUD_CHOICE.
+# The cloud commands pin every pipeline role to this catalog choice: the
+# Command Code bridge tier. Override per machine with SDLC_CLOUD_CHOICE.
 CLOUD_CHOICE = os.environ.get("SDLC_CLOUD_CHOICE", "power")
+
+
+def _jobs():
+    """jobs.py beside this file. Loaded by path: Hermes imports this plugin
+    under its own package name, so a sibling `import jobs` is not reliable."""
+    import importlib.util
+    import sys
+    mod = sys.modules.get("sdlc_jobs")
+    if mod is None:
+        spec = importlib.util.spec_from_file_location("sdlc_jobs", RUNNER.parent / "jobs.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["sdlc_jobs"] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def _cloud_ready(command: str) -> str | None:
+    cat = _load_catalog() or {}
+    if CLOUD_CHOICE not in (cat.get("choices") or {}):
+        return (f"☁️ /{command.replace('-', '_')} needs a `{CLOUD_CHOICE}` choice in the sdlc model catalog "
+                f"({catalog_path() or 'none found'}); it has none. Use the local command instead.")
+    return None
 
 
 def idea(text: str) -> str:
     """/idea: build a prototype on the local models (each role's catalog default)."""
-    return _start_idea(text, choice=None, command="idea")
+    return start_job("idea", text)[1]
 
 
 def idea_cloud(text: str) -> str:
     """/idea-cloud: the same pipeline, every role on the Command Code cloud tier."""
-    cat = _load_catalog() or {}
-    if CLOUD_CHOICE not in (cat.get("choices") or {}):
-        return (f"☁️ /idea-cloud needs a `{CLOUD_CHOICE}` choice in the sdlc model catalog "
-                f"({catalog_path() or 'none found'}); it has none. Use /idea for the local models.")
-    return _start_idea(text, choice=CLOUD_CHOICE, command="idea-cloud")
+    return _cloud_ready("idea-cloud") or start_job("idea-cloud", text)[1]
 
 
-def _start_idea(text: str, choice: str | None, command: str) -> str:
-    """Start the idea → prototype → link pipeline and return at once.
+def implement(text: str) -> str:
+    """/implement [@repo] <task>: the orchestrator and its specialists change a
+    branch of the repository, on the local models."""
+    return start_job("implement", text)[1]
 
-    The build takes minutes, far longer than a chat turn should block, so
-    prototype_pipeline.py runs detached and reports to Telegram itself.
-    Deterministic, like /orchestrate: no model decides whether the prototyper
-    runs. The one-build lock is taken here and handed to the pipeline, so
-    "Building" is only ever said by the run that holds it. `choice` pins every
-    role to one catalog choice (written to the host-only state dir, where the
-    pipeline reads it); None keeps each role's default."""
-    text = (text or "").strip()
-    if not text:
-        return (f"usage: /{command} <what you want prototyped>  "
-                f"(or: hermes sdlc {command} \"<idea>\")")
-    if len(text) > IDEA_MAX:
-        return f"That idea is {len(text)} characters; keep it under {IDEA_MAX}."
-    import fcntl
+
+def implement_cloud(text: str) -> str:
+    """/implement-cloud: the same, every role on the Command Code cloud tier."""
+    return _cloud_ready("implement-cloud") or start_job("implement-cloud", text)[1]
+
+
+def _repos_dir() -> Path:
+    return Path(os.environ.get("SDLC_REPOS_DIR") or Path.home() / "Documents" / "repos").expanduser()
+
+
+def _repo_for(text: str) -> tuple[Path | None, str, str | None]:
+    """(repo, task, error). `@name task` picks ~/Documents/repos/<name>
+    (SDLC_REPOS_DIR); otherwise SDLC_IMPLEMENT_REPO, else this suite's repo."""
+    import re
+    m = re.match(r"@([A-Za-z0-9._-]+)\s+(.*)\Z", text, re.S)
+    if m:
+        name, text = m.group(1), m.group(2).strip()
+        if name in (".", ".."):
+            return None, text, f"no repository named {name!r}"
+        repo = _repos_dir() / name
+    else:
+        repo = Path(os.environ.get("SDLC_IMPLEMENT_REPO") or SUITE_REPO).expanduser()
+    if not (repo / ".git").exists():
+        names = sorted(p.name for p in _repos_dir().iterdir() if (p / ".git").exists()) if _repos_dir().is_dir() else []
+        return None, text, (f"{repo} is not a git repository. Pick one with @name: "
+                            + (", ".join(names[:20]) or f"none under {_repos_dir()}"))
+    return repo.resolve(), text, None
+
+
+def start_job(kind: str, text: str, repo: str | None = None, rerun_of: str | None = None) -> tuple[dict | None, str]:
+    """Create, launch and announce one background job; (job, reply).
+
+    Deterministic, like /orchestrate: no model decides whether the pipeline
+    runs. The reply goes back through Hermes; the job's status card, with
+    its buttons, is sent straight to Telegram — a command's reply cannot
+    carry buttons."""
     import re
     import sys
     import time
-    work_base = Path(os.environ.get("SDLC_PROTOTYPES_DIR") or Path.home() / "prototypes")
-    state_base = Path(os.environ.get("SDLC_PROTOTYPES_STATE")
-                      or Path.home() / ".local" / "state" / "sdlc-prototypes")
-    work_base.mkdir(parents=True, exist_ok=True)
-    state_base.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock = open(state_base / ".lock", "w")
-    try:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return "⏳ A prototype is already building — one at a time on this machine. Try again when its link arrives."
-        words = [w[:16] for w in re.findall(r"[a-z0-9]+", text.lower())[:5]]
-        base = f"{'-'.join(words)[:50].strip('-') or 'idea'}-{time.strftime('%m%d-%H%M%S')}"
+    jobs = _jobs()
+    text = (text or "").strip()
+    command = kind.replace("-", "_")
+    if not text:
+        if kind.startswith("implement"):
+            return None, (f"usage: /{command} [@repo] <what to build or change>  "
+                          f"(repos under {_repos_dir()}; default {os.environ.get('SDLC_IMPLEMENT_REPO') or SUITE_REPO})")
+        return None, (f"usage: /{command} <what you want prototyped>  "
+                      f"(or: hermes sdlc {kind} \"<idea>\")")
+    if len(text) > IDEA_MAX:
+        return None, f"That request is {len(text)} characters; keep it under {IDEA_MAX}."
+    cloud = kind.endswith("-cloud")
+    words = [w[:16] for w in re.findall(r"[a-z0-9]+", text.lower())[:5]]
+    base = f"{'-'.join(words)[:50].strip('-') or 'job'}-{time.strftime('%m%d-%H%M%S')}"
+    running = [j for j in jobs.active() if j.get("status") in ("running", "paused")]
+    if kind.startswith("idea"):
+        work_base = Path(os.environ.get("SDLC_PROTOTYPES_DIR") or Path.home() / "prototypes")
+        state_base = Path(os.environ.get("SDLC_PROTOTYPES_STATE")
+                          or Path.home() / ".local" / "state" / "sdlc-prototypes")
+        work_base.mkdir(parents=True, exist_ok=True)
+        state_base.mkdir(parents=True, exist_ok=True, mode=0o700)
         for n in range(100):
             slug = base if n == 0 else f"{base}-{n}"
             try:
@@ -426,28 +481,135 @@ def _start_idea(text: str, choice: str | None, command: str) -> str:
             except FileExistsError:
                 continue
         else:
-            return "Could not pick a free name for this idea; try again in a second."
+            return None, "Could not pick a free name for this idea; try again in a second."
         (work_base / slug / "site").mkdir(parents=True)
         (state_base / slug / "IDEA.md").write_text(text + "\n", encoding="utf-8")
-        if choice:
-            (state_base / slug / "MODEL_CHOICE").write_text(choice + "\n", encoding="utf-8")
-        logfd = os.open(state_base / slug / "pipeline.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        try:
-            subprocess.Popen([sys.executable, str(PIPELINE), "run", slug], stdin=subprocess.DEVNULL,
-                             stdout=logfd, stderr=logfd, cwd=str(RUNNER.parents[3]), start_new_session=True,
-                             pass_fds=(lock.fileno(),), env={**os.environ, "SDLC_LOCK_FD": str(lock.fileno())})
-        finally:
-            os.close(logfd)
-    finally:
-        lock.close()  # the child holds the same open file, so the lock stays held
-    where = (f"on the Command Code cloud ({_choice_model(choice)})" if choice else "on the local models")
-    return (f"🛠 Building prototype `{slug}` {where}. "
-            "I'll send the link here when it's up, then a code review. Usually 5–20 minutes.")
+        if cloud:
+            (state_base / slug / "MODEL_CHOICE").write_text(CLOUD_CHOICE + "\n", encoding="utf-8")
+        job = jobs.create(kind, text, slug=slug, state=str(state_base / slug), rerun_of=rerun_of)
+        argv = [sys.executable, str(PIPELINE), "run", slug]
+        what = f"prototype `{slug}`"
+    else:
+        if repo:
+            repo_path, task, err = Path(repo), text, None
+        else:
+            repo_path, task, err = _repo_for(text)
+        if err:
+            return None, f"🧩 {err}"
+        job = jobs.create(kind, task, slug=base, repo=str(repo_path), rerun_of=rerun_of,
+                          choice=CLOUD_CHOICE if cloud else None)
+        argv = [sys.executable, str(IMPLEMENT), "run", job["id"]]
+        what = f"`{task[:60]}` in {repo_path.name}"
+    job = jobs.update(job["id"], where=(f"☁️ Command Code cloud ({_choice_model(CLOUD_CHOICE)})" if cloud
+                                        else "🧠 local models"))
+    try:
+        job = jobs.launch(job, argv, SUITE_REPO)
+    except Exception as e:  # noqa: BLE001 — report, never leave a queued ghost
+        jobs.update(job["id"], status="failed", step=f"could not start: {e}")
+        return None, f"❌ Could not start the job: {e}"
+    job = jobs.post_status(job)
+    tier = "the Command Code cloud" if cloud else "the local models"
+    same_tier = sum(1 for j in running if str(j.get("kind", "")).endswith("-cloud") == cloud)
+    full = (len(running) >= jobs.max_jobs()
+            or same_tier >= (jobs.max_cloud_jobs() if cloud else jobs.max_local_jobs()))
+    busy = (f" {len(running)} other job(s) running — " + ("it waits for a free slot." if full else "it runs alongside.")
+            if running else "")
+    return job, (f"🛠 Started {what} on {tier} — job `{job['id']}`.{busy} "
+                 "Its status card (⏸ Pause · ⏹ Stop · 🔁 Run again) is in this chat; /jobs lists every job.")
 
 
 def _choice_model(choice: str) -> str:
     """The `-m` alias a catalog choice runs, for user-facing messages."""
     return str(((_load_catalog() or {}).get("choices") or {}).get(choice, {}).get("model") or choice)
+
+
+def jobs_command(text: str = "") -> str:
+    """/jobs: list recent jobs, and re-send the card of every active one so its
+    buttons sit at the bottom of the chat."""
+    jobs = _jobs()
+    recent = jobs.recent(10)
+    if not recent:
+        return "No jobs yet. Start one with /idea, /idea_cloud, /implement or /implement_cloud."
+    lines = []
+    for j in recent:
+        icon, label = jobs.STATUS.get(j.get("status"), ("•", j.get("status")))
+        name = j.get("slug") or j["id"]
+        lines.append(f"{icon} {j['id']} {j.get('kind')} · {label} — {str(j.get('step'))[:70]} · {name[:40]}")
+    sent = 0
+    for j in recent:
+        if j.get("status") in jobs.ACTIVE or (text or "").strip() == j["id"]:
+            jobs.post_status(j, new=True)
+            sent += 1
+    tail = f"\n\nSent {sent} live card(s) with their buttons below." if sent else ""
+    return "Recent jobs:\n" + "\n".join(lines) + tail
+
+
+def button_action(action: str, jid: str) -> str:
+    """One tap on a card button → the toast text. Runs in a worker thread."""
+    jobs = _jobs()
+    job = jobs.load(jid)
+    if not job:
+        return "That job no longer exists."
+    if action in ("pause", "resume", "stop"):
+        msg = getattr(jobs, action)(jid)
+    elif action == "again":
+        new, reply = start_job(job.get("kind", "idea"), job.get("text", ""), repo=job.get("repo"), rerun_of=jid)
+        return f"Started again as job {new['id']}." if new else reply
+    elif action == "discard":
+        # In its own process: implement_pipeline imports its siblings as
+        # top-level modules, which must not leak into the gateway.
+        import sys
+        r = subprocess.run([sys.executable, str(IMPLEMENT), "discard", jid], capture_output=True, text=True,
+                           timeout=300, cwd=str(SUITE_REPO))
+        msg = (r.stdout.strip().splitlines() or [r.stderr.strip()[-150:] or "Discard failed."])[-1]
+    else:
+        msg = "Refreshed."
+    jobs.post_status(jobs.reconcile(jobs.load(jid) or job))
+    return msg
+
+
+async def _button_allowed(query, adapter) -> bool:
+    """Both gates: the adapter's own callback allowlist when it has one, and
+    the owner allowlist — job control is the owner's alone."""
+    jobs = _jobs()
+    check, ctxf = getattr(adapter, "_callback_authorized", None), getattr(adapter, "_callback_ctx", None)
+    if check and ctxf:
+        try:
+            if not await check(query, ctxf(query), "⛔ Not allowed."):
+                return False
+        except Exception:  # noqa: BLE001 — a changed private API falls back to the allowlist
+            logger.debug("sdlc: adapter callback check unavailable", exc_info=True)
+    allowed = {u.strip() for u in jobs.env_file().get("TELEGRAM_ALLOWED_USERS", "").split(",") if u.strip()}
+    if str(getattr(query.from_user, "id", "")) in allowed:
+        return True
+    await query.answer(text="⛔ Not allowed.")
+    return False
+
+
+def _telegram_handlers(app, adapter) -> None:
+    """Card buttons: `sdlc:<action>:<job id>`. Scoped by pattern so the core
+    callback handler keeps every other button."""
+    import asyncio
+    from telegram.ext import CallbackQueryHandler
+
+    async def on_button(update, _context):
+        query = update.callback_query
+        m = _jobs().CALLBACK_RE.match(query.data or "")
+        if not m:
+            await query.answer()
+            return
+        if not await _button_allowed(query, adapter):
+            logger.warning("sdlc: refused button %s from user %s", query.data, getattr(query.from_user, "id", "?"))
+            return
+        logger.info("sdlc: button %s from user %s", query.data, getattr(query.from_user, "id", "?"))
+        try:
+            toast = await asyncio.to_thread(button_action, m.group(1), m.group(2))
+        except Exception as e:  # noqa: BLE001
+            logger.exception("sdlc: button %s failed", query.data)
+            toast = f"Failed: {e}"
+        await query.answer(text=str(toast)[:190])
+
+    app.add_handler(CallbackQueryHandler(on_button, pattern=r"^sdlc:"))
 
 
 def _setup_cli(parser) -> None:
@@ -463,6 +625,15 @@ def _setup_cli(parser) -> None:
     p.add_argument("text", nargs="+", help="The idea, in plain words")
     p = sub.add_parser("idea-cloud", help="Same as idea, on the Command Code cloud models")
     p.add_argument("text", nargs="+", help="The idea, in plain words")
+    p = sub.add_parser("implement", help="Background job: the orchestrator changes a branch of a repo "
+                                         "(@name picks one under ~/Documents/repos)")
+    p.add_argument("text", nargs="+", help="[@repo] the task, in plain words")
+    p = sub.add_parser("implement-cloud", help="Same as implement, on the Command Code cloud models")
+    p.add_argument("text", nargs="+", help="[@repo] the task, in plain words")
+    sub.add_parser("jobs", help="List background jobs and re-send the live status cards")
+    p = sub.add_parser("job", help="Control one background job, as its card buttons do")
+    p.add_argument("action", choices=["pause", "resume", "stop", "again", "refresh", "discard"])
+    p.add_argument("id", help="The job id (8 hex characters, from /jobs)")
 
 
 def _cli(args) -> int:
@@ -482,13 +653,24 @@ def _cli(args) -> int:
         out = _handle_agent(params)
         print(out)
         return 1 if out.startswith('{"success": false') else 0
-    if getattr(args, "sdlc_command", None) in ("idea", "idea-cloud"):
-        start = idea if args.sdlc_command == "idea" else idea_cloud
+    if getattr(args, "sdlc_command", None) in ("idea", "idea-cloud", "implement", "implement-cloud"):
+        start = {"idea": idea, "idea-cloud": idea_cloud, "implement": implement,
+                 "implement-cloud": implement_cloud}[args.sdlc_command]
         out = start(" ".join(args.text))
         print(out)
         return 0 if out.startswith("🛠") else 1
+    if getattr(args, "sdlc_command", None) == "jobs":
+        print(jobs_command())
+        return 0
+    if getattr(args, "sdlc_command", None) == "job":
+        if not _jobs().ID_RE.match(args.id):
+            print(f"bad job id {args.id!r}")
+            return 2
+        print(button_action(args.action, args.id))
+        return 0
     print("usage: hermes sdlc {orchestrate <task> | models | agent <role> <task-file> | idea <text> "
-          "| idea-cloud <text>}")
+          "| idea-cloud <text> | implement [@repo] <task> | implement-cloud [@repo] <task> | jobs "
+          "| job <action> <id>}")
     return 2
 
 
@@ -574,12 +756,26 @@ def register(ctx) -> None:
                       check_fn=_available, emoji="🧑‍💼")
     # Descriptions stay within Telegram's menu limit for plugin commands (40 chars),
     # so the menu shows them whole.
-    ctx.register_command("orchestrate", orchestrate,
-                         description="Run a task through the SDLC agent team", args_hint="<task>")
+    # The hints are optional (`[...]`), and truly so: each command answers a bare
+    # call with its usage. Hermes leaves `<...>` (required) plugin commands out of
+    # the Telegram "/" menu, which hid all three.
+    # In a chat every long request is a background job with a status card;
+    # /orchestrate there is /implement (the terminal's `hermes sdlc
+    # orchestrate` still runs in the foreground and prints the ledger).
+    ctx.register_command("orchestrate", implement,
+                         description="SDLC agent team on a task (background)", args_hint="[task]")
+    ctx.register_command("implement", implement,
+                         description="Build/change code on a branch (local)", args_hint="[@repo task]")
+    ctx.register_command("implement-cloud", implement_cloud,
+                         description="Build/change code on Command Code cloud", args_hint="[@repo task]")
     ctx.register_command("idea", idea,
-                         description="Prototype an idea on local models", args_hint="<idea>")
+                         description="Prototype an idea on local models", args_hint="[idea]")
     ctx.register_command("idea-cloud", idea_cloud,
-                         description="Prototype an idea on Command Code cloud", args_hint="<idea>")
+                         description="Prototype an idea on Command Code cloud", args_hint="[idea]")
+    ctx.register_command("jobs", jobs_command,
+                         description="List jobs; resend live cards w/ buttons", args_hint="[job id]")
+    if hasattr(ctx, "register_telegram_handler"):  # the card buttons
+        ctx.register_telegram_handler(_telegram_handlers)
     ctx.register_cli_command("sdlc", help="sdlc-suite: orchestrate, dispatch a role, prototype an idea, "
                                           "inspect model routing",
                              setup_fn=_setup_cli, handler_fn=_cli)
