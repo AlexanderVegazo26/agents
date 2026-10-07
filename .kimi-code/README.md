@@ -116,7 +116,7 @@ python sdlc-suite/tools/generate_trees.py --check    # what CI runs
 ```
 
 The old per-tree scripts (`convert-agents.py`, `sync-skills.py`, and the
-top-level `sync-all.py`, which now refuses to run) are superseded. They predate
+top-level `sync-all.py`, deleted 2026-09-30) are superseded. They predate
 the `version:` frontmatter field and would strip it from every generated agent,
 and they do not apply the per-target namespace transform — neither failure
 raises an error.

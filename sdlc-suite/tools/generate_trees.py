@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One canonical tree, six generated. Replaces the four convert-agents.py /
+"""One canonical tree, seven generated. Replaces the four convert-agents.py /
 sync-skills.py pairs and the skip-if-exists mirror that froze them.
 
     python sdlc-suite/tools/generate_trees.py            # regenerate everything
@@ -42,6 +42,46 @@ skill that was copied without the transform. `.agents` carries 0.
 
 So the prefix is per-target, not global, and mirroring the canonical tree
 verbatim into the bare-name trees would push 120 dead references into each.
+
+The pi target
+-------------
+Pi is the one port that is not a dot-directory mirror. It discovers skills
+itself — the Agent Skills location `.agents/skills/`, already generated for
+another harness — so copying a seventh skills tree into it would create the
+duplication hazard this repository's README warns about. What it gets is:
+
+* `.pi/prompts/` — the commands, de-namespaced, with
+  `${CLAUDE_PLUGIN_ROOT}` rewritten to the repository-relative `sdlc-suite`.
+  The commands backed by `workflows/*.js` carry an inserted note that the
+  `Workflow` tool is the `workflow` tool of the hand-maintained
+  `.pi/extensions/sdlc/` extension. The note is generation, not canon: the
+  canonical command must keep working in Claude Code, where the tool exists.
+* the repository-root `AGENTS.md` — from the hand-edited
+  `sdlc-suite/pi/AGENTS.md`, with a GENERATED header.
+
+Those two locations span one target, so its base is the repository root
+itself, and only the generator-owned paths are diffed: a hand-maintained
+`.pi/settings.json` or `.pi/extensions/` is never touched or pruned.
+
+The Hermes target
+-----------------
+Hermes is shaped like pi: it discovers `.agents/skills/` itself (as a
+project-local skill directory, once the repository is trusted), so it gets no
+skills copy either. What it gets is:
+
+* `.hermes/skills/<command>/SKILL.md` — the commands as skills, because
+  Hermes has no prompt-template directory: every skill is a `/<name>` slash
+  command, and the text typed after it arrives as a `User instruction:` line,
+  which is what `$ARGUMENTS` is rewritten to name. Same two body transforms as
+  pi, and the workflow-backed ones carry a Hermes note instead of pi's.
+* the repository-root `.hermes.md` — from the hand-edited
+  `sdlc-suite/hermes/HERMES.md`. Hermes loads `.hermes.md` ahead of
+  `AGENTS.md`, which is what keeps pi's instance file, and its pi-only tools,
+  out of a Hermes session.
+
+The role agents are deliberately not turned into skills (see HERMES.md), and
+`.hermes/plugins/` is hand-maintained: only `.hermes/skills/` and `.hermes.md`
+are diffed or pruned.
 """
 
 from __future__ import annotations
@@ -58,6 +98,12 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC_AGENTS = ROOT / "sdlc-suite" / "agents"
 SRC_SKILLS = ROOT / "sdlc-suite" / "skills"
 SRC_WORKFLOWS = ROOT / "sdlc-suite" / "workflows"
+SRC_COMMANDS = ROOT / "sdlc-suite" / "commands"
+SRC_PI_AGENTS = ROOT / "sdlc-suite" / "pi" / "AGENTS.md"
+SRC_HERMES_MD = ROOT / "sdlc-suite" / "hermes" / "HERMES.md"
+#: Claude Code's plugin-root variable. Undefined in pi, where the equivalent
+#: content lives at the repository-relative canonical path.
+PLUGIN_ROOT = "${CLAUDE_PLUGIN_ROOT}"
 
 NS = "sdlc-suite:"
 
@@ -209,6 +255,10 @@ class Target:
     #: also generate `workflows/*.js`. True only where the tree is a straight
     #: de-namespaced copy of the canonical scripts — see desired_files().
     workflows: bool = False
+    #: directory (relative to the repository root) the tree lives in; defaults
+    #: to the target name. `.pi` spans `.pi/prompts/` and the repository-root
+    #: `AGENTS.md`, so its base is the root itself — see "The pi target".
+    base: Path | None = None
 
 
 TARGETS = {
@@ -257,6 +307,19 @@ TARGETS = {
     # Skills only. No agents directory and no converter has ever produced one —
     # which is why it silently fell one skill behind: it was in no sync script.
     ".agents": Target(".agents", namespaced=False, agent_ext=None),
+
+    # pi. No agents, no skills of its own: pi discovers `.agents/skills/`
+    # itself, so a seventh skills copy would be the duplication hazard the
+    # README warns about. What it gets is `.pi/prompts/` (the commands,
+    # de-namespaced, `${CLAUDE_PLUGIN_ROOT}` rewritten repository-relative)
+    # and the repository-root `AGENTS.md` — see "The pi target" above.
+    ".pi": Target(".pi", namespaced=False, agent_ext=None, base=Path(".")),
+
+    # Hermes Agent. Like pi: no agents and no skills copy (it reads
+    # `.agents/skills/` as a project skill directory). It gets the commands as
+    # `.hermes/skills/<command>/SKILL.md` and the root `.hermes.md` — see
+    # "The Hermes target" above.
+    ".hermes": Target(".hermes", namespaced=False, agent_ext=None, base=Path(".")),
 }
 
 
@@ -405,6 +468,107 @@ EMITTERS = {"markdown": emit_markdown, "kimi": emit_kimi,
 # Generation
 # --------------------------------------------------------------------------- #
 
+# Inserted into the generated copy of the workflow-backed commands: under pi
+# the `Workflow` tool is the `workflow` tool registered by the hand-maintained
+# .pi/extensions/sdlc/ extension. The note keeps the generated copy honest in
+# both directions — how to run the pipeline here, and what to do when the
+# extension is not loaded.
+PI_WORKFLOW_NOTE = (
+    "> **Pi.** This command invokes the `Workflow` tool, which under pi is the\n"
+    "> `workflow` tool registered by the `.pi/extensions/sdlc/` extension. Call\n"
+    "> it with the `scriptPath` and the `args` OBJECT below — an object, never\n"
+    "> a bare string — and report the pipeline's result, not a substitute. If\n"
+    "> the `workflow` tool is not available in this session (the extension is\n"
+    "> not loaded), say so to the user; do not improvise a substitute run, and\n"
+    "> do not report a result this pipeline did not produce.\n"
+)
+
+
+def render_pi_prompt(md: Path) -> str:
+    """One `sdlc-suite/commands/*.md` file as a pi prompt template.
+
+    The frontmatter passes through untouched: pi prompt templates use the
+    same `description` / `argument-hint` fields and the same `$ARGUMENTS` /
+    `$1` substitutions the commands already carry, and the filename — not a
+    `name:` field — is the command name in both harnesses. The body gets the
+    two transforms that make it true under pi: bare names, and the plugin
+    root rewritten to the canonical path it actually resolves to here.
+    """
+    raw = _read_lf(md)
+    front, body = parse_frontmatter(raw)
+    lines = ["---"]
+    lines += [f"{k}: {v}" for k, v in front.items()]
+    lines += ["---", ""]
+    if md.stem in FLOW_SKILLS:
+        lines.append(PI_WORKFLOW_NOTE)
+    lines.append(denamespace(body).replace(PLUGIN_ROOT, "sdlc-suite").strip())
+    lines.append("")
+    return "\n".join(lines)
+
+
+HERMES_WORKFLOW_NOTE = (
+    "> **Hermes.** This command invokes the `Workflow` tool, which under Hermes\n"
+    "> is the `workflow` tool registered by the `.hermes/plugins/sdlc/` plugin.\n"
+    "> Call it with the `scriptPath` and the `args` OBJECT below — an object,\n"
+    "> never a bare string — and report the pipeline's result, not a substitute.\n"
+    "> If the `workflow` tool is not available in this session (the plugin is\n"
+    "> not enabled), say so to the user; do not improvise a substitute run, and\n"
+    "> do not report a result this pipeline did not produce.\n"
+)
+
+#: What `$ARGUMENTS` means once a command is a Hermes skill.
+HERMES_ARGUMENTS = "<the User instruction>"
+
+
+def render_hermes_skill(md: Path) -> str:
+    """One `sdlc-suite/commands/*.md` file as a Hermes skill.
+
+    A skill needs a `name`, which a command takes from its filename instead.
+    `argument-hint` has no Hermes meaning and is folded into the description,
+    where the skill index shows it. `$ARGUMENTS` becomes a reference to the
+    `User instruction:` line Hermes appends when the skill is invoked as a
+    slash command with text after it.
+    """
+    raw = _read_lf(md)
+    front, body = parse_frontmatter(raw)
+    desc = front.get("description", "").strip()
+    hint = front.get("argument-hint", "").strip()
+    if hint:
+        sep = "" if desc.endswith((".", "!", "?")) else "."
+        desc = f"{desc}{sep} Usage: /{md.stem} {hint}"
+    lines = ["---", f"name: {md.stem}", f"description: {yaml_dq(desc)}", "---", ""]
+    lines.append(GENERATED_MD.format(src=f"sdlc-suite/commands/{md.name}"))
+    lines.append("")
+    if "$ARGUMENTS" in body:
+        lines.append(
+            f"`{HERMES_ARGUMENTS}` below is the text that followed `/{md.stem}`, "
+            "shown as the `User instruction:` line of this message. If there is "
+            "none, ask for it rather than guessing.\n"
+        )
+    if md.stem in FLOW_SKILLS:
+        lines.append(HERMES_WORKFLOW_NOTE)
+    text = denamespace(body).replace(PLUGIN_ROOT, "sdlc-suite")
+    lines.append(text.replace("$ARGUMENTS", HERMES_ARGUMENTS).strip())
+    lines.append("")
+    return "\n".join(lines)
+
+
+def hermes_md() -> str:
+    body = _read_lf(SRC_HERMES_MD).strip()
+    return (
+        GENERATED_MD.format(src="sdlc-suite/hermes/HERMES.md") + "\n\n" + body + "\n"
+    )
+
+
+def pi_agents_md() -> str:
+    # Same discipline as the prompt bodies: LF-normalised bytes, never
+    # universal-newline text (see _read_lf).
+    body = _read_lf(SRC_PI_AGENTS).strip()
+    return (
+        GENERATED_MD.format(src="sdlc-suite/pi/AGENTS.md") + "\n\n" + body + "\n"
+    )
+
+
 def render_agent(md_path: Path, t: Target) -> str:
     text = _read_lf(md_path)
     if not t.namespaced:
@@ -420,8 +584,38 @@ def render_agent(md_path: Path, t: Target) -> str:
     return EMITTERS[t.agent_format](md_path.stem, front, body, t, src_rel)
 
 
+def desired_pi_files() -> dict[Path, str]:
+    out: dict[Path, str] = {}
+    for md in sorted(SRC_COMMANDS.glob("*.md")):
+        out[Path(".pi/prompts") / md.name] = render_pi_prompt(md)
+    out[Path("AGENTS.md")] = pi_agents_md()
+    return out
+
+
+#: Commands with no Hermes skill. `install-routing` writes ROUTING.md into
+#: `.claude/CLAUDE.md`, which Hermes never reads while `.hermes.md` exists — and
+#: Hermes's skills_guard rates a skill that edits agent config "dangerous" and
+#: quarantines it on every load. Shipping it would be a skill that silently
+#: does not exist.
+HERMES_SKIP_COMMANDS = {"install-routing"}
+
+
+def desired_hermes_files() -> dict[Path, str]:
+    out: dict[Path, str] = {}
+    for md in sorted(SRC_COMMANDS.glob("*.md")):
+        if md.stem in HERMES_SKIP_COMMANDS:
+            continue
+        out[Path(".hermes/skills") / md.stem / "SKILL.md"] = render_hermes_skill(md)
+    out[Path(".hermes.md")] = hermes_md()
+    return out
+
+
 def desired_files(t: Target) -> dict[Path, str]:
     """Every file this target should contain, as {relative path: content}."""
+    if t.name == ".pi":
+        return desired_pi_files()
+    if t.name == ".hermes":
+        return desired_hermes_files()
     out: dict[Path, str] = {}
 
     if t.agent_ext:
@@ -468,6 +662,48 @@ def desired_files(t: Target) -> dict[Path, str]:
     return out
 
 
+def existing_pi_files() -> dict[Path, str]:
+    """Only the paths the generator owns.
+
+    Anything else under `.pi/` — `settings.json`, `extensions/` — is
+    hand-maintained, per machine or per project, and must never be diffed,
+    rewritten or pruned: the same regression-as-sync failure the `local_skills`
+    guard exists to prevent.
+    """
+    out: dict[Path, str] = {}
+    prompts = ROOT / ".pi" / "prompts"
+    if prompts.is_dir():
+        for f in sorted(prompts.glob("*.md")):
+            out[f.relative_to(ROOT)] = f.read_bytes().decode("utf-8")
+    if (ROOT / "AGENTS.md").is_file():
+        out[Path("AGENTS.md")] = (ROOT / "AGENTS.md").read_bytes().decode("utf-8")
+    return out
+
+
+def existing_hermes_files() -> dict[Path, str]:
+    """Only the generated command skills and `.hermes.md`.
+
+    `.hermes/skills/` is also Hermes's native project-skill location, so a
+    directory there is ours only if its SKILL.md carries our GENERATED marker;
+    a hand-made project skill is never diffed or pruned.
+    `.hermes/plugins/` is hand-maintained and never touched.
+    """
+    out: dict[Path, str] = {}
+    skills = ROOT / ".hermes" / "skills"
+    marker = "<!-- GENERATED from sdlc-suite/"
+    if skills.is_dir():
+        for sd in sorted(p for p in skills.iterdir() if p.is_dir()):
+            md = sd / "SKILL.md"
+            if not (md.is_file() and marker in md.read_bytes().decode("utf-8", "replace")):
+                continue
+            for f in sorted(sd.rglob("*")):
+                if f.is_file():
+                    out[f.relative_to(ROOT)] = f.read_bytes().decode("utf-8")
+    if (ROOT / ".hermes.md").is_file():
+        out[Path(".hermes.md")] = (ROOT / ".hermes.md").read_bytes().decode("utf-8")
+    return out
+
+
 def is_bytecode(f: Path) -> bool:
     """Python's own cache files. A skill that ships a script (image-generation)
     gets a __pycache__ beside it the moment anything imports it, and copying
@@ -478,6 +714,10 @@ def is_bytecode(f: Path) -> bool:
 
 
 def existing_files(base: Path, t: Target) -> dict[Path, str]:
+    if t.name == ".pi":
+        return existing_pi_files()
+    if t.name == ".hermes":
+        return existing_hermes_files()
     out: dict[Path, str] = {}
     subs = ["agents", "skills"] + (["workflows"] if t.workflows else [])
     for sub in subs:
@@ -518,7 +758,7 @@ class TreeDelta:
 
 
 def diff_tree(name: str, t: Target) -> TreeDelta:
-    base = ROOT / name
+    base = ROOT / (t.base or name)
     want = desired_files(t)
     have = existing_files(base, t)
     d = TreeDelta()
@@ -540,7 +780,7 @@ def diff_tree(name: str, t: Target) -> TreeDelta:
 
 
 def apply_tree(name: str, t: Target, d: TreeDelta) -> None:
-    base = ROOT / name
+    base = ROOT / (t.base or name)
     want = desired_files(t)
     for rel in d.added + d.updated:
         p = base / rel
@@ -554,6 +794,13 @@ def apply_tree(name: str, t: Target, d: TreeDelta) -> None:
         p = base / rel
         if p.is_file():
             p.unlink()
+    # A removed `.hermes/skills/<command>/SKILL.md` leaves its directory, which
+    # Hermes would still scan; drop it once empty.
+    if t.name == ".hermes":
+        for rel in d.removed:
+            sd = (base / rel).parent
+            if sd.is_dir() and not any(sd.iterdir()):
+                sd.rmdir()
     # Prune skill directories the source no longer has.
     skills = base / "skills"
     if skills.is_dir():

@@ -1,0 +1,66 @@
+{
+  "_comment": "Model routing for the sdlc plugin's `agent` tool. Per machine: copy to ~/.hermes/sdlc-models.json (or $HERMES_HOME/sdlc-models.json) to override this file wholesale. `model` is passed to `hermes chat -m` (an alias from config.yaml model_aliases, or a model id); `provider` is optional. `probe` is a URL whose /v1/models-style JSON must list `expect` as an exact model id for the choice to count as available; omit `probe` to skip the check. `probe_key_env` names an environment variable whose value the probe sends as `Authorization: Bearer` (the key never goes in this file; unset means the choice counts as down). These defaults route every choice through the LlamaStash proxy (:11435), which loads a model on first request — set LLAMASTASH_API_KEY in ~/.hermes/.env and the aliases `fast`, `qwen38` and `ornith` in config.yaml model_aliases (see README). Choice names are what the orchestrator sees, so describe what each is FOR.",
+  "choices": {
+    "fast": {
+      "model": "fast",
+      "probe": "http://127.0.0.1:11435/v1/models",
+      "probe_key_env": "LLAMASTASH_API_KEY",
+      "expect": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL",
+      "use_for": "Qwen3-Coder-30B (MoE, ~76 tok/s). Mechanical and code-heavy work: running commands and reporting raw output, focused implementation or test edits with a clear spec, quick lookups. Fastest; weakest at judgment and long-range reasoning.",
+      "fallback": ["balanced", "deep"]
+    },
+    "balanced": {
+      "model": "qwen38",
+      "probe": "http://127.0.0.1:11435/v1/models",
+      "probe_key_env": "LLAMASTASH_API_KEY",
+      "expect": "Qwen3.8-27B-UD-Q4_K_XL",
+      "use_for": "Qwen3.8-27B (dense, 131k context). Generalist: requirements, documentation, UX and product writing, persona exploration, moderate analysis. Loads on first use, so the first call is slow.",
+      "fallback": ["deep", "fast"]
+    },
+    "deep": {
+      "model": "ornith",
+      "probe": "http://127.0.0.1:11435/v1/models",
+      "probe_key_env": "LLAMASTASH_API_KEY",
+      "expect": "Ornith-1.5-35B-Q8_0",
+      "use_for": "Ornith-1.5-35B-A3B (Q8_0, MoE ~3B active, thinking on, 131k context; 59-70 tok/s generation measured on Strix Halo 2026-10-06). The thinking-on model: orchestration, architecture decisions, security, independent review and verification, root cause, release judgment. Same context window as balanced. Spend it where judgment decides the outcome.",
+      "fallback": ["balanced", "fast", "power"]
+    },
+    "power": {
+      "model": "cc-deepseek",
+      "use_for": "Command Code bridge (deepseek/deepseek-v4-pro through the local cmd-gateway). The escalation tier: reach for it when the local models are unavailable, out of VRAM, or the task outgrows them. No probe — the bridge is a local service.",
+      "fallback": ["deep"]
+    }
+  },
+  "roles": {
+    "orchestrator": "deep",
+    "solution-architect": "deep",
+    "security-engineer": "deep",
+    "code-reviewer": "deep",
+    "qa-engineer": "deep",
+    "incident-commander": "deep",
+    "release-manager": "deep",
+    "product-archaeologist": "deep",
+
+    "product-manager": "balanced",
+    "product-analyst": "balanced",
+    "ux-designer": "balanced",
+    "technical-writer": "balanced",
+    "site-reliability": "balanced",
+    "performance-engineer": "balanced",
+    "database-engineer": "balanced",
+    "persona-discovery": "balanced",
+    "persona-runner": "balanced",
+    "journey-orchestrator": "balanced",
+    "boundary-prober": "balanced",
+
+    "software-engineer": "fast",
+    "prototyper": "fast",
+    "ui-engineer": "fast",
+    "qa-runner": "fast"
+  },
+  "role_model_aliases": {
+    "haiku": "fast",
+    "sonnet": "balanced",
+    "opus": "deep"
+  }
+}

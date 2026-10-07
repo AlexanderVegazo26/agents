@@ -29,7 +29,7 @@ what you assume.
 
 - [ ] `python sdlc-suite/tools/counts.py --check` — documented counts match the tree
 - [ ] `python sdlc-suite/tools/eol_check.py --check` — definitions are LF, measured on the bytes
-- [ ] `python sync-all.py` — ports regenerated, and I read the diff rather than just letting it run
+- [ ] `python sdlc-suite/tools/generate_trees.py` — ports regenerated, and I read the diff rather than just letting it run
 - [ ] `python commandcode-suite/validate.py`
 - [ ] `python .kimi-code/validate.py`
 - [ ] Nothing I added would fail the secret scan — no token, employer name, private project name, absolute home path or `*-VEX.*` requirement id
@@ -37,8 +37,8 @@ what you assume.
 **Line endings.** `*.md` is pinned to LF by `.gitattributes`. Five agents once
 silently stopped registering — dispatch failed with "agent type not found" —
 and every one had CRLF in its frontmatter. The pin does not reach a converter
-writing to disk outside git, so if you ran `sync-all.py` on Windows, check the
-bytes rather than assuming.
+writing to disk outside git, so if you regenerated on Windows, check the bytes
+rather than assuming (`python sdlc-suite/tools/eol_check.py --check`).
 
 ## The registry invariants
 

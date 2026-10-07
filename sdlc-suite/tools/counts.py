@@ -43,6 +43,8 @@ TREES = [
     (".copilot/", ".json"),
     (".codex/", ".toml"),
     (".agents/", None),
+    (".pi/", None),
+    (".hermes/", None),
 ]
 
 # Documents that carry a generated block. Adding a document here is all that is
@@ -102,13 +104,26 @@ def measure() -> list[dict]:
     rows = []
     for tree, agent_ext in TREES:
         base = ROOT / tree.rstrip("/")
+        # The pi port's slash commands live in `.pi/prompts/` — pi's prompt-
+        # template location — not `.pi/commands/`. Counting the other
+        # directory would report a tree that ships commands as shipping none,
+        # the exact stale-count failure this tool exists to stop.
+        commands_dir = "prompts" if tree == ".pi/" else "commands"
+        if tree == ".hermes/":
+            # Hermes has no prompt-template directory: its slash commands ARE
+            # skills, one `.hermes/skills/<command>/` each, and its domain
+            # skills are the auto-discovered `.agents/skills/`. Counting that
+            # directory as skills would report commands as skills.
+            rows.append({"tree": tree, "agents": None, "skills": None, "workflows": None,
+                         "commands": _count_dirs(base / "skills")})
+            continue
         rows.append(
             {
                 "tree": tree,
                 "agents": _count_files(base / "agents", agent_ext) if agent_ext else None,
                 "skills": _count_dirs(base / "skills"),
                 "workflows": _count_workflows(base / "workflows"),
-                "commands": _count_files(base / "commands", ".md"),
+                "commands": _count_files(base / commands_dir, ".md"),
             }
         )
     return rows
@@ -136,6 +151,9 @@ def render() -> str:
         "",
         "`—` means the tree does not ship that artifact kind. `.agents/` is skills only.",
         "`.kimi-code/` skills include six workflow-launcher skills that exist only in that port.",
+        "`.pi/` ships the generated prompt templates plus the hand-maintained `extensions/sdlc/`",
+        "(the `agent` and `workflow` tools) and `validate.py`; its skills are the",
+        "auto-discovered `.agents/skills/`.", 
         END,
     ]
     return "\n".join(lines)

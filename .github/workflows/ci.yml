@@ -18,9 +18,11 @@
 #
 #   2. A gate has to be capable of failing. Every live step here was run
 #      against a deliberately broken tree before it was committed, and the
-#      failure observed. One validator that exists — `verify-bodies.py` —
-#      is NOT wired live, because it prints its failures and then exits 0;
-#      see the commented block in the `validate` job for the detail.
+#      failure observed. The rule exists because of `verify-bodies.py`: it
+#      used to print its failures and then exit 0 — a permanently green step,
+#      which is worse than no step because it invites skipping the check. It
+#      is wired live now that it exits 1 on a mismatch (2 on a zero-file
+#      scan); the `validate` job records the proof.
 #
 # Third-party actions are pinned to a full commit SHA rather than a tag,
 # because a tag is mutable and a moved tag is a silent supply-chain change.
@@ -179,6 +181,34 @@ jobs:
       # of failing: hand-editing one generated file makes it exit 1 naming the tree.
       - name: Generated trees are in sync with sdlc-suite
         run: python sdlc-suite/tools/generate_trees.py --check
+
+      # The pi port has two parts: the generated tree (`.pi/prompts/` and the
+      # root `AGENTS.md`, already covered by generate_trees.py --check above)
+      # and the hand-maintained `.pi/extensions/sdlc/`, which gives pi the two
+      # primitives the suite is written against — sub-agent dispatch and the
+      # Workflow sandbox. validate.py checks the prompts' frontmatter and
+      # rewrites, that every workflow-backed prompt names a script that
+      # exists and carries its pi note, that the root `AGENTS.md` is the
+      # generated copy of `sdlc-suite/pi/AGENTS.md`, and runs the extension's
+      # selftest under the host node (no pi, no network, no LLM).
+      #
+      # Proven capable of failing: a leftover `${CLAUDE_PLUGIN_ROOT}` in a
+      # prompt, a scriptPath that does not resolve, a drifted root
+      # `AGENTS.md`, or a broken selftest each exit 1 naming the file; an
+      # empty `.pi/prompts/` exits 2 rather than reading as a pass.
+      - name: .pi structure and sdlc extension selftest
+        run: python .pi/validate.py
+
+      # The Hermes port has the same two halves: the generated `.hermes/skills/`
+      # (the commands as skills) and `.hermes.md`, covered by --check above,
+      # and the hand-maintained `.hermes/plugins/sdlc/` plugin, whose runner
+      # imports the pi extension's lib.js. validate.py checks each command
+      # skill's frontmatter, leftover placeholders and scriptPath, registers
+      # the plugin against a stub ctx, and runs the runner's selftest (no
+      # hermes, no network, no LLM). Proven capable of failing: a scriptPath
+      # pointing at a missing script exits 1 naming the skill.
+      - name: .hermes structure and sdlc plugin selftest
+        run: python .hermes/validate.py
 
       # The runtime block is pasted into six workflows because the sandbox has
       # no `require`. Proven capable of failing: before this gate existed one

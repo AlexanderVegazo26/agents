@@ -17,6 +17,10 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 | `.claude/agents/`, `.claude/skills/`, `.claude/workflows/` | **Live** definitions backing the bare names (`qa-engineer`) when working in this repository. Generated from `sdlc-suite/` — agents, skills and workflows all three. |
 | `sdlc-suite/` | **The canonical, hand-edited tree.** Packaged as a Claude Code plugin, backing `sdlc-suite:*` names, published through `.claude-plugin/marketplace.json`. Has its own [README](sdlc-suite/README.md) and `USAGE.md`. |
 | `commandcode-suite/`, `.kimi-code/`, `.codex/`, `.copilot/`, `.agents/` | Ports to other harnesses. Their `agents/` and `skills/` are generated from `sdlc-suite/`; their runners, commands and workflow scripts are hand-maintained, because those target different runtimes. **Not invocable from Claude Code** — stated by the maintainer; not independently exercised here. |
+| `.pi/prompts/` + root `AGENTS.md` | **Pi harness port, generated part.** Generated from `sdlc-suite/`: the commands as prompt templates (with `${CLAUDE_PLUGIN_ROOT}` rewritten to repository-relative paths) and the pi instance configuration. Pi discovers skills from `.agents/skills/` directly, so no skills are copied. |
+| `.pi/extensions/sdlc/` | **Pi harness port, hand-maintained part.** The pi extension that provides the two primitives the suite is written against: the `agent` tool (one sub-agent dispatch as a separate `pi -p` session running the named role file) and the `workflow` tool (`sdlc-suite/workflows/*.js` in a `node:vm` sandbox reproducing the Claude Code Workflow allowlist). See its [README](.pi/extensions/sdlc/README.md); `node .pi/extensions/sdlc/lib.js --selftest` is the offline gate, wired into CI by `.pi/validate.py`. |
+| `.hermes/skills/` + root `.hermes.md` | **Hermes Agent port, generated part.** The commands as Hermes skills (Hermes turns each skill into a `/<name>` slash command; `install-routing` is omitted, see the generator) and the Hermes instance configuration, which Hermes loads ahead of `AGENTS.md`. Hermes reads `.agents/skills/` as a project skill directory once the repository is trusted, so no skills are copied. |
+| `.hermes/plugins/sdlc/` | **Hermes Agent port, hand-maintained part.** A Hermes plugin providing the same two primitives as the pi extension: `agent` (one role per separate `hermes chat` process) and `workflow`. Its Node runner imports the pi extension's `lib.js`, so the sandbox is shared code, not a copy. Install and caveats: its [README](.hermes/plugins/sdlc/README.md); `python .hermes/validate.py` is the offline gate, wired into CI. |
 | `.claude/audit/` | The registry's own audit report and remediation record. Not shipped with the plugin. |
 
 <!-- counts:start -->
@@ -24,16 +28,21 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 24 | 62 | 6 | — |
-| `sdlc-suite/` | 24 | 62 | 6 | 10 |
-| `commandcode-suite/` | 24 | 62 | 6 | 6 |
-| `.kimi-code/` | 24 | 68 | 6 | — |
-| `.copilot/` | 24 | 62 | — | — |
-| `.codex/` | 24 | 62 | — | — |
-| `.agents/` | — | 62 | — | — |
+| `.claude/` | 24 | 63 | 6 | — |
+| `sdlc-suite/` | 24 | 63 | 6 | 10 |
+| `commandcode-suite/` | 24 | 63 | 6 | 6 |
+| `.kimi-code/` | 24 | 69 | 6 | — |
+| `.copilot/` | 24 | 63 | — | — |
+| `.codex/` | 24 | 63 | — | — |
+| `.agents/` | — | 63 | — | — |
+| `.pi/` | — | — | — | 10 |
+| `.hermes/` | — | — | — | 9 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
+`.pi/` ships the generated prompt templates plus the hand-maintained `extensions/sdlc/`
+(the `agent` and `workflow` tools) and `validate.py`; its skills are the
+auto-discovered `.agents/skills/`.
 <!-- counts:end -->
 
 ### Where to start
@@ -46,7 +55,7 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 
 ## Two things worth knowing before you use this
 
-**The duplication is a hazard, not just redundancy.** The same agents exist in several trees, and editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the hand-edited source; the `agents/` and `skills/` of every other tree are generated from it, as is `.claude/workflows/`, and a hand edit to any of those is silently overwritten. `.agents/` ships skills only, with no agents directory — deliberate, not a gap.
+**The duplication is a hazard, not just redundancy.** The same agents exist in several trees, and editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the hand-edited source; the `agents/` and `skills/` of every other tree are generated from it, as is `.claude/workflows/`, as are `.pi/prompts/` and the root `AGENTS.md`, as are `.hermes/skills/` and the root `.hermes.md`, and a hand edit to any of those is silently overwritten. `.agents/` ships skills only, with no agents directory — deliberate, not a gap.
 
 The scope is worth knowing precisely, because getting it wrong has already cost something here: `commandcode-suite/workflows/`, `.kimi-code/workflows/`, the per-harness runners and every README are **not** generated. A change to a workflow script has to be made in three places by hand. See `CLAUDE.md` for the table and `CONTRIBUTING.md` for what CI checks.
 

@@ -46,13 +46,14 @@ DEFAULT_ROOTS = [
     ".codex",
     ".commandcode",
     ".copilot",
+    ".hermes",
     ".kimi-code",
     "commandcode-suite",
     "sdlc-suite",
 ]
 
 # Root-level files that are part of the tooling and equally able to break.
-DEFAULT_FILES = ["kflow", "sync-all.py", ".gitattributes", "CLAUDE.md"]
+DEFAULT_FILES = ["kflow", ".gitattributes", "CLAUDE.md"]
 
 # Also scanned. Independent review found these uncovered by injecting CRLF into
 # each in turn and watching this tool exit 0 every time. .gitattributes pins them
@@ -64,6 +65,9 @@ DEFAULT_ROOTS += [".github", "docs"]
 DEFAULT_FILES += [
     ".pre-commit-config.yaml", ".gitleaks.toml", "README.md",
     "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md",
+    # Harness instance files at the root: each is the one context file its
+    # harness loads, so a CRLF one is a whole-session regression.
+    "AGENTS.md", ".hermes.md",
 ]
 
 # Never descend into these. nawi / nawi-vex / snagit-clone are separate
