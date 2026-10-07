@@ -23,7 +23,12 @@
       "probe_key_env": "LLAMASTASH_API_KEY",
       "expect": "Ornith-1.5-35B-Q8_0",
       "use_for": "Ornith-1.5-35B-A3B (Q8_0, MoE ~3B active, thinking on, 131k context; 59-70 tok/s generation measured on Strix Halo 2026-10-06). The thinking-on model: orchestration, architecture decisions, security, independent review and verification, root cause, release judgment. Same context window as balanced. Spend it where judgment decides the outcome.",
-      "fallback": ["balanced", "fast"]
+      "fallback": ["balanced", "fast", "power"]
+    },
+    "power": {
+      "model": "cc-deepseek",
+      "use_for": "Command Code bridge (deepseek/deepseek-v4-pro through the local cmd-gateway). The escalation tier: reach for it when the local models are unavailable, out of VRAM, or the task outgrows them. No probe — the bridge is a local service.",
+      "fallback": ["deep"]
     }
   },
   "roles": {

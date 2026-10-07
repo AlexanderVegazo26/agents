@@ -329,19 +329,25 @@ def _llamastash(*args: str, timeout: float = 60) -> subprocess.CompletedProcess:
     return subprocess.run([_bin("llamastash"), *args], capture_output=True, text=True, timeout=timeout)
 
 
-def _model_for_role(role: str, choice: str | None = None) -> str | None:
-    """The LlamaStash model id a role runs on: catalog role → choice → `-m`
-    alias → config.yaml model_aliases[alias].model."""
+def _model_for_role(role: str, choice: str | None = None) -> tuple[str | None, str]:
+    """(model id, provider) a role runs on: catalog role → choice → `-m`
+    alias → config.yaml model_aliases[alias].{model,provider}. Remote providers
+    (e.g. the Command Code bridge) need no local model loading."""
     plugin = _plugin()
     cat = plugin._load_catalog() or {}
     choice = choice or (cat.get("roles") or {}).get(role)
     alias = ((cat.get("choices") or {}).get(choice) or {}).get("model")
     if not alias:
-        return None
+        return None, ""
     text = (HERMES_HOME / "config.yaml").read_text(errors="replace")
     block = re.search(r"^model_aliases:\n(.*?)(?=^\S)", text, re.S | re.M)
-    m = block and re.search(rf"^  {re.escape(alias)}:\n(?:    .*\n)*?    model:\s*\"?([^\s\"]+)", block.group(1), re.M)
-    return m.group(1) if m else alias
+    m = block and re.search(rf"^  {re.escape(alias)}:\n((?:    .*\n)*)", block.group(1), re.M)
+    if not m:
+        return alias, ""
+    body = m.group(1)
+    mm = re.search(r"^    model:\s*\"?([^\s\"]+)", body, re.M)
+    pm = re.search(r"^    provider:\s*\"?([^\s\"]+)", body, re.M)
+    return (mm.group(1) if mm else alias), (pm.group(1) if pm else "llamastash")
 
 
 def _running() -> dict[str, str]:
@@ -357,11 +363,15 @@ def _running() -> dict[str, str]:
 
 def ensure_model(role: str, choice: str | None = None) -> str:
     """Make sure the local model a role runs on is loaded, swapping other
-    models out when there is not enough GPU memory. Returns a one-line note of
-    what was done; raises StepError when the model cannot be brought up."""
-    want = _model_for_role(role, choice)
+    models out when there is not enough GPU memory. Remote providers (Command
+    Code bridge, …) need no loading and pass straight through. Returns a
+    one-line note; raises StepError when the model cannot be brought up."""
+    want, provider = _model_for_role(role, choice)
     if not want:
-        raise StepError(f"no local model is routed for {role} — check the sdlc model catalog")
+        raise StepError(f"no model is routed for {role} — check the sdlc model catalog")
+    if provider and provider != "llamastash":
+        log.info("model %s for %s is remote via %s — no local load", want, role, provider)
+        return f"{want} (remote via {provider})"
     running = _running()
     if running.get(want) == "ready":
         log.info("model %s for %s is already loaded", want, role)
