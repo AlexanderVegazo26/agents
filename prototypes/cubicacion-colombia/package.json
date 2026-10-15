@@ -1,0 +1,16 @@
+{
+  "name": "obrabase-ai-prototipo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Prototipo clicable de ObraBase AI: presupuestos trazables para adecuación de droguerías en Colombia.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test:unit": "node --test tests/calc.test.mjs tests/tax.test.mjs tests/data.test.mjs tests/regression_iva.test.mjs tests/csv.test.mjs tests/url.test.mjs",
+    "build:prices": "python tools/build_prices.py",
+    "test:e2e": "python tests/e2e.py && python tests/e2e_actions.py"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

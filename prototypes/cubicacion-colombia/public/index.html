@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es-CO">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ObraBase AI (prototipo)</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b5cad'/%3E%3Cpath d='M8 23V12l8-5 8 5v11h-5v-6h-6v6z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#app">Saltar al contenido</a>
+  <div class="demo-banner no-print" role="note">
+    Prototipo · IA simulada · precios <strong>reales</strong> de proveedores en Colombia consultados el 15/10/2026 · no es asesoría tributaria
+  </div>
+  <header class="topbar no-print">
+    <a class="brand" href="#/">ObraBase <span>AI</span></a>
+    <nav aria-label="Principal"><a href="#/">Proyectos</a></nav>
+    <div class="persona">
+      <label for="persona">Actuando como</label>
+      <select id="persona"></select>
+    </div>
+  </header>
+  <main id="app" tabindex="-1"></main>
+  <footer class="footer no-print">
+    <span>Selector de persona en lugar de inicio de sesión · los datos se guardan solo en este navegador.</span>
+    <span class="footer-actions">
+      <button type="button" class="btn small" id="btn-company">Datos de su empresa</button>
+      <button type="button" class="btn small" id="btn-reset">Reiniciar demo</button>
+    </span>
+  </footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="js/prices.js"></script>
+  <script src="js/calc.js"></script>
+  <script src="js/csv.js"></script>
+  <script src="js/url.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
