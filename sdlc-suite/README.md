@@ -25,15 +25,15 @@ sdlc-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 25 | 64 | 6 | — |
-| `sdlc-suite/` | 25 | 64 | 6 | 10 |
-| `commandcode-suite/` | 25 | 64 | 6 | 6 |
-| `.kimi-code/` | 25 | 70 | 6 | — |
-| `.copilot/` | 25 | 64 | — | — |
-| `.codex/` | 25 | 64 | — | — |
-| `.agents/` | — | 64 | — | — |
-| `.pi/` | — | — | — | 10 |
-| `.hermes/` | — | — | — | 9 |
+| `.claude/` | 25 | 65 | 6 | — |
+| `sdlc-suite/` | 25 | 65 | 6 | 11 |
+| `commandcode-suite/` | 25 | 65 | 6 | 6 |
+| `.kimi-code/` | 25 | 71 | 6 | — |
+| `.copilot/` | 25 | 65 | — | — |
+| `.codex/` | 25 | 65 | — | — |
+| `.agents/` | — | 65 | — | — |
+| `.pi/` | — | — | — | 11 |
+| `.hermes/` | — | — | — | 10 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.

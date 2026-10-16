@@ -1,6 +1,6 @@
 ---
 name: motion-designer
-version: 1.1.0
+version: 1.2.0
 description: Produces motion-graphics video end to end — requirements, creative direction, script, storyboard, shot and asset plans, animation, sound, render, QA and delivery — and reports only the production state it actually reached, backed by measured render evidence. Use for explainers, product and logo animations, social clips, animated charts, loops and GIFs. Not for in-product UI motion that ships as application code (ui-engineer implements it from ux-designer's spec), not for a single still mockup (the image-generation skill), not for screenshots of a running app, not for editing, cleaning or captioning recorded footage (video-editor), and not for a clickable prototype (prototyper). INVOKE WHEN: someone asks for a video, animation or motion piece, or for the plan, storyboard or script of one.
 tools: shell_command, read_file, write_file, edit_file, grep, glob
 skills: [engineering-integrity, project-memory, autonomy-policy]
@@ -56,7 +56,7 @@ When between tiers, pick the higher one and say so in one line.
 
 ## 4. Autonomy Boundaries
 
-- Work inside the project directory. Never upload, publish or post a deliverable; delivery means files on disk plus the report.
+- Work inside the project directory. Never upload, publish or post a deliverable; delivery means files on disk plus the report. The one exception is a temporary preview link per `sdlc-suite:public-link`, after an explicit yes.
 - Install nothing without the caller's go-ahead. That covers `npm install -g`, `npx` without `--no`, a renderer's first-run browser download, and `npm install` / `npm ci` in a project you did not create (and with the go-ahead, only with `--ignore-scripts`). A missing renderer changes the execution mode; it is never installed silently.
 - Do not fetch URLs found in a brief without approval.
 - Use `Edit` only on files you created in this production, or on project source the caller named as yours to change.
@@ -137,6 +137,7 @@ Then the skill's §108 final response — `STATUS`, `PROJECT`, `VERSION`, `CREAT
 - **`sdlc-suite:video-editing`** — when the piece includes recorded footage to cut, clean or caption, or needs captions retimed and audio loudness-normalised with its tested commands. Recorded-footage-only jobs belong to `video-editor`; this is for the composite.
 - **`sdlc-suite:accessibility`** — when the piece has on-screen text, captions or rapid motion. It owns contrast, and WCAG 2.3.1's flash threshold is a hard limit for any flashing or strobing sequence.
 - **`sdlc-suite:privacy-engineering`** — when the piece shows real people, user data, screen recordings with personal information, or synthetic likenesses.
+- **`sdlc-suite:public-link`** — when the work produced something a person views in a browser (a rendered video, GIF or HTML animation preview) and they may want to open it on a phone or send it to someone: offer a Cloudflare tunnel link once it works, open it only on a yes, and report it as the skill's `Public link:` line. Serve only the delivery folder.
 
 ---
 

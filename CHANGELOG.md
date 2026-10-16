@@ -11,6 +11,20 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **`public-link` skill 1.0.0** — puts something running locally (a prototype, dev
+  server, rendered preview, video or static folder) on a public HTTPS link through a
+  Cloudflare tunnel, only after the user says yes. It asks once, after the thing works
+  (or acts on an answer already in the request), refuses to expose real credentials,
+  unapproved real data, raw services or media with open publication approvals, serves on
+  127.0.0.1, defaults to a temporary `trycloudflare.com` quick tunnel (a stable hostname
+  only through the user's existing named tunnel), never touches `~/.cloudflared`
+  credentials, and reports a `Public link:` line with the stop command. Unattended runs
+  treat it as a publish gate (`autonomy.json`).
+- **Wired into the agents that build something viewable:** `prototyper` 1.3.0 (§12.1, at
+  handover), `ui-engineer` 1.1.0, `software-engineer` 1.1.0, `motion-designer` 1.2.0 and
+  `video-editor` 1.1.0 (not while a consent or rights review is open). Each one's
+  "never publish" rule names this one exception. `orchestrator` 3.1.0 relays the
+  question to the user verbatim and sends the answer back.
 - **`video-editor` agent 1.0.0 and `video-editing` skill 1.1.0** for recorded
   footage: talking-head cleanup (silence, filler and retake cuts, denoise,
   two-pass EBU R128 loudness, captions retimed through the cuts), ad cutdowns,

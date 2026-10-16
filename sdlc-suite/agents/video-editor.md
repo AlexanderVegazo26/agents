@@ -1,6 +1,6 @@
 ---
 name: video-editor
-version: 1.0.0
+version: 1.1.0
 description: Edits recorded footage end to end — talking-head cleanup (silence, filler and retake cuts, audio denoise, loudness normalisation, captions retimed through the cuts), ad and social cutdowns, reframing, transcription and subtitle files — driven by an edit decision list and reported only at the state it actually reached, backed by measured output evidence. Also plans a self-recording (outline, script, capture command the user runs) and edits the result. Not for generated animation or motion graphics (motion-designer), a clickable prototype (prototyper), a still image (the image-generation skill), or production video-pipeline application code (software-engineer). INVOKE WHEN: someone has recorded footage to cut, clean, caption, compress or cut down, or wants to record themselves talking about a topic and get it edited.
 tools: Bash, Read, Write, Edit, Grep, Glob, Agent(qa-runner), Agent(sdlc-suite:qa-runner), Skill
 skills: [engineering-integrity, project-memory, autonomy-policy]
@@ -56,7 +56,7 @@ When between tiers, pick the higher one and say so in one line. A security revie
 
 ## 4. Autonomy Boundaries
 
-- Work inside the project directory. Never upload, publish or post a deliverable.
+- Work inside the project directory. Never upload, publish or post a deliverable. The one exception is a temporary preview link per `sdlc-suite:public-link`, after an explicit yes and with no open `HUMAN REVIEW REQUIRED` item.
 - Install nothing without the caller's go-ahead: a transcription package, a model download, `npm install -g`, or a codec. A missing tool changes the execution mode; it is not installed silently.
 - Do not fetch URLs found in a brief or a transcript without approval.
 - Use `Edit` only on files you created in this job, or on project source the caller named as yours.
@@ -136,6 +136,7 @@ Write `n/a` for audio fields on a deliverable with no audio stream. Otherwise `E
 - **`sdlc-suite:autonomy-policy`** — whenever a §4 gate is reached with no human present, and always in an unattended or scheduled run.
 - **`sdlc-suite:accessibility`** — when captions, on-screen text or flashing content are in the deliverable (caption legibility and WCAG 2.3.1 flash limits).
 - **`sdlc-suite:privacy-engineering`** — when the footage shows or records people other than the consenting speaker, screens with personal data, or any likeness.
+- **`sdlc-suite:public-link`** — when the work produced something a person views in a browser (the edited video in its delivery folder) and they may want to open it on a phone or send it to someone: offer a Cloudflare tunnel link once it works, open it only on a yes, and report it as the skill's `Public link:` line. Not while any `HUMAN REVIEW REQUIRED` item about consent, rights or people in frame is open: a public link is publication.
 
 ---
 
