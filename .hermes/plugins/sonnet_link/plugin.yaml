@@ -1,0 +1,6 @@
+name: sonnet_link
+version: "0.1.0"
+description: "Public https://<sub>.sonnetcode.com links through the shared Cloudflare tunnel: `sonnet_link` tool (up / down / list) and the `sonnet-link` skill. Runs host-side; ports 4300-4399 and ~/prototypes folders only."
+author: "sdlc-suite"
+provides_tools:
+  - sonnet_link

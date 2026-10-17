@@ -48,6 +48,7 @@ import http.server
 import importlib.util
 import json
 import base64
+import errno
 import logging
 import os
 import re
@@ -471,37 +472,142 @@ def read_untrusted(path: Path, limit: int = 64 * 1024) -> str:
         return fh.read(limit).decode("utf-8", "replace")
 
 
+def _open_dir_nofollow(name: str, dir_fd: int | None = None) -> int | None:
+    """An fd for a real directory named relative to dir_fd, or None if it is a symlink, missing or
+    anything but a directory. O_NOFOLLOW plus O_DIRECTORY, then fstat on what was actually opened."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dir_fd)
+    except OSError as ex:
+        if ex.errno in (errno.ELOOP, errno.ENOTDIR, errno.ENOENT):
+            return None  # a symlink, a non-directory or gone: the caller refuses
+        raise StepError(f"could not open '{name}' while copying site/: {ex.strerror}") from None
+    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+        os.close(fd)
+        return None
+    return fd
+
+
+def write_into_work(work: Path, subdir: str, name: str, data: bytes) -> None:
+    """Write a host-made file to WORK/<subdir>/<name> without following any symlink the agent left:
+    WORK, the subdir and the file are each opened relative to their parent's fd with O_NOFOLLOW.
+    A symlink in the subdir's or the file's place is removed and replaced, never written through."""
+    base = os.path.normpath(str(WORK_BASE))
+    w = os.path.normpath(str(work))
+    if os.path.dirname(w) != base:
+        raise StepError(f"{work} is not a project folder under the prototypes folder")
+    root = _open_dir_nofollow(base)
+    if root is None:
+        raise StepError("the prototypes folder is missing")
+    fds = [root]
+    try:
+        proj = _open_dir_nofollow(os.path.basename(w), root)
+        if proj is None:
+            raise StepError(f"{work} is missing or is a symlink")
+        fds.append(proj)
+        sub = _open_dir_nofollow(subdir, proj)
+        if sub is None:
+            try:  # a symlink or file squatting on the name: drop it (never follows), then make the dir
+                os.unlink(subdir, dir_fd=proj)
+            except FileNotFoundError:
+                pass
+            os.mkdir(subdir, 0o755, dir_fd=proj)
+            sub = _open_dir_nofollow(subdir, proj)
+            if sub is None:
+                raise StepError(f"could not create {work}/{subdir}")
+        fds.append(sub)
+        try:
+            os.unlink(name, dir_fd=sub)
+        except FileNotFoundError:
+            pass
+        try:  # O_EXCL|O_NOFOLLOW: a link re-planted between the unlink and here is refused, not followed
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=sub)
+        except OSError as ex:
+            raise StepError(f"{work}/{subdir}/{name} changed while it was being written: {ex.strerror}") from None
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
 def vet_copy(src: Path, dst: Path) -> list[str]:
     """Copy src to dst, regular files and directories only. Raises StepError on
     any symlink, hard link or special file — nothing outside src can be served.
-    Returns the copied paths."""
-    st = os.lstat(src)
-    if not stat.S_ISDIR(st.st_mode):
-        raise StepError("site/ is missing or is not a plain directory")
-    copied, total = [], 0
-    if dst.exists():  # a fix round: replace the served copy wholesale (host-only dir)
-        shutil.rmtree(dst)
-    dst.mkdir(mode=0o755)
-    stack = [(src, dst)]
-    while stack:
-        s_dir, d_dir = stack.pop()
-        with os.scandir(s_dir) as it:
-            for e in it:
-                rel = os.path.relpath(e.path, src)
-                est = e.stat(follow_symlinks=False)
-                if stat.S_ISDIR(est.st_mode):
-                    (d_dir / e.name).mkdir(mode=0o755)
-                    stack.append((Path(e.path), d_dir / e.name))
-                elif stat.S_ISREG(est.st_mode) and est.st_nlink == 1:
-                    total += est.st_size
-                    if len(copied) >= MAX_FILES or total > MAX_BYTES:
-                        raise StepError(f"site/ is larger than {MAX_FILES} files / {MAX_BYTES >> 20} MB")
-                    fd = os.open(e.path, os.O_RDONLY | os.O_NOFOLLOW)
-                    with os.fdopen(fd, "rb") as fin, open(d_dir / e.name, "xb") as fout:
-                        shutil.copyfileobj(fin, fout)
-                    copied.append(rel)
-                else:
-                    raise StepError(f"site/{rel} is a symlink, hard link or special file — refusing to publish")
+    Returns the copied paths.
+
+    src is agent-writable (the sandbox mounts WORK_BASE read-write), so the walk
+    must not re-resolve paths by name: a directory checked as a directory can be
+    swapped for a symlink before it is descended into, and a name-based copy would
+    then follow it out of src. Every directory and file is therefore opened
+    relative to its parent's fd with O_NOFOLLOW, starting from WORK_BASE, and
+    checked with fstat on the object actually opened. Each file is copied up to
+    the size fstat reported, so one growing during the copy cannot get past
+    MAX_BYTES."""
+    base, src_abs = os.path.normpath(str(WORK_BASE)), os.path.normpath(str(src))
+    if not src_abs.startswith(base + os.sep):
+        raise StepError("site/ is not inside the prototypes folder")
+    parts = src_abs[len(base) + 1:].split(os.sep)
+    root = _open_dir_nofollow(base)
+    if root is None:
+        raise StepError("the prototypes folder is missing")
+    fds = [root]
+    try:
+        for part in parts:
+            fd = _open_dir_nofollow(part, fds[-1]) if part not in ("", ".", "..") else None
+            if fd is None:
+                raise StepError("site/ is missing or is not a plain directory")
+            fds.append(fd)
+        copied, total = [], 0
+        if dst.exists():  # a fix round: replace the served copy wholesale (host-only dir)
+            shutil.rmtree(dst)
+        dst.mkdir(mode=0o755)
+        stack = [(fds.pop(), dst, "")]  # popped: the walk owns and closes this fd
+        try:
+            while stack:
+                dfd, d_dir, prefix = stack.pop()
+                try:
+                    for name in sorted(os.listdir(dfd)):
+                        rel = prefix + name
+                        est = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+                        if stat.S_ISDIR(est.st_mode):
+                            cfd = _open_dir_nofollow(name, dfd)
+                            if cfd is None:
+                                raise StepError(f"site/{rel} changed while it was being copied — refusing to publish")
+                            stack.append((cfd, d_dir / name, rel + "/"))  # on the stack first, so it is closed
+                            (d_dir / name).mkdir(mode=0o755)
+                        elif stat.S_ISREG(est.st_mode):
+                            try:
+                                ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                                              dir_fd=dfd)
+                            except OSError:
+                                raise StepError(f"site/{rel} is a symlink, hard link or special file — "
+                                                "refusing to publish") from None
+                            with os.fdopen(ffd, "rb") as fin:
+                                fst = os.fstat(fin.fileno())
+                                if not stat.S_ISREG(fst.st_mode) or fst.st_nlink != 1:
+                                    raise StepError(f"site/{rel} is a symlink, hard link or special file — "
+                                                    "refusing to publish")
+                                total += fst.st_size
+                                if len(copied) >= MAX_FILES or total > MAX_BYTES:
+                                    raise StepError(f"site/ is larger than {MAX_FILES} files / {MAX_BYTES >> 20} MB")
+                                with open(d_dir / name, "xb") as fout:
+                                    left = fst.st_size
+                                    while left > 0 and (chunk := fin.read(min(left, 1 << 20))):
+                                        fout.write(chunk)
+                                        left -= len(chunk)
+                                if fin.read(1):
+                                    raise StepError(f"site/{rel} grew while it was being copied — refusing to publish")
+                            copied.append(rel)
+                        else:
+                            raise StepError(f"site/{rel} is a symlink, hard link or special file — refusing to publish")
+                finally:
+                    os.close(dfd)
+        finally:
+            for dfd, _, _ in stack:
+                os.close(dfd)
+    finally:
+        for fd in fds:
+            os.close(fd)
     if "index.html" not in copied:
         raise StepError("no site/index.html was written")
     return copied
@@ -700,8 +806,7 @@ def run(slug: str, held_lock: object | None = None) -> int:
         smoke, verdict, review, vverdict, vreview = {}, "", "", "", ""
         shots_dir = state / "shots"
         shots_dir.mkdir(exist_ok=True)
-        review_dir = work / ".review"
-        review_dir.mkdir(exist_ok=True)
+        # .review/ is agent-writable: never mkdir or write through it by name (see write_into_work)
         for rnd in range(MAX_FIX_ROUNDS + 1):
             step = "vetting site/" + (f" (fix round {rnd})" if rnd else "")
             files = vet_copy(work / "site", serve_dir)
@@ -728,7 +833,7 @@ def run(slug: str, held_lock: object | None = None) -> int:
                     continue
                 png = base64.b64decode(b64)
                 (shots_dir / f"{name}.png").write_bytes(png)
-                (review_dir / f"{name}.png").write_bytes(png)  # trusted host-written PNGs for the agents
+                write_into_work(work, ".review", f"{name}.png", png)  # trusted host-written PNGs for the agents
 
             step = f"loading the reviewer's {tier} model"
             models["code-reviewer"] = ensure_model("code-reviewer", choice)
