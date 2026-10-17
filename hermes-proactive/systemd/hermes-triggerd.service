@@ -1,0 +1,13 @@
+[Unit]
+Description=hermes-proactive trigger receiver (event -> hermes cron)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.hermes/scripts/triggerd.py serve
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
