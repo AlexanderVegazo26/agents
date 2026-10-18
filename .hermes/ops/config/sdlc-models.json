@@ -1,0 +1,120 @@
+{
+  "_comment": "Per-machine override (rewritten 2026-10-18): Ornith orchestrates and verifies; builders run on Command Code (power); reviewers and analysts on the Claude plan (sonnet/opus, backend claude); local Qwen models keep mechanical and persona work. Local choices go through the LlamaStash proxy :11435 (no probes: its API key is not in ~/.hermes/.env). Previous: sdlc-models.json.bak-2026-10-18.",
+  "choices": {
+    "fast": {
+      "model": "fast",
+      "use_for": "Qwen3-Coder-30B-A3B (MoE, ~76 tok/s). Code-heavy and mechanical work: implementation and test edits with a clear spec, UI code, running commands and reporting raw output. Fastest; weakest at judgment and long-range reasoning.",
+      "fallback": [
+        "deep",
+        "power"
+      ]
+    },
+    "balanced": {
+      "model": "qwen38",
+      "use_for": "Qwen3.8-27B (dense, 131k context). Generalist writing and analysis: requirements, product, UX, documentation, persona exploration, performance and database analysis. Loads on first use, so the first call is slow.",
+      "fallback": [
+        "deep",
+        "fast"
+      ]
+    },
+    "deep": {
+      "model": "ornith",
+      "use_for": "Ornith-1.5-35B-A3B (Q8_0, MoE, thinking on, 128k context). The lead model: orchestration, architecture, security, root cause, release judgment, QA verification. Spend it where judgment decides the outcome.",
+      "fallback": [
+        "balanced",
+        "sonnet",
+        "power",
+        "fast"
+      ]
+    },
+    "power": {
+      "model": "cc-deepseek",
+      "use_for": "Command Code bridge (deepseek/deepseek-v4-pro via cmd -p, can edit and run). Strong cloud implementer for software, UI and database work; also the escalation tier when local models are down. Content leaves the machine.",
+      "fallback": [
+        "sonnet",
+        "deep"
+      ]
+    },
+    "sonnet": {
+      "model": "sonnet",
+      "backend": "claude",
+      "use_for": "Claude Sonnet via your Claude plan (claude -p, read-only: Read/Grep/Glob, no shell, no MCP). Strong general reasoning, code review, product/UX/requirements/writing and release work. Counts against plan limits; content leaves the machine.",
+      "fallback": [
+        "deep",
+        "power"
+      ]
+    },
+    "opus": {
+      "model": "opus",
+      "backend": "claude",
+      "use_for": "Claude Opus via your Claude plan (claude -p, read-only: Read/Grep/Glob, no shell, no MCP). The strongest reviewer: security review, architecture, hard root-cause and incident judgment. Heaviest on plan limits; content leaves the machine.",
+      "fallback": [
+        "sonnet",
+        "deep",
+        "power"
+      ]
+    },
+    "opus-video": {
+      "model": "opus",
+      "backend": "claude",
+      "claude_allow": [
+        "Bash(ffmpeg:*)",
+        "Bash(ffprobe:*)"
+      ],
+      "use_for": "Claude Opus via your Claude plan for video work: read-only plus ffmpeg and ffprobe only (no other shell command, no MCP). Cannot run Whisper or video_edit, so captions need a transcript passed in.",
+      "fallback": [
+        "power",
+        "deep"
+      ]
+    },
+    "opus-ui": {
+      "model": "opus",
+      "backend": "claude",
+      "claude_allow": [
+        "Edit",
+        "Write",
+        "Bash(npm test:*)",
+        "Bash(npm run build:*)",
+        "Bash(npm run lint:*)",
+        "Bash(npx tsc:*)"
+      ],
+      "use_for": "Claude Opus via your Claude plan for UI implementation: reads and edits files in the working directory and runs only tests, build, lint and tsc (no other shell command, no MCP).",
+      "fallback": [
+        "power",
+        "deep"
+      ]
+    }
+  },
+  "roles": {
+    "orchestrator": "deep",
+    "solution-architect": "opus",
+    "security-engineer": "opus",
+    "code-reviewer": "sonnet",
+    "qa-engineer": "deep",
+    "incident-commander": "opus",
+    "release-manager": "sonnet",
+    "product-archaeologist": "opus",
+    "product-manager": "sonnet",
+    "product-analyst": "sonnet",
+    "ux-designer": "sonnet",
+    "technical-writer": "sonnet",
+    "site-reliability": "deep",
+    "performance-engineer": "power",
+    "database-engineer": "power",
+    "persona-discovery": "balanced",
+    "persona-runner": "balanced",
+    "journey-orchestrator": "deep",
+    "boundary-prober": "deep",
+    "software-engineer": "power",
+    "prototyper": "fast",
+    "ui-engineer": "opus-ui",
+    "qa-runner": "fast",
+    "video-editor": "opus-video",
+    "motion-designer": "opus-video"
+  },
+  "role_model_aliases": {
+    "haiku": "fast",
+    "sonnet": "balanced",
+    "opus": "deep"
+  }
+}

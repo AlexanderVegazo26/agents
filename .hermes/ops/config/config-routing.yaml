@@ -1,0 +1,61 @@
+# Routing-relevant excerpt of ~/.hermes/config.yaml (2026-10-18). Not the whole file: merge by hand.
+model:
+  default: Ornith-1.5-35B-Q8_0
+fallback_providers:
+- provider: cc-bridge
+  model: deepseek/deepseek-v4-pro
+- provider: cc-bridge
+  model: moonshotai/kimi-k3
+- provider: custom:llamastash
+  model: Ornith-1.5-35B-Q8_0
+auxiliary:
+  review:
+    provider: custom:cc-bridge
+    model: moonshotai/kimi-k3
+  vision:
+    provider: llamastash
+    model: Qwen3-VL-8B-Instruct-Q8_0
+    timeout: 300
+delegation:
+  max_iterations: 250
+  provider: custom:llamastash
+  model: Ornith-1.5-35B-Q8_0
+  fallback_providers:
+  - provider: custom:cc-bridge
+    model: deepseek/deepseek-v4-pro
+  - provider: custom:cc-bridge
+    model: moonshotai/kimi-k3
+moa:
+  presets:
+    default:
+      reference_models:
+      - provider: custom:cc-bridge
+        model: deepseek/deepseek-v4-pro
+        enabled: true
+      - provider: custom:cc-bridge
+        model: moonshotai/kimi-k3
+        enabled: true
+      aggregator:
+        provider: llamastash
+        model: Ornith-1.5-35B-Q8_0
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+  - provider: custom:cc-bridge
+    model: deepseek/deepseek-v4-pro
+    enabled: true
+  - provider: custom:cc-bridge
+    model: moonshotai/kimi-k3
+    enabled: true
+  aggregator:
+    provider: llamastash
+    model: Ornith-1.5-35B-Q8_0
+  degraded_reference_policy: loud
+  fanout: user_turn
+  enabled: true
+display:
+  platforms:
+    telegram:
+      interim_assistant_messages: false
+      tool_progress: 'off'
+      cleanup_progress: true
