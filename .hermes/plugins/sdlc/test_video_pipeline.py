@@ -599,8 +599,12 @@ class Handler(unittest.TestCase):
             def register_tool(self, **k): reg[k["name"]] = k
             def register_command(self, *a, **k): pass
             def register_cli_command(self, *a, **k): pass
+            def register_hook(self, name, cb): hooks[name] = cb
 
+        hooks = {}
         self.mod.register(Ctx())
+        self.assertIn("pre_gateway_dispatch", hooks)
+        self.assertIn("video-editor", self.mod.VIDEO_ROUTING_NOTE)
         self.assertIn("video_edit", reg)
         self.assertEqual(reg["video_edit"]["toolset"], "sdlc")
         self.assertIn("Do NOT run ffmpeg", reg["video_edit"]["schema"]["description"])
@@ -1108,3 +1112,24 @@ class Sandbox(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class VideoRoutingHook(unittest.TestCase):
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sdlc_hook", os.path.join(os.path.dirname(__file__), "__init__.py"))
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+    def _ev(self, types, text):
+        return type("E", (), {"media_types": types, "text": text, "message_type": None})()
+
+    def test_video_gets_the_note_once(self):
+        out = self.mod._route_video_inbound(event=self._ev(["video/mp4"], "cut the silence"))
+        self.assertEqual(out["action"], "rewrite")
+        self.assertTrue(out["text"].startswith("cut the silence"))
+        self.assertIsNone(self.mod._route_video_inbound(event=self._ev(["video/mp4"], out["text"])))
+
+    def test_other_messages_are_untouched(self):
+        self.assertIsNone(self.mod._route_video_inbound(event=self._ev(["image/png"], "hi")))
+        self.assertIsNone(self.mod._route_video_inbound(event=self._ev(["video/mp4"], "/videoedit")))

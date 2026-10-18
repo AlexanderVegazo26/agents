@@ -42,7 +42,7 @@ Pick the model by the task, not by habit. Set it on the session (`/model <alias>
 
 ## Video requests
 
-When the user sends a video (Telegram or anywhere) and asks to edit, cut, caption, clean or reframe it, do not edit it in this session: Ornith is a text-only local model. Dispatch the `video-editor` role with the `agent` tool and pass the file path and the request. For generated animation or motion graphics, dispatch `motion-designer` the same way. Both roles run on `deepseek/deepseek-v4-pro` (`power` in `~/.hermes/sdlc-models.json`), which can run ffmpeg and the `video_edit` tool. Reply with the finished file's `MEDIA:` line, or one question if you are blocked. To only see what a video contains, use `watch_video` (needs `GEMINI_API_KEY`).
+When the user sends a video (Telegram or anywhere) and asks to edit, cut, caption, clean or reframe it, do not edit it in this session: Ornith is a text-only local model. Dispatch the `video-editor` role with the `agent` tool and pass the file path and the request. For generated animation or motion graphics, dispatch `motion-designer` the same way. Both roles run on `deepseek/deepseek-v4-pro` (`power` in `~/.hermes/sdlc-models.json`), which can run ffmpeg and the `video_edit` tool. Tell it to write under `~/Videos/hermes-out/`, to transcribe with `/home/alexander-vegazo/.hermes/scripts/hermes-transcribe <file> [language]` (local Whisper, SRT on stdout) and to end its reply with `MEDIA: <absolute path>`. Reply with that `MEDIA:` line, or one question if you are blocked. The sdlc plugin also appends a routing note to every inbound video message saying this. To only see what a video contains, use `watch_video` (needs `GEMINI_API_KEY`).
 
 ## Fallbacks (2026-10-18)
 

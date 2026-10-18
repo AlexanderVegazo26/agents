@@ -11,6 +11,11 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **Hermes video requests**: a `pre_gateway_dispatch` hook in the sdlc plugin adds a
+  routing note to every inbound video message (use the `video-editor` role, write under
+  `~/Videos/hermes-out/`, end with a `MEDIA:` line). `opus-video` may run
+  `hermes-transcribe` (local Whisper, SRT) beside `ffmpeg` and `ffprobe`; `claude_allow`
+  rules may contain a path.
 - **Hermes `claude` backend: per-choice `claude_allow` and medium effort**: a
   catalog choice on the `claude` backend may list `Bash(<command>:*)` rules (for
   example `ffmpeg` and `ffprobe` for video work); `claude -p` then gets Bash for

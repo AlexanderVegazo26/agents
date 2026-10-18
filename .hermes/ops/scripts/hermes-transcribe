@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# hermes-transcribe <video-or-audio> [language]  -> SRT on stdout.
+# Extracts mono 16 kHz audio with ffmpeg and hands it to stt-transcribe, which talks to the
+# local LlamaStash `whisper` launch on its own port (the proxy route /v1/audio/transcriptions
+# is not available in the current LlamaStash build). Audio never leaves the machine.
+set -euo pipefail
+in="${1:?usage: hermes-transcribe <file> [language]}"; lang="${2:-}"
+[ -f "$in" ] || { echo "no such file: $in" >&2; exit 2; }
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+ffmpeg -nostdin -loglevel error -y -i "$in" -vn -ac 1 -ar 16000 "$tmp/a.wav"
+args=(--format srt); [ -n "$lang" ] && args+=(--language "$lang")
+"$HOME/.local/bin/stt-transcribe" "${args[@]}" "$tmp/a.wav" | grep -v '^✓'

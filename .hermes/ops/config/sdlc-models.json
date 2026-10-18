@@ -59,9 +59,10 @@
       "backend": "claude",
       "claude_allow": [
         "Bash(ffmpeg:*)",
-        "Bash(ffprobe:*)"
+        "Bash(ffprobe:*)",
+        "Bash(/home/alexander-vegazo/.hermes/scripts/hermes-transcribe:*)"
       ],
-      "use_for": "Claude Opus via your Claude plan for video work: read-only plus ffmpeg and ffprobe only (no other shell command, no MCP). Cannot run Whisper or video_edit, so captions need a transcript passed in.",
+      "use_for": "Claude Opus via your Claude plan for video work: read-only plus ffmpeg, ffprobe and the local hermes-transcribe (Whisper, SRT) only; no other shell command, no MCP.",
       "fallback": [
         "power",
         "deep"

@@ -341,7 +341,7 @@ export const CLAUDE_READ_TOOLS = 'Read,Grep,Glob';
 export const CLAUDE_EFFORT = 'medium';
 
 /** Extra permission rules a catalog choice may grant a `claude` dispatch: file edits (inside the working directory, as the CLI enforces) and named commands, nothing broader (no bare "Bash"). */
-export const CLAUDE_ALLOW_RE = /^(?:Edit|Write|Bash\([A-Za-z0-9_. -]+:\*\))$/;
+export const CLAUDE_ALLOW_RE = /^(?:Edit|Write|Bash\([A-Za-z0-9_./ -]+:\*\))$/;
 
 /**
  * Environment for a `claude -p` child: the nested-session env, minus any

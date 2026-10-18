@@ -79,7 +79,7 @@ def catalog_error(data) -> str | None:
         if "backend" in c and c["backend"] != "claude":
             return f'choice "{name}" has an unknown backend "{c["backend"]}" (only "claude")'
         if "claude_allow" in c and not (c.get("backend") == "claude" and isinstance(c["claude_allow"], list)
-                                        and all(isinstance(r, str) and re.fullmatch(r"Edit|Write|Bash\([A-Za-z0-9_. -]+:\*\)", r)
+                                        and all(isinstance(r, str) and re.fullmatch(r"Edit|Write|Bash\([A-Za-z0-9_./ -]+:\*\)", r)
                                                 for r in c["claude_allow"])):
             return f'choice "{name}" has an invalid "claude_allow" (only on the claude backend, entries like "Bash(ffmpeg:*)", "Edit", "Write")'
         for fb in c.get("fallback") or []:
@@ -884,6 +884,30 @@ def agent_schema(catalog: dict | None) -> dict:
     )
     return schema
 
+VIDEO_ROUTING_NOTE = (
+    "\n\n[Hermes routing note: this message carries a video. If the request is to edit, cut, caption, clean or "
+    "reframe it, do not edit it yourself. Call the `agent` tool once with role `video-editor`, pass the video file path "
+    "from the attachment note above and the request, and tell it: write the result under ~/Videos/hermes-out/; to "
+    "transcribe run /home/alexander-vegazo/.hermes/scripts/hermes-transcribe <file> [language] (SRT on stdout); end "
+    "the reply with the finished file as a line `MEDIA: <absolute path>`. Then answer with that MEDIA line, or one "
+    "question if you are blocked. If the request is only to look at or describe the video, use `watch_video` instead.]"
+)
+
+
+def _route_video_inbound(event=None, **_kwargs):
+    """pre_gateway_dispatch: a video message gets an explicit pointer to the video-editor role, so a small
+    local orchestrator does not edit it in place. Rewrites the text only; the model is still chosen by routing."""
+    try:
+        types = list(getattr(event, "media_types", None) or [])
+        is_video = any(str(t).startswith("video/") for t in types) or (
+            getattr(getattr(event, "message_type", None), "name", "") == "VIDEO")
+        text = getattr(event, "text", "") or ""
+        if not is_video or "[Hermes routing note:" in text or text.lstrip().startswith("/"):
+            return None
+        return {"action": "rewrite", "text": text + VIDEO_ROUTING_NOTE}
+    except Exception:  # a routing hint must never stop a message
+        return None
+
 
 def register(ctx) -> None:
     ctx.register_tool(name="agent", toolset=TOOLSET, schema=agent_schema(_load_catalog()), handler=_handle_agent,
@@ -898,6 +922,7 @@ def register(ctx) -> None:
                          description="Prototype an idea on Command Code cloud", args_hint="<idea>")
     ctx.register_command("videoedit", videoedit,
                          description="Edit the video you just sent", args_hint="[path] [--no-captions]")
+    ctx.register_hook("pre_gateway_dispatch", _route_video_inbound)
     ctx.register_cli_command("sdlc", help="sdlc-suite: orchestrate, dispatch a role, prototype an idea, "
                                           "inspect model routing",
                              setup_fn=_setup_cli, handler_fn=_cli)
