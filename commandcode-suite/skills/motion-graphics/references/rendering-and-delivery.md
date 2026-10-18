@@ -50,6 +50,26 @@ Select the simplest tool capable of producing the desired result.
 
 Do not use expensive generative video for something that can be produced more reliably with vector or procedural animation.
 
+### Hosted option for procedural pieces: Claude Motion
+
+Claude Motion (claude.ai, beta on Team and Enterprise plans; per its help page, not
+verified on this machine) builds an animation as code from a prompt and attached
+content, lets you edit one detail without regenerating the rest, and exports MP4.
+It makes no realistic footage or people, so it belongs in the procedural/vector
+group above (explainers, animated charts, walkthroughs), not in the
+video-generation group, and it does not edit recorded footage. Treat it as one
+renderer among the others:
+
+- Availability is per account and per plan, and an Artifact type for it may not be
+  offered in a given session: check before promising it, and fall back to a local
+  renderer. On 2026-10-18 this account's Artifact tool listed Dashboard, Design,
+  Design System, Docs and Slides, and no Motion type.
+- It runs on claude.ai, counts toward plan usage, and attached content leaves the
+  machine: confirm before sending anything private, as with any hosted tool.
+- The help page mentions MP4 export only. Do not assume an alpha channel; if the
+  piece is an overlay for footage, prove the matte or alpha path on a test clip
+  before relying on it, or build the overlay locally.
+
 ------------------------------------------------------------------------
 
 # 35. Preview vs Final Rendering

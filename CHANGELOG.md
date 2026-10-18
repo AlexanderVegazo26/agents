@@ -11,6 +11,40 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **Hermes `claude` model backend and role re-routing (sdlc plugin 0.2.0)**: a
+  catalog choice may set `"backend": "claude"`, and the `agent` tool then runs
+  that dispatch as `claude -p` on the user's Claude plan. The session is
+  read-only (`--tools Read,Grep,Glob`), unsaved, loads no MCP servers
+  (`--strict-mcp-config`) and runs with every `ANTHROPIC_*` variable removed, so
+  it uses the plan login and never an API key. A choice whose CLI is missing is
+  unavailable and walks its `fallback` list. The Python and Node catalog
+  validators both reject an unknown backend; `/idea` passes a claude choice
+  through without a local model load. Per-machine routing now sends the
+  orchestrator and QA to the local Ornith model, review and product roles to
+  Claude Sonnet, security, architecture and incident roles to Claude Opus, and
+  implementers to the Command Code DeepSeek model.
+- **`social-video-edit` skill** (footage plus HyperFrames motion graphics for
+  9:16 social video) and the Hermes **`watch_video`** plugin (Gemini reads a
+  YouTube link or file and reports cuts, captions and the hook).
+
+- **Hermes `cmdc` tool — a second dispatch backend in `.hermes/plugins/sdlc/`**:
+  one headless Command Code CLI session (`cmdc -p`) per call, instead of a
+  `hermes chat` process, so a Hermes session can delegate work to the Command
+  Code CLI. Parameters: `task`, optional `name` (a suite role whose file is
+  prepended exactly as `agent` does), `model` (a Command Code model id, passed
+  as `-m`) and `yolo`. Headless `cmdc` blocks file writes and shell commands by
+  default, so the tool is read-only unless `yolo` is true — and the tool
+  description reserves that for a request that actually asks for changes. The
+  prompt travels on stdin (`cmdc -p` auto-detects piped input), so a 50 KB role
+  file needs no shell and no argument-length limit; role files still resolve
+  from this suite's repository only, and the session runs in the caller's
+  directory. The runner resolves the CLI from `$CMDC_BIN`, the installed
+  `command-code` npm package, then `cmdc` on PATH, and names its exit codes in
+  the log. Separately, `plugin.yaml` now lists every registered tool in
+  `provides_tools` (`video_edit` was missing, which `hermes plugins validate`
+  rejects and `hermes plugins doctor` warns about), and `.hermes/validate.py`
+  checks that rule offline — CI runs the offline gate, not the catalog
+  validator.
 - **`public-link` skill 1.0.0** — puts something running locally (a prototype, dev
   server, rendered preview, video or static folder) on a public HTTPS link through a
   Cloudflare tunnel, only after the user says yes. It asks once, after the thing works
@@ -37,6 +71,12 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   deepfake detection) are deliberately not implemented. `motion-designer`,
   `prototyper`, `qa-runner` and `orchestrator` name it; `project-memory` adds a
   `video/` directory.
+- **Hermes `/videoedit` command and `video_edit` tool** (`.hermes/plugins/sdlc`): a host-side video pipeline for Telegram
+  that does not depend on a model improvising in the docker sandbox. ffmpeg runs inside bubblewrap; transcription uses a
+  local faster-whisper server managed by LlamaStash (`stt-transcribe`); the edit is one re-encode at the source's size,
+  frame rate and orientation. Includes a **motion-graphics layer** (glass cards with key points chosen by a local model,
+  stat/title/lower-third/picture cards, word-highlight captions, progress bar), admission limits for unattended callers,
+  and ~90 tests with mutation-checked guards. See `.hermes/plugins/sdlc/README.md`.
 - Found while testing: FFmpeg 9.0.2 has no `-filter_complex_script`; the form is
   `-/filter_complex <file>`. `motion-graphics`'s reference still names the old option.
 

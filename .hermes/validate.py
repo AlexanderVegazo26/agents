@@ -9,8 +9,10 @@ by `generate_trees.py --check`; this checks what that cannot:
 * every generated command skill parses as a Hermes skill (`name` matching its
   directory, a `description`), carries no unresolved `${CLAUDE_PLUGIN_ROOT}` or
   `$ARGUMENTS`, and — when it names a workflow script — names one that exists;
-* the hand-maintained plugin registers exactly the `agent` and `workflow` tools
-  through a stub ctx, each with a schema whose name matches;
+* the hand-maintained plugin registers exactly the `agent`, `cmdc`, `workflow`
+  and `video_edit` tools through a stub ctx, each with a schema whose name
+  matches, and declares every one of them in `plugin.yaml`'s `provides_tools`
+  (the rule `hermes plugins validate` enforces);
 * the runner's selftest passes under the host node.
 
 Exit 0 clean, 1 on any defect (each named), 2 when there is nothing to check.
@@ -87,13 +89,17 @@ def check_plugin(errors: list[str]) -> None:
     except Exception as e:  # noqa: BLE001 — any import/registration failure is the defect
         errors.append(f".hermes/plugins/sdlc/__init__.py: register() failed: {e!r}")
         return
-    if set(ctx.tools) != {"agent", "workflow"}:
-        errors.append(f".hermes/plugins/sdlc: registers {sorted(ctx.tools)}, expected ['agent', 'workflow']")
-    if set(ctx.commands) != {"orchestrate", "idea", "idea-cloud"}:
+    if set(ctx.tools) != {"agent", "cmdc", "workflow", "video_edit"}:
+        errors.append(f".hermes/plugins/sdlc: registers {sorted(ctx.tools)}, "
+                      "expected ['agent', 'cmdc', 'video_edit', 'workflow']")
+    check_declared_tools(ctx.tools, errors)
+    if set(ctx.commands) != {"orchestrate", "idea", "idea-cloud", "videoedit"}:
         errors.append(f".hermes/plugins/sdlc: slash commands {sorted(ctx.commands)}, "
-                      "expected ['idea', 'idea-cloud', 'orchestrate']")
+                      "expected ['idea', 'idea-cloud', 'orchestrate', 'videoedit']")
     if not (PLUGIN / "prototype_pipeline.py").is_file():
         errors.append(".hermes/plugins/sdlc: /idea is registered but prototype_pipeline.py is missing")
+    if not (PLUGIN / "video_pipeline.py").is_file():
+        errors.append(".hermes/plugins/sdlc: /videoedit is registered but video_pipeline.py is missing")
     if set(ctx.cli) != {"sdlc"}:
         errors.append(f".hermes/plugins/sdlc: CLI commands {sorted(ctx.cli)}, expected ['sdlc']")
     model = ctx.tools.get("agent", {}).get("schema", {}).get("parameters", {}).get("properties", {}).get("model")
@@ -107,6 +113,22 @@ def check_plugin(errors: list[str]) -> None:
                        capture_output=True, text=True, cwd=ROOT)
     if r.returncode != 0:
         errors.append(f".hermes/plugins/sdlc/runner.mjs --selftest exited {r.returncode}:\n{r.stdout}{r.stderr}")
+
+
+def check_declared_tools(tools: dict, errors: list[str]) -> None:
+    """`plugin.yaml`'s `provides_tools` must list every tool `register()` registers.
+
+    `hermes plugins validate` fails on undeclared tools and `hermes plugins
+    doctor` warns about them; CI runs only this offline gate, so the rule is
+    checked here too. The list is scanned with a regex rather than pulling in a
+    YAML dependency, matching how this file parses skill frontmatter.
+    """
+    text = (PLUGIN / "plugin.yaml").read_text(encoding="utf-8")
+    block = re.search(r"^provides_tools:[ \t]*\n((?:[ \t]*-[ \t]*\S+[ \t]*\n?)+)", text, re.MULTILINE)
+    declared = set(re.findall(r"-[ \t]*(\S+)", block.group(1))) if block else set()
+    if declared != set(tools):
+        errors.append(f".hermes/plugins/sdlc/plugin.yaml: provides_tools {sorted(declared)} "
+                      f"!= registered tools {sorted(tools)}")
 
 
 def check_catalog_rules(mod, errors: list[str]) -> None:
@@ -139,7 +161,7 @@ def main() -> int:
         for e in errors:
             print(f"FAIL: {e}", file=sys.stderr)
         return 1
-    print(f"OK: {n} command skills, sdlc plugin registers agent (with model routing) + workflow + /orchestrate + /idea + /idea-cloud, "
+    print(f"OK: {n} command skills, sdlc plugin registers agent (with model routing) + cmdc + workflow + video_edit + /orchestrate + /idea + /idea-cloud + /videoedit, "
           "runner selftest passes")
     return 0
 

@@ -63,6 +63,39 @@ export function findHermesBinary(env = process.env) {
 }
 
 /**
+ * Locate the Command Code CLI: $CMDC_BIN, then the installed `command-code`
+ * npm package's bin (run through node, so a Windows `.cmd` shim never needs a
+ * shell), then `cmdc` on PATH. Returns `{ cmd, prefix }` for spawn.
+ *
+ * Same resolution order as commandcode-suite/workflows/_runner.js, which
+ * drives the same CLI from Command Code's own workflows — including the bare
+ * `cmdc` fallback, so it is never confused with Windows' `cmd.exe`.
+ */
+export function findCmdcBinary(env = process.env) {
+  if (env.CMDC_BIN) return { cmd: env.CMDC_BIN, prefix: [] };
+  const dirs = [
+    env.APPDATA && path.join(env.APPDATA, 'npm', 'node_modules', 'command-code'),
+    env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'npm', 'node_modules', 'command-code'),
+    path.join(SUITE_ROOT, 'node_modules', 'command-code'),
+  ].filter(Boolean);
+  for (const dir of dirs) {
+    const bin = commandCodeBin(dir);
+    if (bin) return { cmd: process.execPath, prefix: [bin] };
+  }
+  return { cmd: 'cmdc', prefix: [] };
+}
+
+/** The `command-code` package's CLI entry, from its package.json bin map. */
+function commandCodeBin(dir) {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const bin = typeof pkg.bin === 'string' ? pkg.bin
+      : pkg.bin && (pkg.bin.cmdc || pkg.bin.cmd || pkg.bin['command-code']);
+    return bin ? path.join(dir, bin) : null;
+  } catch { return null; }
+}
+
+/**
  * Translate the pi CLI flags runAgent emits into hermes chat flags.
  *
  * `--model` is dropped: role files name Claude aliases (sonnet, opus, haiku)
@@ -79,6 +112,28 @@ export function hermesArgs(extraArgs = []) {
     const flag = extraArgs[i];
     const value = extraArgs[i + 1];
     if (flag === '--thinking' && value !== undefined) { out.push('--reasoning', value); i++; }
+    else if (flag === '--model' && value !== undefined) { dropped.push(`--model ${value}`); i++; }
+    else dropped.push(flag);
+  }
+  return { args: out, dropped };
+}
+
+/**
+ * Translate the pi CLI flags runAgent emits into `cmdc` flags.
+ *
+ * The role file's `model:` alias is dropped for the same reason as in
+ * hermesArgs: it names a Claude alias that is not a Command Code model id, so
+ * passing it would fail the dispatch instead of using the CLI's own default.
+ * `--thinking` maps to `--effort` (both accept low/medium/high). Anything else
+ * is dropped.
+ */
+export function cmdcArgs(extraArgs = []) {
+  const out = [];
+  const dropped = [];
+  for (let i = 0; i < extraArgs.length; i++) {
+    const flag = extraArgs[i];
+    const value = extraArgs[i + 1];
+    if (flag === '--thinking' && value !== undefined) { out.push('--effort', value); i++; }
     else if (flag === '--model' && value !== undefined) { dropped.push(`--model ${value}`); i++; }
     else dropped.push(flag);
   }
@@ -181,6 +236,184 @@ export function spawnHermes({ prompt, extraArgs = [], cwd, timeoutMs, log = () =
   });
 }
 
+/** `cmdc`'s documented exit codes, so a failure says which one it was. */
+export const CMDC_EXIT_CODES = {
+  1: 'general error',
+  3: 'not authenticated — run `cmdc login`',
+  4: 'permission denied',
+  5: 'rate limit exceeded',
+  6: 'network failure',
+  7: 'API server error',
+  8: 'max turns reached',
+  9: 'model produced no response',
+  10: 'insufficient credits',
+  130: 'interrupted',
+};
+
+/** The Command Code CLI's default headless turn cap. */
+const CMDC_MAX_TURNS = 200;
+
+/**
+ * Run one Command Code CLI session in print mode (`cmdc -p`). Same contract as
+ * spawnHermes: resolves (never rejects) with
+ * { exitCode, stdout, stderr, timedOut, spawnError }.
+ *
+ * The prompt travels on stdin, never argv: role files run to 50 KB, and `cmdc`
+ * auto-detects piped input when `-p` is given no query argument, so nothing is
+ * shell-interpreted and nothing hits an argument-length limit. `--no-session`
+ * keeps the dispatch out of the on-disk session store; `--skip-onboarding`
+ * stops taste onboarding from blocking a non-interactive run.
+ *
+ * Permissions stay at `cmdc`'s headless default (file writes and shell
+ * commands denied) unless `permissionMode` is set — the same
+ * fail-closed posture as a nested hermes session.
+ */
+export function spawnCmdc({ prompt, extraArgs = [], cwd, timeoutMs, log = () => {}, model = null, permissionMode = null }) {
+  return new Promise((resolve) => {
+    if (STOPPING) {
+      resolve({ exitCode: 1, stdout: '', stderr: 'runner is shutting down', timedOut: false, spawnError: true });
+      return;
+    }
+    const depth = currentDepth();
+    if (depth >= MAX_DEPTH) {
+      resolve({ exitCode: 1, stdout: '', stderr: `refusing to nest: already ${depth} sdlc sessions deep (limit ${MAX_DEPTH})`, timedOut: false, spawnError: true });
+      return;
+    }
+    const { args: mapped } = cmdcArgs(extraArgs);
+    const bin = findCmdcBinary();
+    const args = ['-p', '--skip-onboarding', '--no-session', '--max-turns', String(CMDC_MAX_TURNS), ...mapped];
+    if (model) args.push('-m', String(model));
+    if (permissionMode) args.push('--permission-mode', String(permissionMode));
+    let child;
+    try {
+      child = spawn(bin.cmd, [...bin.prefix, ...args], { cwd, env: nestedEnv(process.env, depth), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    } catch (e) {
+      resolve({ exitCode: -1, stdout: '', stderr: String(e), timedOut: false, spawnError: true });
+      return;
+    }
+    LIVE.add(child);
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup(child, 'SIGTERM');
+      setTimeout(() => killGroup(child, 'SIGKILL'), 5000).unref();
+    }, timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.stdin.on('error', () => { /* child exited before reading; reported via close */ });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      LIVE.delete(child);
+      resolve({ exitCode: -1, stdout, stderr: stderr + String(e), timedOut: false, spawnError: true });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      LIVE.delete(child);
+      if (code !== 0 && !timedOut) {
+        const why = CMDC_EXIT_CODES[code] ? ` (${CMDC_EXIT_CODES[code]})` : '';
+        const last = sdlc.cleanOutput(stderr).trim().split('\n').filter(Boolean).pop();
+        log(`cmdc exited ${code}${why}${last ? `: ${last.slice(0, 300)}` : ''}`);
+      }
+      resolve({ exitCode: code ?? -1, stdout: sdlc.cleanOutput(stdout), stderr: sdlc.cleanOutput(stderr), timedOut });
+    });
+    child.stdin.end(prompt);
+  });
+}
+
+/** The Claude Code CLI: $CLAUDE_BIN, then `claude` on PATH or in ~/.local/bin. Null when absent. */
+export function findClaudeBinary(env = process.env) {
+  if (env.CLAUDE_BIN) return existsSync(env.CLAUDE_BIN) ? env.CLAUDE_BIN : null;
+  const dirs = String(env.PATH || '').split(path.delimiter).filter(Boolean);
+  if (env.HOME) dirs.push(path.join(env.HOME, '.local', 'bin'));
+  for (const d of dirs) {
+    const f = path.join(d, 'claude');
+    if (existsSync(f)) return f;
+  }
+  return null;
+}
+
+/** Read-only built-in tools a `claude` dispatch gets: it can read the project, never write or run a command. */
+export const CLAUDE_READ_TOOLS = 'Read,Grep,Glob';
+
+/**
+ * Environment for a `claude -p` child: the nested-session env, minus any
+ * ANTHROPIC_* credential, so the CLI authenticates with the user's Claude plan
+ * (its own login) and never silently bills an API key that happens to be set.
+ */
+export function claudeEnv(base = process.env, depth = 0) {
+  const env = nestedEnv(base, depth);
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('ANTHROPIC_')) delete env[key];
+  }
+  return env;
+}
+
+/**
+ * Run one Claude Code CLI session in print mode (`claude -p`) on the user's
+ * Claude plan. Same contract as spawnHermes. The prompt travels on stdin. The
+ * session is read-only (`--tools Read,Grep,Glob`), unsaved
+ * (`--no-session-persistence`) and uses no hooks or MCP servers of the host
+ * (`--strict-mcp-config` with no config file loads none; `--bare` is not used: it would drop the plan login), so the model sees the
+ * project and the task and nothing else. `model` is a Claude alias or id.
+ */
+export function spawnClaude({ prompt, extraArgs = [], cwd, timeoutMs, log = () => {}, model = null }) {
+  return new Promise((resolve) => {
+    if (STOPPING) {
+      resolve({ exitCode: 1, stdout: '', stderr: 'runner is shutting down', timedOut: false, spawnError: true });
+      return;
+    }
+    const depth = currentDepth();
+    if (depth >= MAX_DEPTH) {
+      resolve({ exitCode: 1, stdout: '', stderr: `refusing to nest: already ${depth} sdlc sessions deep (limit ${MAX_DEPTH})`, timedOut: false, spawnError: true });
+      return;
+    }
+    const bin = findClaudeBinary();
+    if (!bin) {
+      resolve({ exitCode: -1, stdout: '', stderr: 'claude CLI not found (set CLAUDE_BIN)', timedOut: false, spawnError: true });
+      return;
+    }
+    // The role file's own `--model`/`--thinking` flags are routing's business, not the CLI's.
+    const args = ['-p', '--no-session-persistence', '--tools', CLAUDE_READ_TOOLS, '--permission-mode', 'default', '--strict-mcp-config'];
+    if (model) args.push('--model', String(model));
+    let child;
+    try {
+      child = spawn(bin, args, { cwd, env: claudeEnv(process.env, depth), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    } catch (e) {
+      resolve({ exitCode: -1, stdout: '', stderr: String(e), timedOut: false, spawnError: true });
+      return;
+    }
+    LIVE.add(child);
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup(child, 'SIGTERM');
+      setTimeout(() => killGroup(child, 'SIGKILL'), 5000).unref();
+    }, timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.stdin.on('error', () => { /* child exited before reading; reported via close */ });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      LIVE.delete(child);
+      resolve({ exitCode: -1, stdout, stderr: stderr + String(e), timedOut: false, spawnError: true });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      LIVE.delete(child);
+      if (code !== 0 && !timedOut) {
+        const last = sdlc.cleanOutput(stderr || stdout).trim().split('\n').filter(Boolean).pop();
+        log(`claude exited ${code}${last ? `: ${last.slice(0, 300)}` : ''}`);
+      }
+      resolve({ exitCode: code ?? -1, stdout: sdlc.cleanOutput(stdout), stderr: sdlc.cleanOutput(stderr), timedOut });
+    });
+    child.stdin.end(prompt);
+  });
+}
+
 /** Roles whose single dispatch contains a whole run of other dispatches. */
 export const ORCHESTRATING_ROLES = new Set(['orchestrator', 'journey-orchestrator']);
 
@@ -250,6 +483,9 @@ export function loadCatalog(file) {
   if (!choices || !Object.keys(choices).length) return { error: `model catalog ${file} has no "choices"` };
   for (const [name, c] of Object.entries(choices)) {
     if (!c || typeof c.model !== 'string' || !c.model) return { error: `model catalog ${file}: choice "${name}" has no "model"` };
+    if (c.backend !== undefined && c.backend !== 'claude') {
+      return { error: `model catalog ${file}: choice "${name}" has an unknown backend "${c.backend}" (only "claude")` };
+    }
     for (const fb of c.fallback || []) {
       if (!choices[fb]) return { error: `model catalog ${file}: choice "${name}" falls back to unknown "${fb}"` };
     }
@@ -317,6 +553,7 @@ export function makeProber(fetchFn = globalThis.fetch, timeoutMs = 2500, ttlMs =
   const ok = new Map();       // key -> time of last success
   const inflight = new Map(); // key -> Promise<boolean>
   const prober = (choice, { fresh = false } = {}) => {
+    if (choice.backend === 'claude') return Promise.resolve(Boolean(findClaudeBinary()));
     if (!choice.probe) return Promise.resolve(true);
     const key = `${choice.probe}\0${choice.expect || ''}\0${choice.probe_key_env || ''}`;
     if (!fresh && ok.has(key) && now() - ok.get(key) < ttlMs) return Promise.resolve(true);
@@ -354,11 +591,11 @@ export function makeProber(fetchFn = globalThis.fetch, timeoutMs = 2500, ttlMs =
  * session default. An unavailable choice walks its `fallback` list; if
  * nothing is up, the session default runs — and the route says why.
  *
- * Returns { choice, model, provider, why } — choice/model null = default.
+ * Returns { choice, model, provider, backend, why } — choice/model null = default.
  */
 export async function pickModel({ catalog, explicit = null, role = null, roleModel = null, probe, fresh = false,
   catalogError = null }) {
-  const none = (why) => ({ choice: null, model: null, provider: null, why });
+  const none = (why) => ({ choice: null, model: null, provider: null, backend: null, why });
   if (!catalog) return none(catalogError ? `model routing off — ${catalogError}` : 'no model catalog');
   // Workflows name roles `sdlc-suite:<role>`; the catalog keys are bare.
   role = role ? sdlc.denamespace(role).trim() : null;
@@ -376,7 +613,7 @@ export async function pickModel({ catalog, explicit = null, role = null, roleMod
     tried.push(name);
     if (await probe(c, { fresh })) {
       const note = name === start ? why : `${why} was "${start}", unavailable — fell back`;
-      return { choice: name, model: c.model, provider: c.provider || null, why: note };
+      return { choice: name, model: c.model, provider: c.provider || null, backend: c.backend || null, why: note };
     }
   }
   return none(`${tried.join(', ')} unavailable`);
@@ -403,7 +640,7 @@ export function harnessNote(catalog) {
  * the nested session runs in the caller's working directory (`cwd`), which
  * is the project the work is about.
  */
-function dispatcher(cwd, rawLog, { spawnFn = spawnHermes, gate = limiter(maxParallel()), catalog = null,
+function dispatcher(cwd, rawLog, { spawnFn = spawnHermes, spawnClaude: deps_spawnClaude = null, gate = limiter(maxParallel()), catalog = null,
   probe = makeProber(), routes = [], catalogError = null, toolsets = null } = {}) {
   // runAgent's messages are pi's wording; the session here is hermes's, and
   // its "retrying on the default model" is not what happens here — the
@@ -444,7 +681,8 @@ function dispatcher(cwd, rawLog, { spawnFn = spawnHermes, gate = limiter(maxPara
           routes.push({ label, attempt, ...route });
           log(`${label}: model ${route.choice ? `${route.choice} (-m ${route.model})` : 'session default'} — ${route.why}`);
         }
-        return gate(() => spawnFn({
+        const run = route.backend === 'claude' ? (deps_spawnClaude || spawnClaude) : spawnFn;
+        return gate(() => run({
           ...req, cwd, model: route.model, provider: route.provider, toolsets, log: (l) => log(`${label}: ${l}`),
         }));
       },
@@ -496,7 +734,31 @@ export async function handle(mode, req, log, deps = {}) {
     });
     return out.ok ? { ok: true, meta: out.meta, result: out.result, routes } : { ok: false, error: out.error, meta: out.meta, routes };
   }
-  return { ok: false, error: `unknown mode "${mode}" (expected agent or workflow)` };
+  if (mode === 'cmdc') {
+    const task = String(req.task || '');
+    if (!task.trim()) return { ok: false, error: '`task` is required' };
+    if (req.yolo !== undefined && typeof req.yolo !== 'boolean') {
+      return { ok: false, error: '`yolo` must be true or false' };
+    }
+    const name = String(req.name || '').trim();
+    const model = req.model ? String(req.model).trim() : null;
+    const permissionMode = req.yolo ? 'yolo' : null;
+    const spawnFn = deps.spawnCmdc || spawnCmdc;
+    const value = await sdlc.runAgent({
+      anchor: SUITE_ROOT, // a named role always resolves from the suite
+      prompt: task,
+      opts: { label: name || 'cmdc', agentType: name || 'general-purpose' },
+      log,
+      timeoutMs: agentTimeoutMs(process.env, name || null),
+      // The nested Command Code session runs in the caller's directory, not the
+      // suite's, so it works on the project the task is about.
+      _spawn: (r) => spawnFn({ prompt: r.prompt, extraArgs: r.extraArgs, cwd, timeoutMs: r.timeoutMs, model, permissionMode, log }),
+    });
+    return value === null
+      ? { ok: false, error: `Command Code dispatch "${name || 'task'}" returned no result` }
+      : { ok: true, result: value };
+  }
+  return { ok: false, error: `unknown mode "${mode}" (expected agent, workflow or cmdc)` };
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +935,62 @@ async function selftest() {
   const bogus = await handle('agent', { anchor: SUITE_ROOT, name: 'qa-runner', task: 'T', model: 'gpt-9' }, () => {},
     { spawnFn: spy, catalog: cat });
   check('an unknown model choice is refused before dispatch', bogus.ok === false && /unknown model choice/.test(bogus.error), bogus.error);
+
+  // Claude plan backend (`claude -p`).
+  {
+    const e = claudeEnv({ PATH: '/bin', ANTHROPIC_API_KEY: 'k', ANTHROPIC_AUTH_TOKEN: 't', HERMES_SESSION_ID: 's', HOME: '/h' }, 0);
+    check('claudeEnv strips every ANTHROPIC_* credential', !('ANTHROPIC_API_KEY' in e) && !('ANTHROPIC_AUTH_TOKEN' in e), JSON.stringify(Object.keys(e)));
+    check('claudeEnv still nests and drops hermes session vars', e[DEPTH_VAR] === '1' && !('HERMES_SESSION_ID' in e));
+    check('findClaudeBinary honours a missing CLAUDE_BIN as absent', findClaudeBinary({ CLAUDE_BIN: '/nonexistent/claude' }) === null);
+    check('the claude tool set is read-only', CLAUDE_READ_TOOLS === 'Read,Grep,Glob');
+    const ccat = { choices: { sonnet: { model: 'sonnet', backend: 'claude', fallback: ['deep'] }, deep: { model: 'd' } } };
+    const picked = await pickModel({ catalog: ccat, explicit: 'sonnet', probe: async (c) => c.backend === 'claude' });
+    check('pickModel reports the claude backend', picked.backend === 'claude' && picked.model === 'sonnet', JSON.stringify(picked));
+    const fell = await pickModel({ catalog: ccat, explicit: 'sonnet', probe: async (c) => c.backend !== 'claude' });
+    check('a claude choice with no CLI falls back', fell.choice === 'deep' && fell.backend === null, JSON.stringify(fell));
+    check('an unknown backend is a catalog error',
+      /unknown backend/.test(loadCatalog(writeTmp({ choices: { a: { model: 'x', backend: 'curl' } } })).error || ''));
+    let usedClaude = 0, usedHermes = 0;
+    const out = await dispatcher('/tmp', () => {}, {
+      catalog: ccat, probe: async () => true,
+      spawnFn: async () => { usedHermes++; return { exitCode: 0, stdout: 'h', stderr: '', timedOut: false }; },
+      spawnClaude: async () => { usedClaude++; return { exitCode: 0, stdout: 'c', stderr: '', timedOut: false }; },
+    })({ prompt: 'x', opts: { label: 'r', agentType: 'qa-runner', model: 'sonnet' } });
+    check('a claude choice is spawned through the claude backend', usedClaude === 1 && usedHermes === 0, `claude=${usedClaude} hermes=${usedHermes} out=${JSON.stringify(out)}`);
+  }
+  // Command Code CLI backend (`cmdc`).
+  const cm = cmdcArgs(['--model', 'sonnet', '--thinking', 'high', '--approve']);
+  check('cmdcArgs maps --thinking to --effort', JSON.stringify(cm.args) === '["--effort","high"]', JSON.stringify(cm.args));
+  check('cmdcArgs drops --model and unknown flags', cm.dropped.length === 2, JSON.stringify(cm.dropped));
+  check('$CMDC_BIN overrides the resolved binary', findCmdcBinary({ CMDC_BIN: '/opt/cmd' }).cmd === '/opt/cmd');
+  check('the exit-code table names the auth failure', /not authenticated/.test(CMDC_EXIT_CODES[3] || ''));
+
+  const cmdcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdlc-cmdc-'));
+  let cmdcReq = null;
+  const cmdcStub = async (req) => { cmdcReq = req; return { exitCode: 0, stdout: 'CMD-OUT', stderr: '', timedOut: false }; };
+  let cres = await handle('cmdc', { anchor: cmdcDir, name: 'code-reviewer', task: 'TASK-MARKER', model: 'deepseek/deepseek-v4-pro' },
+    () => {}, { spawnCmdc: cmdcStub });
+  check('a cmdc dispatch returns the session output', cres.ok === true && cres.result === 'CMD-OUT', JSON.stringify(cres));
+  check('a named cmdc dispatch carries the suite role body', Boolean(cmdcReq && cmdcReq.prompt.includes('ROLE — code-reviewer')));
+  check('the cmdc prompt carries the task', Boolean(cmdcReq && cmdcReq.prompt.includes('TASK-MARKER')));
+  check('the cmdc session runs in the caller\'s directory', Boolean(cmdcReq && path.resolve(cmdcReq.cwd) === path.resolve(cmdcDir)), cmdcReq && cmdcReq.cwd);
+  check('an explicit cmdc model is passed through', cmdcReq?.model === 'deepseek/deepseek-v4-pro');
+  check('cmdc defaults to no permission override', cmdcReq?.permissionMode === null);
+  cres = await handle('cmdc', { anchor: cmdcDir, task: 'T', yolo: true }, () => {}, { spawnCmdc: cmdcStub });
+  check('yolo requests cmdc write permission', cres.ok === true && cmdcReq.permissionMode === 'yolo', JSON.stringify(cmdcReq && { m: cmdcReq.permissionMode }));
+  check('an unnamed cmdc dispatch has no role preamble', Boolean(cmdcReq && !cmdcReq.prompt.includes('ROLE —')));
+  const noTask = await handle('cmdc', { anchor: cmdcDir }, () => {}, { spawnCmdc: cmdcStub });
+  check('a cmdc dispatch with no task is refused', noTask.ok === false && /required/.test(noTask.error), noTask.error);
+  const badYolo = await handle('cmdc', { anchor: cmdcDir, task: 'T', yolo: 'yes' }, () => {}, { spawnCmdc: cmdcStub });
+  check('a non-boolean yolo is refused', badYolo.ok === false && /must be true or false/.test(badYolo.error), badYolo.error);
+  const noRole = await handle('cmdc', { anchor: cmdcDir, name: 'no-such-role', task: 'x' }, () => {}, { spawnCmdc: cmdcStub });
+  check('an unknown cmdc role is a failure, not a guess', noRole.ok === false, JSON.stringify(noRole));
+  const savedDepth2 = process.env[DEPTH_VAR];
+  process.env[DEPTH_VAR] = String(MAX_DEPTH);
+  const refusedCmdc = await spawnCmdc({ prompt: 'x', cwd: HERE, timeoutMs: 1000 });
+  if (savedDepth2 === undefined) delete process.env[DEPTH_VAR]; else process.env[DEPTH_VAR] = savedDepth2;
+  check('spawnCmdc refuses at the depth limit', refusedCmdc.spawnError && /refusing to nest/.test(refusedCmdc.stderr), refusedCmdc.stderr);
+  fs.rmSync(cmdcDir, { recursive: true, force: true });
 
   console.log(failures.length ? `\n${failures.length} failure(s)` : '\nall ok');
   process.exitCode = failures.length ? 1 : 0;

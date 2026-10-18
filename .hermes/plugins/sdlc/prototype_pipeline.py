@@ -243,6 +243,23 @@ class StepError(Exception):
 
 # --------------------------------------------------------------------------- telegram
 
+def _tg_base(env: dict) -> str:
+    """Bot API root. TELEGRAM_BASE_URL points standalone sends at a local telegram-bot-api server (the bot
+    cannot use api.telegram.org once it is logged out of it). It must be https, or http to a loopback host,
+    and end in /bot; anything else is ignored so a typo cannot send the token somewhere in clear text.
+    Same rule as video_pipeline.tg_base."""
+    from urllib.parse import urlparse
+    v = (env.get("TELEGRAM_BASE_URL") or "").strip()
+    if not v:
+        return "https://api.telegram.org/bot"
+    u = urlparse(v)
+    loop = u.hostname in ("127.0.0.1", "localhost", "::1")
+    if (u.scheme == "https" or (u.scheme == "http" and loop)) and v.endswith("/bot") and re.fullmatch(r"[A-Za-z0-9@_:/.\-+%\[\]]+", v):
+        return v
+    log.error("TELEGRAM_BASE_URL ignored (needs https, or http to loopback, ending in /bot)")
+    return "https://api.telegram.org/bot"
+
+
 def _env() -> dict:
     env = dict(os.environ)
     try:
@@ -274,7 +291,7 @@ def send(html_text: str, button: tuple[str, str] | None = None) -> bool:
                "link_preview_options": {"is_disabled": button is None}}
     if button:
         payload["reply_markup"] = {"inline_keyboard": [[{"text": button[0], "url": button[1]}]]}
-    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage",
+    req = urllib.request.Request(f"{_tg_base(env)}{token}/sendMessage",
                                  json.dumps(payload).encode(), {"content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310 — fixed host
@@ -303,7 +320,7 @@ def send_photo(png: bytes, caption: str) -> bool:
                   f'Content-Disposition: form-data; name="photo"; filename="shot.png"\r\n'
                   f"Content-Type: image/png\r\n\r\n").encode() + png + f"\r\n--{boundary}--\r\n".encode())
     body = b"".join(parts)
-    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendPhoto", body,
+    req = urllib.request.Request(f"{_tg_base(env)}{token}/sendPhoto", body,
                                  {"content-type": f"multipart/form-data; boundary={boundary}"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310 — fixed host
@@ -381,6 +398,11 @@ def ensure_model(role: str, choice: str | None = None) -> str:
     models out when there is not enough GPU memory. Remote providers (Command
     Code bridge, …) need no loading and pass straight through. Returns a
     one-line note; raises StepError when the model cannot be brought up."""
+    cat = _plugin()._load_catalog() or {}
+    chosen = choice or (cat.get("roles") or {}).get(role)
+    if ((cat.get("choices") or {}).get(chosen) or {}).get("backend") == "claude":
+        log.info("%s runs on the Claude plan (claude -p) — no local load", role)
+        return f"claude {((cat['choices'])[chosen]).get('model')}"
     want, provider = _model_for_role(role, choice)
     if not want:
         raise StepError(f"no model is routed for {role} — check the sdlc model catalog")

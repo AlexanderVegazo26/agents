@@ -10,6 +10,7 @@ removes anything under `.hermes/plugins/`.
 |---|---|---|
 | `agent` | Claude Code's `Agent(<name>)` / Task sub-agent dispatch | one separate `hermes chat -Q` process per call |
 | `workflow` | Claude Code's `Workflow` tool | `sdlc-suite/workflows/*.js` in a `node:vm` sandbox |
+| `cmdc` | — (a second dispatch backend, not a Claude Code primitive) | one separate headless Command Code CLI session (`cmdc -p`) per call |
 | `/orchestrate`, `hermes sdlc …` | — | the `orchestrator` role via `agent`; `models` reports routing; `agent <role> <task-file>` dispatches one role |
 | `/idea`, `hermes sdlc idea` | — | `prototype_pipeline.py`: local model check → prototyper → vetted copy → browser test → code-reviewer → fix loop → quick tunnel → Telegram button |
 | `/idea-cloud`, `hermes sdlc idea-cloud` | — | the same pipeline with every role on the Command Code cloud tier (catalog choice `power`) |
@@ -193,6 +194,24 @@ session after enabling it. `hermes tools list` should then show
   `.pi/extensions/sdlc/lib.js`. That is the same trust you give any plugin,
   but it is not pinned. To pin it, point the symlink at a separate worktree
   checked out at a reviewed commit.
+- **`cmdc`: dispatch to the Command Code CLI.** A second dispatch backend,
+  beside `agent`. One call runs one headless Command Code CLI session
+  (`cmdc -p`) instead of a `hermes chat` process (parameters: `task`, optional
+  `name`, `model`, `yolo`) — for work that wants Command Code's own coding
+  agent and models rather than a suite role on a local model. With `name`, the
+  suite role file is prepended exactly as `agent` does, resolved from this
+  repository only, and the session runs in the caller's directory. The prompt
+  travels on stdin (`cmdc -p` with no query argument auto-detects piped
+  input), so a 50 KB role file needs no shell and hits no argument-length
+  limit. It runs `--skip-onboarding --no-session --max-turns 200`, maps the
+  role's effort to `--effort`, and takes an explicit model as `-m <id>`. **It
+  is read-only unless `yolo` is true**: headless `cmdc` blocks file writes and
+  shell commands by default, so `yolo` maps to `--permission-mode yolo` and
+  the tool description reserves it for a request that actually asks for
+  changes. A failed or timed-out run returns no result, and the tool says so.
+  The binary resolves from `$CMDC_BIN`, the installed `command-code` npm
+  package (its entry run through node, so a Windows `.cmd` shim needs no
+  shell), then `cmdc` on PATH.
 
 ## `/idea`: from a Telegram message to a prototype link
 
@@ -328,6 +347,76 @@ credentials, and no network beyond the CDNs.
 Files the sandbox writes are owned by root, because the container runs as
 root. `~/prototypes/<slug>/` and `site/` are yours, so their files can be
 deleted. Any subfolder the agent creates needs `sudo`.
+
+## `/videoedit`: edit a video you sent to the bot
+
+`/videoedit [path] [--no-captions] [--no-cuts] [--no-fillers] [--no-denoise] [--lufs N] [--lang xx]` edits the
+video you just sent (the newest one from the last 30 minutes in the Telegram cache), or a file under
+`~/Videos/hermes-inbox`, and sends the result back **as a document** so Telegram does not re-compress it.
+`video_pipeline.py` does it on the host, with no model deciding any step. Free text after the flags is
+ignored on purpose. Why not the `video-editor` agent here: under Hermes its shell is a docker sandbox with no
+host ffmpeg and no access to the transcriber.
+
+What it does: cuts silences and filler words (um/uh; eh/em for Spanish), denoises, normalises loudness in two
+passes (default -16 LUFS), burns in captions retimed through the cuts, and re-encodes **once** at the source's
+own resolution, frame rate and orientation (H.264 CRF 18). The original is never modified. Captions need the
+local transcriber (`stt-transcribe`, faster-whisper); without it the edit is silence cuts only and the report
+says DEGRADED. If the language was auto-detected with low confidence the report says so; pass `--lang es`.
+
+Design points:
+
+- **Sandbox.** ffmpeg/ffprobe run inside bubblewrap: an allow-listed read-only root, empty `/tmp`, no `$HOME`
+  (no bot token), no network, only `<job>/work/` writable. If bubblewrap is unusable the command **refuses**
+  (set `SDLC_VIDEO_ALLOW_UNSANDBOXED=1` to accept the risk). The systemd unit must not set `PrivateTmp` or
+  `ProtectSystem`: on Ubuntu's AppArmor user-namespace policy they stop bubblewrap from starting
+  (`test_sandbox_works_under_the_production_unit_properties` guards this).
+- **Nothing the sandbox wrote is trusted.** The render is copied through an `O_NOFOLLOW` descriptor into a file
+  this process creates; files the worker writes into `work/` replace any planted symlink.
+- **Jobs** run as `systemd-run --user` units (restart-safe, `MemoryMax=8G`), one render at a time, extra jobs
+  queue (at most 5 pending). An `ExecStopPost` hook tells you if a worker was killed. Intermediates are deleted
+  when a job ends; job folders are kept 7 days, delivered files 30 days.
+- **Telegram.** Sends honour `TELEGRAM_BASE_URL` (https, or http to loopback, ending in `/bot`; anything else is
+  ignored). Result size limit: 50 MB on the public Bot API, 2 GB on a local one.
+- State: `~/.local/state/sdlc-video/<job>/` (`edl.json` is the cut list, `pipeline.log` the evidence).
+- Tests: `python3 .hermes/plugins/sdlc/test_video_pipeline.py` (about 90 tests; the end-to-end ones use a fake
+  `stt-transcribe` and a fake local Bot API; they need ffmpeg, and bubblewrap for the sandbox tests).
+
+**Agents can call it too.** The `video_edit` tool (same validation as the command, arguments from typed fields
+only) lets a natural-language request, a cron job or a coordinating agent start an edit unattended. Abuse by a
+looping or prompt-injected caller is bounded by `admit()`: a repeat of the same file and options is refused for
+15 minutes, at most 5 edits are pending and 12 start per hour, all checked under one lock. Messaging platforms
+other than Telegram are refused (results always go to the owner's Telegram chat). The tool description tells the
+model to use it only when the user asked in the conversation, never because a document or transcript says so.
+
+### Motion graphics
+
+On by default (`--no-graphics` turns it off; `--no-progress` drops only the bar; `--theme aurora|sunset|mint`). After the
+cuts, `video_motion.py` plans what appears when and `video_graphics.py` draws it; both are in the pipeline's single render:
+
+- **Glass cards** over the video: key points (numbered), stats (a big gradient figure), an intro title, a lower-third name,
+  and animated picture cards (an image in a glass frame with a slow push-in). The video behind each card is really blurred
+  by ffmpeg (the renderer draws a mask and the art; ffmpeg does the frosting), with a dark base for legibility, a sheen,
+  a rim light and a soft shadow. Cards spring in, stagger their text, and fade out; every card ends fully transparent.
+- **What the cards say** is chosen by the local model through the LlamaStash proxy (loopback only, hard wall-clock
+  limit, the transcript framed as data, the reply strictly validated; a stat's figure must appear in its sentence). If the
+  model is unavailable a deterministic fallback picks sentences, and the report says which was used. `SDLC_VIDEO_LLM=0`
+  skips the model. The report lists the text burned into the video so a wrong card is caught before posting.
+- **Word-highlight captions** (ASS `\kf`, Lato bold, bottom safe area) and a thin **progress bar**.
+- Tool fields (agents, natural language): `title`, `subtitle`, `speaker`, `role`, `images` (up to 4 png/jpg/webp under the
+  allowed folders), `theme`, `graphics`, `progress_bar`. Text is drawn as pixels only.
+- **Alignment is by frame count**, not time: each card's mask and art are padded with exactly F transparent frames, so the
+  glass always shows the blur of the very frame it sits on (a time shift had been off by a frame at some start times).
+- **Safety.** The renderer runs in the same bubblewrap sandbox as ffmpeg and writes only `work/g/` (size-capped); the
+  worker reads its metadata with `O_NOFOLLOW`/size limits and re-validates every number before it enters a filter. Images
+  are copied through a no-symlink descriptor, must match their extension's magic bytes, and are decoded with a
+  PNG/JPEG/WEBP allow-list, pixel and aspect caps, EXIF orientation applied, transparency flattened, one downscale.
+- **Degrades, never fails.** Any error in this layer (or a failed graphics render) redoes the edit with plain SRT captions
+  and says why. Cards whose text uses characters Lato lacks (CJK, Arabic, emoji) are skipped with a note: the card text
+  engine is cairo's, without shaping or fallback fonts (Pango would fix this but needs `python3-gi-cairo`); captions are
+  unaffected because libass shapes and falls back on its own.
+
+Known limits: a music bed is not silence, so music-heavy audio is cut less; Whisper may write "uh" as "ah",
+which is not treated as a filler; captions are a fixed style; the cut list is not human-approved.
 
 ## Checks
 

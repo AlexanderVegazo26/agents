@@ -1,7 +1,9 @@
 name: sdlc
-version: "0.1.0"
-description: "sdlc-suite sub-agent dispatch (`agent`) and workflow runner (`workflow`) for Hermes — each suite role runs in its own hermes chat process. Requires node."
+version: "0.2.0"
+description: "sdlc-suite dispatch for Hermes — `agent` (one suite role per `hermes chat` process), `cmdc` (one task per headless Command Code CLI session), `workflow` (the suite's workflow scripts in a node:vm sandbox), and `video_edit` (host-side video pipeline). Requires node."
 author: "sdlc-suite"
 provides_tools:
   - agent
+  - cmdc
+  - video_edit
   - workflow
