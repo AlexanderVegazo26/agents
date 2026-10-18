@@ -337,6 +337,12 @@ export function findClaudeBinary(env = process.env) {
 /** Read-only built-in tools a `claude` dispatch gets: it can read the project, never write or run a command. */
 export const CLAUDE_READ_TOOLS = 'Read,Grep,Glob';
 
+/** Effort every `claude` dispatch is pinned to: a higher level mostly makes one model argue with itself, slower. */
+export const CLAUDE_EFFORT = 'medium';
+
+/** Extra permission rules a catalog choice may grant a `claude` dispatch: one named command, nothing broader (no bare "Bash"). */
+export const CLAUDE_ALLOW_RE = /^Bash\([A-Za-z0-9_.-]+:\*\)$/;
+
 /**
  * Environment for a `claude -p` child: the nested-session env, minus any
  * ANTHROPIC_* credential, so the CLI authenticates with the user's Claude plan
@@ -358,7 +364,7 @@ export function claudeEnv(base = process.env, depth = 0) {
  * (`--strict-mcp-config` with no config file loads none; `--bare` is not used: it would drop the plan login), so the model sees the
  * project and the task and nothing else. `model` is a Claude alias or id.
  */
-export function spawnClaude({ prompt, extraArgs = [], cwd, timeoutMs, log = () => {}, model = null }) {
+export function spawnClaude({ prompt, extraArgs = [], cwd, timeoutMs, log = () => {}, model = null, claudeAllow = null }) {
   return new Promise((resolve) => {
     if (STOPPING) {
       resolve({ exitCode: 1, stdout: '', stderr: 'runner is shutting down', timedOut: false, spawnError: true });
@@ -375,7 +381,10 @@ export function spawnClaude({ prompt, extraArgs = [], cwd, timeoutMs, log = () =
       return;
     }
     // The role file's own `--model`/`--thinking` flags are routing's business, not the CLI's.
-    const args = ['-p', '--no-session-persistence', '--tools', CLAUDE_READ_TOOLS, '--permission-mode', 'default', '--strict-mcp-config'];
+    // `claudeAllow` (catalog "claude_allow") turns Bash on but only for the named commands; every other command is denied, as there is no prompt in print mode.
+    const allow = (claudeAllow || []).filter((r) => CLAUDE_ALLOW_RE.test(r));
+    const args = ['-p', '--no-session-persistence', '--tools', allow.length ? `${CLAUDE_READ_TOOLS},Bash` : CLAUDE_READ_TOOLS, '--permission-mode', 'default', '--strict-mcp-config', '--effort', CLAUDE_EFFORT];
+    if (allow.length) args.push('--allowedTools', allow.join(','));
     if (model) args.push('--model', String(model));
     let child;
     try {
@@ -485,6 +494,10 @@ export function loadCatalog(file) {
     if (!c || typeof c.model !== 'string' || !c.model) return { error: `model catalog ${file}: choice "${name}" has no "model"` };
     if (c.backend !== undefined && c.backend !== 'claude') {
       return { error: `model catalog ${file}: choice "${name}" has an unknown backend "${c.backend}" (only "claude")` };
+    }
+    if (c.claude_allow !== undefined) {
+      const ok = c.backend === 'claude' && Array.isArray(c.claude_allow) && c.claude_allow.every((r) => typeof r === 'string' && CLAUDE_ALLOW_RE.test(r));
+      if (!ok) return { error: `model catalog ${file}: choice "${name}" has an invalid "claude_allow" (only on the claude backend, entries like "Bash(ffmpeg:*)")` };
     }
     for (const fb of c.fallback || []) {
       if (!choices[fb]) return { error: `model catalog ${file}: choice "${name}" falls back to unknown "${fb}"` };
@@ -613,7 +626,7 @@ export async function pickModel({ catalog, explicit = null, role = null, roleMod
     tried.push(name);
     if (await probe(c, { fresh })) {
       const note = name === start ? why : `${why} was "${start}", unavailable — fell back`;
-      return { choice: name, model: c.model, provider: c.provider || null, backend: c.backend || null, why: note };
+      return { choice: name, model: c.model, provider: c.provider || null, backend: c.backend || null, claudeAllow: c.claude_allow || null, why: note };
     }
   }
   return none(`${tried.join(', ')} unavailable`);
@@ -683,7 +696,7 @@ function dispatcher(cwd, rawLog, { spawnFn = spawnHermes, spawnClaude: deps_spaw
         }
         const run = route.backend === 'claude' ? (deps_spawnClaude || spawnClaude) : spawnFn;
         return gate(() => run({
-          ...req, cwd, model: route.model, provider: route.provider, toolsets, log: (l) => log(`${label}: ${l}`),
+          ...req, cwd, model: route.model, provider: route.provider, claudeAllow: route.claudeAllow, toolsets, log: (l) => log(`${label}: ${l}`),
         }));
       },
     });

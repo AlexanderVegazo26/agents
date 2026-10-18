@@ -11,6 +11,11 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **Hermes `claude` backend: per-choice `claude_allow` and medium effort**: a
+  catalog choice on the `claude` backend may list `Bash(<command>:*)` rules (for
+  example `ffmpeg` and `ffprobe` for video work); `claude -p` then gets Bash for
+  those commands only and every other command is denied. Every `claude`
+  dispatch is now pinned to `--effort medium`.
 - **Hermes `claude` model backend and role re-routing (sdlc plugin 0.2.0)**: a
   catalog choice may set `"backend": "claude"`, and the `agent` tool then runs
   that dispatch as `claude -p` on the user's Claude plan. The session is

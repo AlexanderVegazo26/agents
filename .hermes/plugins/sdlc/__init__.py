@@ -78,6 +78,10 @@ def catalog_error(data) -> str | None:
             return f'choice "{name}" has no "model"'
         if "backend" in c and c["backend"] != "claude":
             return f'choice "{name}" has an unknown backend "{c["backend"]}" (only "claude")'
+        if "claude_allow" in c and not (c.get("backend") == "claude" and isinstance(c["claude_allow"], list)
+                                        and all(isinstance(r, str) and re.fullmatch(r"Bash\([A-Za-z0-9_.-]+:\*\)", r)
+                                                for r in c["claude_allow"])):
+            return f'choice "{name}" has an invalid "claude_allow" (only on the claude backend, entries like "Bash(ffmpeg:*)")'
         for fb in c.get("fallback") or []:
             if fb not in choices:
                 return f'choice "{name}" falls back to unknown "{fb}"'
