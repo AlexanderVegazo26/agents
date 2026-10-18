@@ -59,3 +59,10 @@ display:
       interim_assistant_messages: false
       tool_progress: 'off'
       cleanup_progress: true
+
+# STT (voice notes): local Whisper through the fixed-port shim
+stt:
+  provider: openai
+  openai:
+    model: whisper
+    base_url: http://127.0.0.1:11436/v1
