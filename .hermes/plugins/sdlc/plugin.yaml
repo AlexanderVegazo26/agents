@@ -7,3 +7,5 @@ provides_tools:
   - cmdc
   - video_edit
   - workflow
+provides_hooks:
+  - pre_gateway_dispatch

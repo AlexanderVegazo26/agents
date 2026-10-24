@@ -63,6 +63,7 @@ class _StubCtx:
         self.tools: dict[str, dict] = {}
         self.commands: dict[str, object] = {}
         self.cli: dict[str, object] = {}
+        self.hooks: dict[str, object] = {}
 
     def register_tool(self, name, toolset, schema, handler, **_kw):
         self.tools[name] = {"toolset": toolset, "schema": schema, "handler": handler}
@@ -72,6 +73,9 @@ class _StubCtx:
 
     def register_cli_command(self, name, help, setup_fn, handler_fn=None, **_kw):
         self.cli[name] = (setup_fn, handler_fn)
+
+    def register_hook(self, name, handler, **_kw):
+        self.hooks[name] = handler
 
 
 def check_plugin(errors: list[str]) -> None:
@@ -93,6 +97,7 @@ def check_plugin(errors: list[str]) -> None:
         errors.append(f".hermes/plugins/sdlc: registers {sorted(ctx.tools)}, "
                       "expected ['agent', 'cmdc', 'video_edit', 'workflow']")
     check_declared_tools(ctx.tools, errors)
+    check_declared_tools(ctx.hooks, errors, "provides_hooks", "hooks")
     if set(ctx.commands) != {"orchestrate", "idea", "idea-cloud", "videoedit"}:
         errors.append(f".hermes/plugins/sdlc: slash commands {sorted(ctx.commands)}, "
                       "expected ['idea', 'idea-cloud', 'orchestrate', 'videoedit']")
@@ -100,6 +105,9 @@ def check_plugin(errors: list[str]) -> None:
         errors.append(".hermes/plugins/sdlc: /idea is registered but prototype_pipeline.py is missing")
     if not (PLUGIN / "video_pipeline.py").is_file():
         errors.append(".hermes/plugins/sdlc: /videoedit is registered but video_pipeline.py is missing")
+    if set(ctx.hooks) != {"pre_gateway_dispatch"}:
+        errors.append(f".hermes/plugins/sdlc: hooks {sorted(ctx.hooks)}, expected ['pre_gateway_dispatch'] "
+                      "(the inbound-video routing note)")
     if set(ctx.cli) != {"sdlc"}:
         errors.append(f".hermes/plugins/sdlc: CLI commands {sorted(ctx.cli)}, expected ['sdlc']")
     model = ctx.tools.get("agent", {}).get("schema", {}).get("parameters", {}).get("properties", {}).get("model")
@@ -115,8 +123,9 @@ def check_plugin(errors: list[str]) -> None:
         errors.append(f".hermes/plugins/sdlc/runner.mjs --selftest exited {r.returncode}:\n{r.stdout}{r.stderr}")
 
 
-def check_declared_tools(tools: dict, errors: list[str]) -> None:
-    """`plugin.yaml`'s `provides_tools` must list every tool `register()` registers.
+def check_declared_tools(tools: dict, errors: list[str], key: str = "provides_tools", what: str = "tools") -> None:
+    """`plugin.yaml`'s `provides_tools` must list every tool `register()` registers (and `provides_hooks`
+    every hook).
 
     `hermes plugins validate` fails on undeclared tools and `hermes plugins
     doctor` warns about them; CI runs only this offline gate, so the rule is
@@ -124,11 +133,11 @@ def check_declared_tools(tools: dict, errors: list[str]) -> None:
     YAML dependency, matching how this file parses skill frontmatter.
     """
     text = (PLUGIN / "plugin.yaml").read_text(encoding="utf-8")
-    block = re.search(r"^provides_tools:[ \t]*\n((?:[ \t]*-[ \t]*\S+[ \t]*\n?)+)", text, re.MULTILINE)
+    block = re.search(rf"^{key}:[ \t]*\n((?:[ \t]*-[ \t]*\S+[ \t]*\n?)+)", text, re.MULTILINE)
     declared = set(re.findall(r"-[ \t]*(\S+)", block.group(1))) if block else set()
     if declared != set(tools):
-        errors.append(f".hermes/plugins/sdlc/plugin.yaml: provides_tools {sorted(declared)} "
-                      f"!= registered tools {sorted(tools)}")
+        errors.append(f".hermes/plugins/sdlc/plugin.yaml: {key} {sorted(declared)} "
+                      f"!= registered {what} {sorted(tools)}")
 
 
 def check_catalog_rules(mod, errors: list[str]) -> None:
