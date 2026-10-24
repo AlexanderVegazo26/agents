@@ -1,0 +1,6 @@
+name: project_manager
+version: "1.0.0"
+description: "Project manager over ClickUp + Discord: /daily /standup /checking standups (guild commands with a modal), ClickUp status reports with conditional reviewer mentions, stale/blocked/overdue follow-ups with escalation, project health. `project_manager` tool + `project-manager` skill; scheduled jobs run pm.py."
+author: "hermes"
+provides_tools:
+  - project_manager
