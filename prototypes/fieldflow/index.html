@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FieldFlow — field-to-billing prototype</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+<style>
+  [x-cloak]{display:none!important}
+  .btn{min-height:44px}
+  :focus-visible{outline:3px solid #2563eb;outline-offset:2px}
+  @media print{body *{visibility:hidden}#report,#report *{visibility:visible}#report{position:absolute;left:0;top:0;width:100%}}
+</style>
+</head>
+<body class="bg-slate-100 text-slate-900 antialiased" x-data="app()" x-cloak>
+
+<!-- TOP BAR -->
+<header class="bg-slate-900 text-white">
+  <div class="mx-auto max-w-7xl px-4 py-3 flex flex-wrap items-center gap-3">
+    <div class="font-bold text-lg tracking-tight">FieldFlow <span class="text-xs font-normal text-slate-400">pilot prototype</span></div>
+    <nav class="flex flex-wrap gap-1" aria-label="View as role">
+      <template x-for="v in views" :key="v.id">
+        <button @click="view=v.id" :aria-current="view===v.id ? 'page' : null"
+          :class="view===v.id ? 'bg-white text-slate-900' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'"
+          class="btn px-3 rounded-md text-sm font-medium" x-text="v.label"></button>
+      </template>
+    </nav>
+    <div class="ml-auto text-sm text-slate-300">Sim clock <span class="font-mono text-white" x-text="fmt(clock)"></span> · Mon 6 Oct</div>
+  </div>
+</header>
+
+<div x-show="toast" x-transition role="status" aria-live="polite" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg max-w-[90vw]" x-text="toast"></div>
+
+<main class="mx-auto max-w-7xl px-4 py-4">
+
+<!-- ================= DISPATCH ================= -->
+<section x-show="view==='dispatch'" aria-labelledby="h-dispatch">
+  <div class="flex items-end justify-between mb-3">
+    <h1 id="h-dispatch" class="text-xl font-bold">Dispatch board</h1>
+    <div class="text-sm text-slate-600">Dispatcher decides. Recommendations only.</div>
+  </div>
+
+  <div class="grid lg:grid-cols-[300px_1fr] gap-4">
+    <!-- queue -->
+    <div class="bg-white rounded-xl shadow-sm border p-3">
+      <h2 class="font-semibold mb-2">Unscheduled <span class="text-slate-500 font-normal" x-text="'(' + queue.length + ')'"></span></h2>
+      <p x-show="!queue.length" class="text-sm text-slate-500 py-6 text-center">Nothing waiting. All requests are scheduled.</p>
+      <ul class="space-y-2">
+        <template x-for="q in queue" :key="q.id">
+          <li>
+            <button @click="selQ=q.id; selJ=null" class="w-full text-left rounded-lg border p-2 hover:border-blue-500"
+              :class="[selQ===q.id?'ring-2 ring-blue-500':'', q.emergency?'border-red-400 bg-red-50':'']">
+              <div class="flex justify-between text-xs"><span class="font-mono" x-text="q.id"></span>
+                <span :class="q.emergency?'text-red-700 font-bold':'text-slate-500'" x-text="q.emergency?'EMERGENCY':'Request'"></span></div>
+              <div class="font-medium text-sm" x-text="cust(q.custId).name + ' · ' + q.loc"></div>
+              <div class="text-sm text-slate-600" x-text="q.title"></div>
+              <div class="text-xs mt-1" :class="slaClass(q.slaDue)" x-text="'SLA due ' + fmt(q.slaDue) + ' · ' + slaLeft(q.slaDue)"></div>
+            </button>
+          </li>
+        </template>
+      </ul>
+    </div>
+
+    <div class="space-y-4 min-w-0">
+      <!-- board -->
+      <div class="bg-white rounded-xl shadow-sm border overflow-x-auto">
+        <div class="min-w-[1000px]">
+          <div class="flex border-b text-xs text-slate-500">
+            <div class="w-40 shrink-0 p-2">Technician</div>
+            <div class="relative flex-1 h-8">
+              <template x-for="h in 12" :key="h">
+                <div class="absolute top-0 bottom-0 border-l pl-1 pt-2" :style="'left:' + ((h-1)/12*100) + '%'" x-text="(h+6) + ':00'"></div>
+              </template>
+            </div>
+          </div>
+          <template x-for="t in techs" :key="t.id">
+            <div class="flex border-b last:border-0">
+              <div class="w-40 shrink-0 p-2">
+                <div class="font-medium text-sm" x-text="t.name"></div>
+                <div class="text-xs text-slate-500" x-text="t.tag + ' · ' + techStatus(t)"></div>
+              </div>
+              <div class="relative flex-1 h-16 bg-[repeating-linear-gradient(90deg,transparent,transparent_calc(8.333%-1px),#e2e8f0_calc(8.333%-1px),#e2e8f0_8.333%)]">
+                <div class="absolute top-0 bottom-0 w-0.5 bg-blue-500 z-10" :style="'left:' + pct(clock) + '%'" title="Now"></div>
+                <template x-for="j in jobsOf(t.id)" :key="j.id">
+                  <button @click="selJ=j.id; selQ=null"
+                    class="absolute top-2 bottom-2 rounded-md px-1.5 text-left text-xs overflow-hidden border text-white"
+                    :class="[jobColor(j), selJ===j.id?'ring-2 ring-offset-1 ring-blue-600':'']"
+                    :style="'left:' + pct(j.start) + '%;width:' + (j.dur/660*100) + '%'"
+                    :aria-label="j.id + ' ' + cust(j.custId).name + ' ' + fmt(j.start)">
+                    <div class="font-semibold truncate" x-text="(j.emergency?'! ':'') + cust(j.custId).name"></div>
+                    <div class="truncate opacity-90" x-text="fmt(j.start) + ' · ' + j.status"></div>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- detail / recommendations -->
+      <div class="bg-white rounded-xl shadow-sm border p-4" x-show="selQ || selJ">
+        <template x-if="selQ && qItem()">
+          <div>
+            <div class="flex flex-wrap justify-between gap-2">
+              <div>
+                <h2 class="font-semibold" x-text="qItem().id + ' — ' + cust(qItem().custId).name + ' ' + qItem().loc"></h2>
+                <p class="text-sm text-slate-600" x-text="qItem().desc"></p>
+                <p class="text-xs text-slate-500 mt-1" x-text="'Customer requested urgency: ' + qItem().requested + ' · Contract: ' + cust(qItem().custId).slaText + ' · Est. duration ' + qItem().dur + ' min'"></p>
+              </div>
+              <div class="text-sm font-semibold" :class="slaClass(qItem().slaDue)" x-text="'SLA ' + slaLeft(qItem().slaDue)"></div>
+            </div>
+            <h3 class="mt-3 text-sm font-semibold">Recommended technicians <span class="font-normal text-slate-500">(explained, not automatic)</span></h3>
+            <ul class="mt-2 grid md:grid-cols-2 gap-2">
+              <template x-for="r in recs(qItem())" :key="r.tech.id">
+                <li class="border rounded-lg p-2">
+                  <div class="flex justify-between"><span class="font-medium" x-text="r.tech.name + ' (' + r.tech.tag + ')'"></span><span class="text-sm font-bold" x-text="r.score + ' pts'"></span></div>
+                  <div class="text-xs text-slate-600" x-text="'Arrives ' + fmt(r.start) + (r.bumps.length ? ' · bumps ' + r.bumps.map(b=>b.id).join(', ') : ' · no conflicts')"></div>
+                  <ul class="text-xs mt-1 space-y-0.5">
+                    <template x-for="w in r.why" :key="w.t"><li :class="w.good?'text-green-700':'text-amber-700'" x-text="(w.good?'+ ':'- ') + w.t"></li></template>
+                  </ul>
+                  <button @click="assign(qItem(), r)" class="btn mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium" x-text="qItem().emergency ? 'Insert into ' + r.tech.name.split(' ')[0] + '\'s day' : 'Assign to ' + r.tech.name.split(' ')[0]"></button>
+                </li>
+              </template>
+            </ul>
+          </div>
+        </template>
+        <template x-if="selJ && jobById(selJ)">
+          <div>
+            <h2 class="font-semibold" x-text="jobById(selJ).id + ' — ' + cust(jobById(selJ).custId).name + ' ' + jobById(selJ).loc"></h2>
+            <p class="text-sm text-slate-600" x-text="jobById(selJ).title"></p>
+            <dl class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+              <div><dt class="text-xs text-slate-500">Technician</dt><dd x-text="techName(jobById(selJ).tech)"></dd></div>
+              <div><dt class="text-xs text-slate-500">Window</dt><dd x-text="fmt(jobById(selJ).start) + '–' + fmt(jobById(selJ).start + jobById(selJ).dur)"></dd></div>
+              <div><dt class="text-xs text-slate-500">Status</dt><dd x-text="jobById(selJ).status + (jobById(selJ).late ? ' (late: ' + jobById(selJ).late + ')' : '')"></dd></div>
+              <div><dt class="text-xs text-slate-500">SLA</dt><dd :class="slaClass(jobById(selJ).slaDue)" x-text="jobById(selJ).slaDue ? fmt(jobById(selJ).slaDue) + ' · ' + slaLeft(jobById(selJ).slaDue) : 'Contract PM'"></dd></div>
+            </dl>
+          </div>
+        </template>
+      </div>
+
+      <!-- alerts -->
+      <div class="bg-white rounded-xl shadow-sm border p-3">
+        <h2 class="font-semibold text-sm mb-1">Alerts and customer notifications</h2>
+        <p x-show="!alerts.length" class="text-sm text-slate-500">No alerts yet.</p>
+        <ul class="text-sm space-y-1"><template x-for="a in alerts.slice(0,6)" :key="a.n"><li x-text="a.t"></li></template></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TECHNICIAN ================= -->
+<section x-show="view==='tech'" aria-labelledby="h-tech">
+  <h1 id="h-tech" class="sr-only">Technician mobile app</h1>
+  <div class="flex flex-col lg:flex-row gap-6 items-start justify-center">
+    <aside class="lg:w-72 text-sm text-slate-600 space-y-2">
+      <p class="font-semibold text-slate-900">Tech 42 — Ray Okafor</p>
+      <p>Phone-first, big targets, minimal typing. Scanning is optional: every scan has a manual path.</p>
+      <p>Try the airplane-mode switch in the phone header: everything keeps working and queues for sync.</p>
+    </aside>
+
+    <div class="w-full max-w-[390px] bg-white rounded-[28px] border-[6px] border-slate-800 shadow-xl overflow-hidden">
+      <div class="bg-slate-800 text-white px-4 py-2 flex items-center justify-between text-sm">
+        <span>Ray O. · <span x-text="fmt(clock)"></span></span>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <span x-text="offline ? 'Offline' : 'Online'" :class="offline?'text-amber-300':'text-green-300'"></span>
+          <input type="checkbox" class="sr-only peer" :checked="offline" @change="toggleOffline()" aria-label="Airplane mode (simulate no signal)">
+          <span class="w-11 h-6 rounded-full bg-slate-600 peer-checked:bg-amber-500 relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full peer-checked:after:translate-x-5 transition peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400"></span>
+        </label>
+      </div>
+      <div x-show="offline" class="bg-amber-100 text-amber-900 text-xs px-4 py-1.5" x-text="'No signal. Working from downloaded data. ' + queue2.length + ' change(s) waiting to sync.'"></div>
+      <div x-show="!offline && queue2.length===0 && syncMsg" class="bg-green-100 text-green-900 text-xs px-4 py-1.5" x-text="syncMsg"></div>
+
+      <div class="h-[720px] overflow-y-auto bg-slate-50">
+        <!-- job list -->
+        <div x-show="!techSel" class="p-4 space-y-3">
+          <h2 class="text-lg font-bold">Today</h2>
+          <p x-show="!jobsOf('T42').length" class="text-sm text-slate-500">No jobs today.</p>
+          <template x-for="j in jobsOf('T42')" :key="j.id">
+            <button @click="openJob(j.id)" class="btn w-full text-left bg-white rounded-xl border p-3 shadow-sm" :class="j.emergency?'border-red-500 bg-red-50':''">
+              <div class="flex justify-between text-xs"><span x-text="fmt(j.start) + '–' + fmt(j.start+j.dur)" class="font-mono"></span>
+                <span class="font-semibold" :class="j.emergency?'text-red-700':'text-slate-500'" x-text="j.emergency?'URGENT · SLA ' + slaLeft(j.slaDue):j.status"></span></div>
+              <div class="font-semibold" x-text="cust(j.custId).name"></div>
+              <div class="text-sm text-slate-600" x-text="j.loc + ' · ' + j.title"></div>
+              <div class="text-xs text-amber-700 mt-1" x-show="j.bumpedFrom" x-text="'Moved from ' + fmt(j.bumpedFrom) + ' by dispatch'"></div>
+            </button>
+          </template>
+          <p class="text-xs text-slate-500">Upcoming locations and equipment are pre-downloaded for offline use.</p>
+        </div>
+
+        <!-- job detail -->
+        <template x-if="techSel && tj()">
+          <div class="pb-6">
+            <div class="bg-white border-b p-4">
+              <button @click="techSel=null" class="text-sm text-blue-700 btn">&larr; Today</button>
+              <div class="flex justify-between"><h2 class="text-lg font-bold" x-text="cust(tj().custId).name"></h2><span class="text-xs font-mono mt-1" x-text="tj().id"></span></div>
+              <p class="text-sm text-slate-600" x-text="tj().loc + ' · ' + tj().title"></p>
+              <p class="text-sm mt-1" x-text="'Contact: ' + cust(tj().custId).contact"></p>
+              <div class="mt-2 text-xs bg-amber-50 border border-amber-200 rounded p-2" x-text="'Safety: ' + tj().safety"></div>
+              <div class="mt-2 text-xs bg-slate-100 rounded p-2" x-text="'Last visit: ' + tj().history"></div>
+              <div class="mt-2 text-xs text-slate-600">Equipment: <span x-text="tj().equipment.map(e=>e.name + ' (' + e.model + ')').join(' · ')"></span></div>
+              <div class="mt-1 text-xs" :class="tj().slaDue?slaClass(tj().slaDue):'text-slate-500'" x-text="tj().slaDue ? 'SLA ' + slaLeft(tj().slaDue) : 'Contract preventative maintenance'"></div>
+            </div>
+
+            <!-- primary action -->
+            <div class="p-4 space-y-2">
+              <template x-if="tj().status==='Scheduled'">
+                <div class="space-y-2">
+                  <button @click="techStep('EnRoute')" class="btn w-full py-4 text-lg font-bold bg-blue-600 text-white rounded-xl">Start travel</button>
+                  <button @click="lateOpen=!lateOpen" class="btn w-full bg-white border rounded-xl text-sm">Running late</button>
+                </div>
+              </template>
+              <template x-if="tj().status==='EnRoute'">
+                <div class="space-y-2">
+                  <p class="text-sm text-slate-600">Travel time is recording. ETA shared with dispatch (approximate).</p>
+                  <button @click="techStep('OnSite')" class="btn w-full py-4 text-lg font-bold bg-blue-600 text-white rounded-xl">Arrived</button>
+                  <button @click="lateOpen=!lateOpen" class="btn w-full bg-white border rounded-xl text-sm">Running late</button>
+                </div>
+              </template>
+              <div x-show="lateOpen" class="grid grid-cols-2 gap-2">
+                <template x-for="r in ['Traffic','Previous job overrun','Parts issue','Other']" :key="r">
+                  <button @click="runLate(r)" class="btn border rounded-lg text-sm bg-white" x-text="r"></button>
+                </template>
+              </div>
+              <template x-if="tj().status==='OnSite'">
+                <div class="space-y-2">
+                  <p class="text-sm text-slate-600" x-text="'Arrived ' + fmt(tj().arrivedAt) + ' · travel ' + tj().travelMin + ' min. Labor clock not started.'"></p>
+                  <button @click="techStep('Working')" :disabled="!checklistDone(tj())" class="btn w-full py-4 text-lg font-bold bg-green-600 text-white rounded-xl disabled:bg-slate-300 disabled:text-slate-500">Start work</button>
+                  <p x-show="!checklistDone(tj())" class="text-xs text-amber-700">Complete the site checklist first.</p>
+                </div>
+              </template>
+              <template x-if="tj().status==='Working'">
+                <p class="text-sm font-semibold text-green-700" x-text="'Labor running since ' + fmt(tj().workStart) + ' (' + (clock - tj().workStart) + ' min)'"></p>
+              </template>
+            </div>
+
+            <!-- checklist -->
+            <section x-show="['OnSite','Working','Completed'].includes(tj().status)" class="px-4 pb-4">
+              <h3 class="font-semibold mb-1">Site checklist <span class="text-xs font-normal text-slate-500">(time-stamped, kept in audit log)</span></h3>
+              <ul class="space-y-1">
+                <template x-for="c in tj().checklist" :key="c.t">
+                  <li>
+                    <label class="btn flex items-center gap-3 bg-white border rounded-lg px-3 py-2 text-sm" :class="tj().status==='Completed'?'opacity-70':''">
+                      <input type="checkbox" class="w-5 h-5" :checked="!!c.at" :disabled="tj().status==='Completed'" @change="tick(c)">
+                      <span class="flex-1" x-text="c.t"></span><span class="text-xs text-slate-500" x-show="c.at" x-text="fmt(c.at)"></span>
+                    </label>
+                  </li>
+                </template>
+              </ul>
+            </section>
+
+            <template x-if="tj().status==='Working'">
+              <div>
+                <!-- diagnose -->
+                <section class="px-4 pb-4 space-y-2">
+                  <h3 class="font-semibold">Diagnosis</h3>
+                  <label class="block text-sm">Equipment
+                    <select x-model="tj().unit" @change="logTech('Equipment selected: ' + tj().unit)" class="btn mt-1 w-full border rounded-lg px-2 bg-white">
+                      <option value="">Choose unit…</option>
+                      <template x-for="e in tj().equipment" :key="e.id"><option :value="e.id" x-text="e.name + ' · S/N ' + e.serial"></option></template>
+                    </select>
+                  </label>
+                  <label class="block text-sm">Failure type
+                    <select x-model="tj().failure" @change="logTech('Failure type: ' + tj().failure)" class="btn mt-1 w-full border rounded-lg px-2 bg-white">
+                      <option value="">Choose…</option>
+                      <template x-for="f in failureTypes(tj())" :key="f"><option x-text="f"></option></template>
+                    </select>
+                  </label>
+                  <label class="block text-sm">Notes (free text is fine)
+                    <textarea x-model="tj().notes" @change="noteChanged()" rows="3" class="mt-1 w-full border rounded-lg p-2 bg-white" placeholder="e.g. unit 2 cap bulged, fan not starting"></textarea>
+                  </label>
+                  <div class="flex gap-2 items-center">
+                    <button @click="draftSummary()" class="btn px-3 border rounded-lg text-sm bg-white">Draft service summary</button>
+                    <span class="text-xs text-slate-500">Simulated AI pilot. Never changes billing data.</span>
+                  </div>
+                  <p x-show="tj().summary" class="text-xs bg-violet-50 border border-violet-200 rounded p-2" x-text="tj().summary"></p>
+                </section>
+
+                <!-- parts -->
+                <section class="px-4 pb-4">
+                  <h3 class="font-semibold mb-1">Parts <span class="text-xs font-normal text-slate-500">(prices from price list, not editable)</span></h3>
+                  <ul class="text-sm space-y-1 mb-2">
+                    <template x-for="(p,i) in tj().extraParts" :key="i"><li class="flex justify-between bg-white border rounded-lg px-3 py-2"><span x-text="p.name + ' ×' + p.qty + ' (' + p.src + ')'"></span><span x-text="money(p.price*p.qty)"></span></li></template>
+                    <li x-show="!tj().extraParts.length" class="text-slate-500">No parts added.</li>
+                  </ul>
+                  <div class="flex gap-2">
+                    <select x-model="partPick" class="btn flex-1 border rounded-lg px-2 bg-white text-sm" aria-label="Choose part">
+                      <option value="">Choose part…</option>
+                      <template x-for="p in priceList" :key="p.sku"><option :value="p.sku" x-text="p.name + ' · ' + money(p.price) + ' · truck ' + p.truck"></option></template>
+                    </select>
+                    <button @click="addPart('manual')" :disabled="!partPick" class="btn px-3 rounded-lg bg-slate-800 text-white text-sm disabled:bg-slate-300">Add</button>
+                  </div>
+                  <button @click="scanPart()" class="btn mt-2 w-full border rounded-lg text-sm bg-white">Scan barcode (optional)</button>
+                  <div class="mt-3 flex items-center justify-between text-sm bg-white border rounded-lg px-3 py-2">
+                    <span>Extra labor @ <span x-text="money(rate)"></span>/h (contract rate)</span>
+                    <span class="flex items-center gap-2"><button @click="laborAdj(-0.5)" class="btn w-11 border rounded-lg" aria-label="Less labor">−</button><b x-text="tj().extraLabor.toFixed(1) + ' h'"></b><button @click="laborAdj(0.5)" class="btn w-11 border rounded-lg" aria-label="More labor">+</button></span>
+                  </div>
+                </section>
+
+                <!-- photos -->
+                <section class="px-4 pb-4">
+                  <h3 class="font-semibold mb-1">Photos</h3>
+                  <div class="flex flex-wrap gap-1 mb-2">
+                    <template x-for="c in ['Before','After','Equipment','Damage','Serial number','Customer approval']" :key="c">
+                      <button @click="photoCat=c" :class="photoCat===c?'bg-slate-800 text-white':'bg-white'" class="btn px-3 border rounded-full text-xs" x-text="c"></button>
+                    </template>
+                  </div>
+                  <button @click="takePhoto()" class="btn w-full border-2 border-dashed rounded-lg text-sm bg-white" x-text="'Take photo as “' + photoCat + '”'"></button>
+                  <div class="grid grid-cols-3 gap-2 mt-2">
+                    <template x-for="(p,i) in tj().photos" :key="i">
+                      <div class="aspect-square rounded-lg text-white text-[10px] p-1 flex flex-col justify-end" :style="'background:hsl(' + p.hue + ' 45% 40%)'"><b x-text="p.cat"></b><span x-text="fmt(p.at)"></span></div>
+                    </template>
+                  </div>
+                </section>
+
+                <!-- extra work approval -->
+                <section class="px-4 pb-4">
+                  <h3 class="font-semibold mb-1">Extra work and customer approval</h3>
+                  <div class="bg-white border rounded-lg p-3 text-sm space-y-1">
+                    <div class="flex justify-between"><span>Extra work total</span><b x-text="money(extraTotal(tj()))"></b></div>
+                    <div class="flex justify-between"><span>Approved by customer</span><b x-text="money(tj().approvedTotal)"></b></div>
+                    <div class="text-red-700 font-semibold" x-show="needsApproval(tj())" x-text="'Exceeds approval by ' + money(extraTotal(tj()) - tj().approvedTotal) + ' — new approval required. Approved quotes can’t be edited.'"></div>
+                    <div class="text-amber-700" x-show="pendingApproval(tj())" x-text="pendingApproval(tj()) ? 'Waiting for customer on ' + pendingApproval(tj()).id + ' (' + money(pendingApproval(tj()).amount) + ')' + (pendingApproval(tj()).status==='Queued' ? ' — will send when back online' : '') : ''"></div>
+                  </div>
+                  <button @click="requestApproval()" :disabled="!needsApproval(tj()) || !!pendingApproval(tj())" class="btn mt-2 w-full rounded-lg bg-blue-600 text-white text-sm font-medium disabled:bg-slate-300 disabled:text-slate-500"
+                    x-text="tj().approvals.length ? 'Request new approval for ' + money(extraTotal(tj())) : 'Request customer approval'"></button>
+                  <p class="text-xs text-slate-500 mt-1">Customer approves via link or on this phone: open the Customer view.</p>
+                  <ul class="mt-2 text-xs space-y-1">
+                    <template x-for="a in tj().approvals" :key="a.id"><li class="bg-white border rounded px-2 py-1" x-text="a.id + ' · ' + money(a.amount) + ' · ' + a.status + (a.by ? ' by ' + a.by : '')"></li></template>
+                  </ul>
+                </section>
+
+                <!-- completion -->
+                <section class="px-4 pb-4 space-y-2">
+                  <h3 class="font-semibold">Wrap up</h3>
+                  <label class="block text-sm">Resolution
+                    <select x-model="tj().resolution" class="btn mt-1 w-full border rounded-lg px-2 bg-white">
+                      <option value="">Choose…</option><option>Fully resolved</option><option>Partially resolved — follow-up needed</option><option>Not resolved</option>
+                    </select>
+                  </label>
+                  <label class="block text-sm">Recommended follow-up (optional)
+                    <input x-model="tj().followup" class="btn mt-1 w-full border rounded-lg px-2 bg-white" placeholder="e.g. replace unit 3 contactor next PM">
+                  </label>
+                  <div class="bg-white border rounded-lg p-3">
+                    <div class="flex justify-between items-center"><b class="text-sm">Customer signature</b>
+                      <button @click="tj().refuse=!tj().refuse" class="text-xs text-blue-700 underline" x-text="tj().refuse ? 'Collect signature' : 'Customer refuses to sign'"></button></div>
+                    <template x-if="!tj().refuse">
+                      <div class="mt-2">
+                        <input x-model="sigName" class="btn w-full border rounded-lg px-2 mb-2" placeholder="Signer name" aria-label="Signer name">
+                        <canvas width="340" height="120" class="w-full h-[120px] border-2 border-dashed rounded-lg bg-slate-50 touch-none" x-init="sigInit($el)" aria-label="Signature pad"></canvas>
+                        <button @click="sigClear()" class="text-xs text-slate-600 underline">Clear</button>
+                      </div>
+                    </template>
+                    <template x-if="tj().refuse">
+                      <select x-model="tj().refusedReason" class="btn mt-2 w-full border rounded-lg px-2" aria-label="Refusal reason">
+                        <option value="">Reason code…</option><option>Customer unavailable</option><option>Customer declined to sign</option><option>Procurement signs later</option>
+                      </select>
+                    </template>
+                  </div>
+                  <ul class="text-xs space-y-0.5" aria-label="Completion requirements">
+                    <template x-for="r in finishReqs(tj())" :key="r.t"><li :class="r.ok?'text-green-700':'text-slate-600'" x-text="(r.ok?'✓ ':'○ ') + r.t"></li></template>
+                  </ul>
+                  <button @click="finishJob()" :disabled="finishReqs(tj()).some(r=>!r.ok)" class="btn w-full py-4 text-lg font-bold bg-green-600 text-white rounded-xl disabled:bg-slate-300 disabled:text-slate-500">Finish job</button>
+                </section>
+              </div>
+            </template>
+
+            <div x-show="tj().status==='Completed'" class="px-4">
+              <div class="bg-green-50 border border-green-300 rounded-xl p-3 text-sm">
+                <b>Job complete from the phone.</b> No laptop afterward.
+                <div class="mt-1" x-text="'Travel ' + tj().travelMin + ' min · labor ' + tj().laborMin + ' min · ' + money(invoiceTotal(tj())) + ' billable'"></div>
+                <button @click="reportJob=tj().id" class="btn mt-2 w-full bg-white border rounded-lg">View service report</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CUSTOMER PORTAL ================= -->
+<section x-show="view==='customer'" aria-labelledby="h-cust">
+  <div class="flex flex-wrap items-end justify-between gap-2 mb-3">
+    <h1 id="h-cust" class="text-xl font-bold">Customer portal — Harbor Fresh Market</h1>
+    <label class="text-sm">Signed in as
+      <select x-model="userId" class="btn ml-1 border rounded-lg px-2 bg-white">
+        <template x-for="u in users" :key="u.id"><option :value="u.id" x-text="u.name + ' — ' + u.role"></option></template>
+      </select>
+    </label>
+  </div>
+  <p class="text-sm text-slate-600 mb-3" x-text="'Sees: ' + userLocsText() + ' · approval limit ' + money(user().limit)"></p>
+
+  <div class="flex gap-1 mb-3 flex-wrap" role="tablist">
+    <template x-for="t in portalTabs" :key="t.id">
+      <button role="tab" :aria-selected="ptab===t.id" @click="ptab=t.id" :class="ptab===t.id?'bg-slate-900 text-white':'bg-white border'" class="btn px-3 rounded-md text-sm" x-text="t.label + (t.id==='approvals' && myApprovals().length ? ' (' + myApprovals().length + ')' : '')"></button>
+    </template>
+  </div>
+
+  <div class="max-w-3xl space-y-3">
+    <!-- approvals -->
+    <div x-show="ptab==='approvals'" class="space-y-3">
+      <p x-show="!myApprovals().length" class="bg-white border rounded-xl p-6 text-center text-slate-500">No quotes awaiting your approval.</p>
+      <template x-for="x in myApprovals()" :key="x.a.id">
+        <div class="bg-white border rounded-xl p-4 shadow-sm">
+          <div class="text-xs text-slate-500" x-text="x.j.id + ' · ' + x.j.loc + ' · ' + x.a.id"></div>
+          <h2 class="font-bold text-lg" x-text="'Additional work: ' + money(x.a.amount)"></h2>
+          <p class="text-sm text-slate-600">Found during scheduled maintenance. Ray Okafor is on site.</p>
+          <table class="w-full text-sm mt-2"><tbody>
+            <template x-for="l in x.a.lines" :key="l.t"><tr class="border-t"><td class="py-1" x-text="l.t"></td><td class="py-1 text-right" x-text="money(l.v)"></td></tr></template>
+            <tr class="border-t font-bold"><td class="py-1">Total</td><td class="py-1 text-right" x-text="money(x.a.amount)"></td></tr>
+          </tbody></table>
+          <p x-show="x.a.supersedes" class="text-xs text-amber-700 mt-1" x-text="'Replaces earlier approval of ' + money(x.a.supersedes) + ' — final repair cost increased.'"></p>
+          <p x-show="x.a.amount > user().limit" class="text-sm text-red-700 mt-2" x-text="'Your approval limit is ' + money(user().limit) + '. This needs procurement.'"></p>
+          <div class="flex gap-2 mt-3">
+            <button x-show="x.a.amount <= user().limit" @click="decide(x.j, x.a, true)" class="btn flex-1 bg-green-600 text-white rounded-lg font-semibold">Approve <span x-text="money(x.a.amount)"></span></button>
+            <button x-show="x.a.amount > user().limit" @click="forward(x.j, x.a)" class="btn flex-1 bg-blue-600 text-white rounded-lg font-semibold">Forward to procurement</button>
+            <button @click="decide(x.j, x.a, false)" class="btn px-4 border rounded-lg">Decline</button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- requests -->
+    <div x-show="ptab==='requests'" class="space-y-3">
+      <form @submit.prevent="submitRequest()" class="bg-white border rounded-xl p-4 space-y-2">
+        <h2 class="font-semibold">New service request</h2>
+        <label class="block text-sm">Location
+          <select x-model="reqForm.locId" class="btn mt-1 w-full border rounded-lg px-2" required>
+            <template x-for="l in userLocs()" :key="l.id"><option :value="l.id" x-text="l.label"></option></template>
+          </select></label>
+        <label class="block text-sm">What’s wrong?
+          <textarea x-model="reqForm.desc" required minlength="5" rows="2" class="mt-1 w-full border rounded-lg p-2" placeholder="e.g. Produce cooler running warm since last night"></textarea></label>
+        <div class="flex gap-3 items-end">
+          <label class="text-sm flex-1">Urgency you’d like
+            <select x-model="reqForm.urgency" class="btn mt-1 w-full border rounded-lg px-2"><option>Normal</option><option>High</option><option>Emergency</option></select></label>
+          <label class="text-sm flex items-center gap-2"><input type="checkbox" x-model="reqForm.photo" class="w-5 h-5"> Attach photo</label>
+        </div>
+        <p class="text-xs text-slate-500">The dispatcher reviews every request before scheduling. Final priority is set from your contract.</p>
+        <button class="btn px-4 bg-blue-600 text-white rounded-lg font-medium">Submit request</button>
+      </form>
+      <div class="bg-white border rounded-xl p-4">
+        <h2 class="font-semibold mb-1">Open requests</h2>
+        <p x-show="!myRequests().length" class="text-sm text-slate-500">None open.</p>
+        <ul class="text-sm space-y-1"><template x-for="r in myRequests()" :key="r.id"><li class="flex justify-between border-t pt-1"><span x-text="r.id + ' · ' + r.loc + ' · ' + r.title"></span><span class="text-slate-500" x-text="r.state"></span></li></template></ul>
+      </div>
+    </div>
+
+    <!-- visits -->
+    <div x-show="ptab==='visits'" class="bg-white border rounded-xl p-4">
+      <h2 class="font-semibold mb-1">Scheduled visits</h2>
+      <p x-show="!myJobs(false).length" class="text-sm text-slate-500">No upcoming visits.</p>
+      <ul class="text-sm space-y-2"><template x-for="j in myJobs(false)" :key="j.id">
+        <li class="border-t pt-2"><b x-text="j.loc + ' · ' + j.title"></b>
+          <div class="text-slate-600" x-text="j.id + ' · ' + techName(j.tech) + ' · ' + fmt(j.start) + ' · ' + visitText(j)"></div></li></template></ul>
+    </div>
+
+    <!-- reports -->
+    <div x-show="ptab==='reports'" class="bg-white border rounded-xl p-4">
+      <h2 class="font-semibold mb-1">Service reports</h2>
+      <p x-show="!myJobs(true).length" class="text-sm text-slate-500">No completed visits yet.</p>
+      <ul class="text-sm"><template x-for="j in myJobs(true)" :key="j.id">
+        <li class="border-t py-2 flex justify-between items-center"><span x-text="j.id + ' · ' + j.loc + ' · ' + j.title"></span><button @click="reportJob=j.id" class="btn px-3 border rounded-lg">Open report</button></li></template></ul>
+    </div>
+
+    <!-- invoices -->
+    <div x-show="ptab==='invoices'" class="bg-white border rounded-xl p-4">
+      <h2 class="font-semibold mb-1">Invoices</h2>
+      <p x-show="!myInvoices().length" class="text-sm text-slate-500">No invoices issued yet.</p>
+      <ul class="text-sm"><template x-for="j in myInvoices()" :key="j.id"><li class="border-t py-2 flex justify-between"><span x-text="j.qb.ref + ' · ' + j.loc"></span><b x-text="money(invoiceTotal(j))"></b></li></template></ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= BILLING ================= -->
+<section x-show="view==='billing'" aria-labelledby="h-bill">
+  <div class="flex flex-wrap items-end justify-between gap-2 mb-3">
+    <h1 id="h-bill" class="text-xl font-bold">Billing readiness</h1>
+    <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="qbDown" class="w-5 h-5"> Simulate QuickBooks outage</label>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-4">
+    <template x-for="f in billFilters" :key="f.id">
+      <button @click="billFilter=f.id" :class="billFilter===f.id?'ring-2 ring-blue-600':''" class="bg-white border rounded-xl p-3 text-left">
+        <div class="text-2xl font-bold" x-text="billCount(f.id)"></div><div class="text-xs text-slate-600" x-text="f.label"></div>
+      </button>
+    </template>
+  </div>
+  <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm mb-4">
+    Billing at risk right now: <b x-text="money(atRisk())"></b> across <b x-text="completedJobs().filter(j=>blockers(j).length).length"></b> blocked work orders. Use this as the leakage baseline, not a promise of improvement.
+  </div>
+  <div class="bg-white border rounded-xl overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-left text-xs text-slate-500 bg-slate-50"><tr><th class="p-2">Work order</th><th>Customer / site</th><th class="text-right">Total</th><th>Status</th><th>Blockers</th><th class="p-2">Action</th></tr></thead>
+      <tbody>
+        <template x-for="j in billRows()" :key="j.id">
+          <tr class="border-t align-top">
+            <td class="p-2 font-mono" x-text="j.id"></td>
+            <td><span x-text="cust(j.custId).name"></span><div class="text-xs text-slate-500" x-text="j.loc"></div></td>
+            <td class="text-right" x-text="money(invoiceTotal(j))"></td>
+            <td><span class="px-2 py-0.5 rounded-full text-xs font-medium" :class="billStatus(j).cls" x-text="billStatus(j).t"></span>
+              <div class="text-xs text-slate-500 mt-1" x-show="j.qb.msg" x-text="j.qb.msg"></div></td>
+            <td><ul class="text-xs text-red-700"><template x-for="b in blockers(j)" :key="b"><li x-text="b"></li></template></ul><span x-show="!blockers(j).length" class="text-xs text-green-700">None</span></td>
+            <td class="p-2 space-y-1">
+              <div x-show="blockers(j).includes('Missing PO')" class="flex gap-1">
+                <input :id="'po-'+j.id" x-model="poDraft[j.id]" class="border rounded px-2 py-1 w-28 text-xs" placeholder="PO number" :aria-label="'PO number for ' + j.id">
+                <button @click="addPO(j)" class="px-2 border rounded text-xs">Add PO</button>
+              </div>
+              <button x-show="!blockers(j).length && j.qb.state==='none'" @click="sendQB(j)" class="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium">Send to QuickBooks</button>
+              <button x-show="j.qb.state==='pending'" @click="sendQB(j)" class="px-3 py-1.5 border rounded text-xs">Retry sync</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+    <p x-show="!billRows().length" class="p-6 text-center text-slate-500 text-sm">Nothing in this bucket.</p>
+  </div>
+  <div class="mt-4 bg-white border rounded-xl p-3">
+    <h2 class="font-semibold text-sm mb-1">Audit log (append-only)</h2>
+    <ul class="text-xs font-mono space-y-0.5 max-h-48 overflow-y-auto"><template x-for="a in audit.slice(0,25)" :key="a.n"><li x-text="a.t"></li></template></ul>
+  </div>
+</section>
+
+</main>
+
+<!-- REPORT MODAL -->
+<div x-show="reportJob" class="fixed inset-0 bg-black/50 z-40 flex items-start justify-center p-4 overflow-y-auto" @keydown.escape.window="reportJob=null">
+  <div class="bg-white rounded-xl max-w-xl w-full p-6" role="dialog" aria-modal="true" aria-label="Service report">
+    <template x-if="reportJob && jobById(reportJob)">
+      <div id="report">
+        <div class="flex justify-between border-b pb-2"><div><div class="font-bold text-lg">FieldFlow Mechanical Services</div><div class="text-xs text-slate-500">Service report · generated <span x-text="fmt(clock)"></span></div></div><div class="text-right font-mono text-sm" x-text="jobById(reportJob).id"></div></div>
+        <dl class="grid grid-cols-2 gap-2 text-sm mt-3">
+          <div><dt class="text-xs text-slate-500">Customer</dt><dd x-text="cust(jobById(reportJob).custId).name + ' · ' + jobById(reportJob).loc"></dd></div>
+          <div><dt class="text-xs text-slate-500">Technician</dt><dd x-text="techName(jobById(reportJob).tech)"></dd></div>
+          <div><dt class="text-xs text-slate-500">Travel / labor</dt><dd x-text="jobById(reportJob).travelMin + ' min / ' + jobById(reportJob).laborMin + ' min'"></dd></div>
+          <div><dt class="text-xs text-slate-500">Resolution</dt><dd x-text="jobById(reportJob).resolution || '—'"></dd></div>
+        </dl>
+        <p class="text-sm mt-3" x-text="jobById(reportJob).summary || jobById(reportJob).notes || 'Scheduled maintenance completed.'"></p>
+        <table class="w-full text-sm mt-3"><tbody>
+          <tr class="border-t"><td class="py-1">Contract preventative maintenance</td><td class="text-right" x-text="money(jobById(reportJob).contractAmount)"></td></tr>
+          <template x-for="p in jobById(reportJob).extraParts" :key="p.name"><tr class="border-t"><td class="py-1" x-text="p.name + ' ×' + p.qty"></td><td class="text-right" x-text="money(p.price*p.qty)"></td></tr></template>
+          <tr class="border-t" x-show="jobById(reportJob).extraLabor"><td class="py-1" x-text="'Extra labor ' + jobById(reportJob).extraLabor.toFixed(1) + ' h'"></td><td class="text-right" x-text="money(jobById(reportJob).extraLabor*rate)"></td></tr>
+          <tr class="border-t font-bold"><td class="py-1">Total</td><td class="text-right" x-text="money(invoiceTotal(jobById(reportJob)))"></td></tr>
+        </tbody></table>
+        <div class="mt-3 text-sm">
+          <b>Customer sign-off:</b>
+          <template x-if="jobById(reportJob).signature"><div><img :src="jobById(reportJob).signature.img" alt="Customer signature" class="h-16 border"><span x-text="jobById(reportJob).signature.name + ' · ' + fmt(jobById(reportJob).signature.at)"></span></div></template>
+          <span x-show="!jobById(reportJob).signature" x-text="jobById(reportJob).refusedReason ? 'Not signed — ' + jobById(reportJob).refusedReason : 'On file'"></span>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">Emailed to the site contact on completion (default channel: email).</p>
+      </div>
+    </template>
+    <div class="flex gap-2 mt-4"><button @click="window.print()" class="btn px-4 border rounded-lg">Print / save PDF</button><button @click="reportJob=null" class="btn px-4 bg-slate-900 text-white rounded-lg">Close</button></div>
+  </div>
+</div>
+
+<script>
+const fmt = m => { m = Math.round(m); return String(Math.floor(m/60)%24).padStart(2,'0') + ':' + String(m%60).padStart(2,'0'); };
+const money = n => '$' + Number(n||0).toLocaleString('en-US');
+
+const CUSTOMERS = {
+  harbor:   {name:'Harbor Fresh Market', contact:'Tom Becker, store manager · 555-0142', poRequired:true, limit:500, threshold:30, slaHrs:8, slaText:'Retail: 8h response'},
+  mercy:    {name:'Mercy General Hospital', contact:'Facilities desk · 555-0199', poRequired:false, limit:5000, threshold:15, slaHrs:4, slaText:'Hospital: 4h emergency response'},
+  brightline:{name:'Brightline Dental Group', contact:'Front office · 555-0117', poRequired:false, limit:1000, threshold:30, slaHrs:8, slaText:'Retail: 8h response'},
+  northgate:{name:'Northgate Logistics', contact:'Dock supervisor · 555-0163', poRequired:true, limit:2500, threshold:60, slaHrs:24, slaText:'Standard: next business day'},
+  tidewater:{name:'Tidewater Hotel & Suites', contact:'Chief engineer · 555-0188', poRequired:false, limit:3000, threshold:45, slaHrs:8, slaText:'Retail: 8h response'},
+  summit:   {name:'Summit Credit Union', contact:'Branch manager · 555-0120', poRequired:true, limit:750, threshold:30, slaHrs:24, slaText:'Standard: next business day'},
+};
+const LOCS = [
+  {id:'h118', cust:'harbor', label:'#118 Riverside'}, {id:'h204', cust:'harbor', label:'#204 Eastgate'}, {id:'h231', cust:'harbor', label:'#231 Lakeview'},
+];
+const EQUIP = {
+  rtu: n => [1,2,3].map(i => ({id:'RTU-'+i, name:'Rooftop unit '+i, type:'RTU', model:['Carrier 48TC','Trane YSC','Lennox LGH'][i-1], serial:['4119K22871','3320T09456','5818L77012'][i-1]})),
+  cooler: () => [{id:'WIC-1', name:'Walk-in cooler', type:'Walk-in cooler', model:'Kolpak P7', serial:'WK-558201'}],
+  chiller: () => [{id:'CH-2', name:'Chiller 2', type:'Chiller', model:'York YVAA', serial:'YV-90114'}],
+  split: () => [{id:'SP-1', name:'Split system', type:'RTU', model:'Daikin DX16', serial:'DK-33170'}],
+};
+const FAILURES = {RTU:['Capacitor failure','Contactor failure','Compressor','Refrigerant leak','Fan motor','Control board','No fault found'],
+  'Walk-in cooler':['Evaporator fan','Defrost heater','Door gasket','Refrigerant leak','Compressor','No fault found'],
+  Chiller:['Compressor trip','Flow switch','Refrigerant leak','Control fault','No fault found']};
+const PRICE = [
+  {sku:'CAP-455', name:'Dual run capacitor 45/5 µF', price:130, truck:3},
+  {sku:'CON-2P40', name:'Contactor 2-pole 40A', price:250, truck:1},
+  {sku:'FAN-13', name:'Condenser fan motor 1/3 HP', price:318, truck:0},
+  {sku:'FLT-2020', name:'Filter 20x20 (case of 12)', price:96, truck:5},
+];
+const checklistFor = c => {
+  const base = ['Checked in with site security','Lockout/tagout confirmed','PPE confirmed'];
+  if (c==='mercy') base.push('Health declaration acknowledged');
+  return base.map(t => ({t, at:null}));
+};
+function mkJob(o){
+  return Object.assign({status:'Scheduled', emergency:false, slaDue:null, tech:null, start:0, dur:90, title:'', loc:'', locId:'', custId:'',
+    equipment:EQUIP.split(), safety:'Standard PPE. Check in at front desk.', history:'No prior issues recorded.', checklist:null,
+    notes:'', summary:'', unit:'', failure:'', resolution:'', followup:'', extraParts:[], extraLabor:0, photos:[], approvals:[], approvedTotal:0,
+    po:'', poRequired:null, signature:null, refusedReason:'', refuse:false, contractAmount:0, travelMin:0, laborMin:0, techSigned:false, late:'',
+    qb:{state:'none', msg:'', ref:''}, day:'today'}, o);
+}
+function seed(){
+  const J = [];
+  J.push(mkJob({id:'WO-2041', custId:'harbor', locId:'h118', loc:'#118 Riverside', tech:'T42', start:540, dur:150, title:'Preventative maintenance · 3 rooftop units', equipment:EQUIP.rtu(),
+    safety:'Roof access via rear stairwell. Fall protection required. Check in with store manager.', history:'Last PM in July: unit 2 condenser fan noisy, monitored.', contractAmount:620, poRequired:true, checklist:checklistFor('harbor')}));
+  J.push(mkJob({id:'WO-2044', custId:'brightline', locId:'', loc:'Main St office', tech:'T42', start:720, dur:90, title:'Quarterly filter and coil service', contractAmount:380, checklist:checklistFor('brightline')}));
+  J.push(mkJob({id:'WO-2039', custId:'mercy', loc:'Central plant', tech:'T17', start:480, dur:180, status:'Working', title:'Quarterly chiller PM', equipment:EQUIP.chiller(), contractAmount:1840, checklist:checklistFor('mercy')}));
+  J.push(mkJob({id:'WO-2046', custId:'northgate', loc:'Warehouse B', tech:'T17', start:840, dur:120, title:'Dock door heater repair', contractAmount:0, poRequired:true, checklist:checklistFor('northgate')}));
+  J.push(mkJob({id:'WO-2042', custId:'tidewater', loc:'Roof plant', tech:'T08', start:570, dur:240, title:'Boiler and RTU seasonal check', equipment:EQUIP.rtu(), contractAmount:2100, checklist:checklistFor('tidewater')}));
+  J.push(mkJob({id:'WO-2043', custId:'summit', loc:'Downtown branch', tech:'T21', start:600, dur:120, title:'Thermostat replacement', contractAmount:0, poRequired:true, checklist:checklistFor('summit')}));
+  // previous days (billing)
+  const done = (o) => mkJob(Object.assign({status:'Completed', day:'prev', techSigned:true, resolution:'Fully resolved', checklist:checklistFor(o.custId).map(c=>({t:c.t,at:500})), signature:{name:'On file', at:600, img:''}, laborMin:95, travelMin:25}, o));
+  J.push(done({id:'WO-2033', custId:'mercy', loc:'Central plant', tech:'T17', title:'Quarterly chiller PM', contractAmount:1840, poRequired:false}));
+  J.push(done({id:'WO-2029', custId:'northgate', loc:'Warehouse A', tech:'T08', title:'Dock heater repair', po:'PO-77120', poRequired:true, signature:null, extraParts:[{name:'Heater element',price:410,qty:1,src:'manual'}], approvedTotal:410}));
+  J.push(done({id:'WO-2036', custId:'brightline', loc:'Main St office', tech:'T21', title:'Compressor contactor swap', extraParts:[{name:'Contactor 2-pole 40A',price:250,qty:1,src:'manual'},{name:'Run capacitor',price:130,qty:1,src:'manual'},{name:'Labor',price:400,qty:1,src:'manual'}], approvedTotal:500, approvals:[{id:'Q-1',amount:500,status:'Approved',by:'Front office'}]}));
+  J.push(done({id:'WO-2031', custId:'summit', loc:'Downtown branch', tech:'T21', title:'Thermostat replacement', poRequired:true, po:'', extraParts:[{name:'Smart thermostat',price:220,qty:1,src:'manual'}], approvedTotal:220}));
+  J.push(done({id:'WO-2027', custId:'tidewater', loc:'Roof plant', tech:'T08', title:'Boiler seasonal check', contractAmount:2100, qb:{state:'pending', msg:'QuickBooks unreachable. Queued, nothing lost.', ref:''}}));
+  J.push(done({id:'WO-2024', custId:'northgate', loc:'Warehouse B', tech:'T08', title:'Quarterly PM', contractAmount:900, po:'PO-76988', qb:{state:'synced', msg:'', ref:'QB-INV-10442'}}));
+  return J;
+}
+const TECHS = [
+  {id:'T42', name:'Ray Okafor', tag:'Tech 42', skills:['rtu','cooler'], certs:['EPA 608'], familiar:['harbor','brightline'], avoidHospital:true, dist:{mercy:25,harbor:10}},
+  {id:'T17', name:'Priya Nair', tag:'Tech 17', skills:['chiller','rtu'], certs:['EPA 608','Hospital HVAC'], familiar:['mercy','northgate'], dist:{mercy:12,harbor:30}},
+  {id:'T08', name:'Luis Ferreira', tag:'Tech 08', skills:['rtu','cooler','split'], certs:['EPA 608'], familiar:['harbor','tidewater'], dist:{mercy:35,harbor:18}},
+  {id:'T21', name:'Hannah Cho', tag:'Tech 21', skills:['split','rtu'], certs:['EPA 608'], familiar:['summit','brightline'], dist:{mercy:40,harbor:22}},
+];
+
+function app(){ return {
+  views:[{id:'dispatch',label:'Dispatcher'},{id:'tech',label:'Technician (phone)'},{id:'customer',label:'Customer portal'},{id:'billing',label:'Billing'}],
+  view:'dispatch', clock:520, toast:'', toastT:null, n:1,
+  techs:TECHS, jobs:seed(), priceList:PRICE, rate:135,
+  queue:[
+    {id:'REQ-311', custId:'harbor', locId:'h204', loc:'#204 Eastgate', title:'Walk-in cooler not holding temperature', desc:'Customer photo attached: cooler reading 44°F, produce at risk.', requested:'High', skill:'cooler', dur:120, emergency:false, slaDue:480+8*60+0, equipment:EQUIP.cooler(), safety:'Back-of-house entrance. Check in with receiving.'},
+    {id:'EMG-2050', custId:'mercy', locId:'', loc:'Central plant', title:'Chiller 2 tripped, surgical wing cooling at risk', desc:'Phoned in by facilities. Hospital contract: 4h emergency response.', requested:'Emergency', skill:'chiller', cert:'Hospital HVAC', dur:120, emergency:true, slaDue:495+240, equipment:EQUIP.chiller(), safety:'Hospital: infection-control gown at surgical wing. Health declaration required.'},
+  ],
+  selQ:'EMG-2050', selJ:null, alerts:[], audit:[], techSel:null, offline:false, queue2:[], syncMsg:'', lateOpen:false,
+  partPick:'', photoCat:'Before', sigName:'', sigDrawn:false, sigCtx:null, qbDown:false, billFilter:'all', poDraft:{}, reportJob:null,
+  users:[
+    {id:'maria', name:'Maria Alvarez', role:'Regional manager', locs:['h118','h204','h231'], limit:5000},
+    {id:'tom', name:'Tom Becker', role:'Store manager #118', locs:['h118'], limit:500},
+    {id:'dana', name:'Dana Whitfield', role:'Procurement', locs:['h118','h204','h231'], limit:10000},
+  ],
+  userId:'tom', ptab:'approvals', reqForm:{locId:'h118', desc:'', urgency:'Normal', photo:false},
+  portalTabs:[{id:'approvals',label:'Approvals'},{id:'requests',label:'Requests'},{id:'visits',label:'Visits'},{id:'reports',label:'Reports'},{id:'invoices',label:'Invoices'}],
+  billFilters:[{id:'all',label:'All completed'},{id:'ready',label:'Ready to invoice'},{id:'Missing PO',label:'Missing PO'},{id:'Missing customer approval',label:'Missing approval'},{id:'Missing customer signature',label:'Missing signature'},{id:'pending',label:'Sync pending'}],
+
+  // helpers
+  fmt, money, cust(id){return CUSTOMERS[id];}, jobById(id){return this.jobs.find(j=>j.id===id);},
+  techName(id){const t=this.techs.find(t=>t.id===id);return t?t.name:'Unassigned';},
+  say(t){this.toast=t;clearTimeout(this.toastT);this.toastT=setTimeout(()=>this.toast='',3200);},
+  log(t){this.audit.unshift({n:this.n++, t: fmt(this.clock)+'  '+t});},
+  alert(t){this.alerts.unshift({n:this.n++, t: fmt(this.clock)+' · '+t}); this.log(t);},
+  pct(m){return Math.max(0,Math.min(100,(m-420)/660*100));},
+  jobsOf(tid){return this.jobs.filter(j=>j.tech===tid && j.day==='today').sort((a,b)=>a.start-b.start);},
+  qItem(){return this.queue.find(q=>q.id===this.selQ);},
+  slaLeft(due){const d=due-this.clock; if(d<0)return 'BREACHED'; return Math.floor(d/60)+'h '+String(d%60).padStart(2,'0')+'m left';},
+  slaClass(due){if(!due)return 'text-slate-500'; const d=due-this.clock; return d<0?'text-red-700 font-bold':d<120?'text-red-600 font-semibold':d<240?'text-amber-600':'text-slate-500';},
+  jobColor(j){ if(j.status==='Completed')return 'bg-slate-400 border-slate-500'; if(j.emergency)return 'bg-red-600 border-red-800';
+    if(j.slaDue && j.slaDue-this.clock<120)return 'bg-red-500 border-red-700'; if(j.status==='Working')return 'bg-green-600 border-green-800'; if(j.status==='EnRoute'||j.status==='OnSite')return 'bg-blue-600 border-blue-800'; return 'bg-sky-500 border-sky-700';},
+  techStatus(t){const j=this.jobsOf(t.id).find(j=>['EnRoute','OnSite','Working'].includes(j.status)); return j? ({EnRoute:'traveling',OnSite:'on site',Working:'working'})[j.status] : 'available';},
+
+  // dispatch
+  recs(item){
+    const out = this.techs.map(t => {
+      const why=[]; let score=50; const c=this.cust(item.custId);
+      if(t.skills.includes(item.skill)){score+=20;why.push({t:'Skilled on this equipment type',good:true});} else {score-=15;why.push({t:'Limited experience on this equipment',good:false});}
+      if(item.cert){ if(t.certs.includes(item.cert)){score+=15;why.push({t:'Holds '+item.cert+' certification',good:true});} else {score-=10;why.push({t:'No '+item.cert+' certification',good:false});}}
+      if(t.avoidHospital && item.custId==='mercy'){score-=25;why.push({t:'Dispatcher note: not a fit for hospital sites',good:false});}
+      if(t.familiar.includes(item.custId)){score+=10;why.push({t:'Knows this customer’s equipment',good:true});}
+      const travel=t.dist[item.custId]||(item.custId==='mercy'?30:20); score-=Math.round(travel/2); why.push({t:travel+' min away',good:travel<=20});
+      const start=this.proposeStart(t,item,travel); const bumps=this.simulateBumps(t,item,start);
+      const bumpMin=bumps.reduce((s,b)=>s+b.by,0); if(bumpMin){score-=Math.round(bumpMin/6);why.push({t:'Delays '+bumps.length+' job(s) by '+bumpMin+' min total',good:false});} else why.push({t:'Fits without disturbing the schedule',good:true});
+      if(start+item.dur>1020){score-=15;why.push({t:'Runs into overtime',good:false});}
+      if(item.slaDue){const margin=item.slaDue-start; why.push({t:'Arrives '+(margin>=0?Math.floor(margin/60)+'h '+(margin%60)+'m before SLA due':'AFTER SLA due'),good:margin>=60});}
+      return {tech:t,score,why,start,bumps,travel};
+    });
+    return out.sort((a,b)=>b.score-a.score).slice(0,4);
+  },
+  proposeStart(t,item,travel){
+    const js=this.jobsOf(t.id).filter(j=>j.status!=='Completed');
+    if(item.emergency){ const busy=js.find(j=>j.start+j.dur>this.clock && j.start<=this.clock+30); const base=busy? busy.start+busy.dur : this.clock; return base+travel; }
+    for(let s=Math.max(this.clock+30,480); s<1020; s+=15){ if(!js.some(j=>s<j.start+j.dur && s+item.dur>j.start)) return s; } return 1020;
+  },
+  simulateBumps(t,item,start){
+    let end=start+item.dur; const out=[]; const js=this.jobsOf(t.id).filter(j=>j.start>=start-item.dur+1 || true).filter(j=>j.status==='Scheduled'&&j.start+j.dur>start);
+    for(const j of js){ if(j.start<end){ const by=end-j.start; out.push({id:j.id,by,newStart:end}); end=end+j.dur; } else end=j.start+j.dur; }
+    return out;
+  },
+  assign(item,r){
+    const n=item.id.startsWith('EMG')?'WO-2050':'WO-'+(2052+this.n);
+    const j=mkJob({id:n, custId:item.custId, locId:item.locId, loc:item.loc, title:item.title, tech:r.tech.id, start:r.start, dur:item.dur, emergency:item.emergency, slaDue:item.slaDue,
+      equipment:item.equipment, safety:item.safety, contractAmount:0, poRequired:CUSTOMERS[item.custId].poRequired, checklist:checklistFor(item.custId), history:'First visit through FieldFlow.'});
+    for(const b of r.bumps){ const o=this.jobById(b.id); o.bumpedFrom=o.start; o.start=b.newStart;
+      const c=this.cust(o.custId); if(b.by>c.threshold) this.alert(c.name+' notified automatically: arrival moved '+fmt(o.bumpedFrom)+' → '+fmt(o.start)+' (over their '+c.threshold+' min threshold).'); }
+    this.jobs.push(j); this.queue=this.queue.filter(q=>q.id!==item.id); this.selQ=this.queue[0]?this.queue[0].id:null; this.selJ=j.id;
+    this.alert((item.emergency?'EMERGENCY ':'')+j.id+' assigned to '+r.tech.name+' at '+fmt(j.start)+(r.bumps.length?' · '+r.bumps.length+' job(s) rescheduled':'')+'. Push sent to technician.');
+    this.say(j.id+' scheduled for '+r.tech.name+' at '+fmt(j.start));
+  },
+
+  // technician
+  tj(){return this.jobById(this.techSel);},
+  openJob(id){this.techSel=id;this.lateOpen=false;this.sigName='';this.sigDrawn=false;},
+  act(label,fn){fn(); if(this.offline){this.queue2.push({label,id:this.n++});} else this.log(label);},
+  logTech(t){this.act(this.tj().id+': '+t,()=>{});},
+  techStep(next){
+    const j=this.tj();
+    this.act(j.id+': '+({EnRoute:'Travel started',OnSite:'Arrived on site',Working:'Work started — labor clock running'})[next],()=>{
+      if(next==='EnRoute'){j.travelStart=this.clock;}
+      if(next==='OnSite'){this.clock+=28;j.arrivedAt=this.clock;j.travelMin=this.clock-j.travelStart;}
+      if(next==='Working'){this.clock+=6;j.workStart=this.clock;}
+      j.status=next; });
+    if(next==='OnSite' && ['harbor','mercy'].includes(j.custId)) this.alert(this.cust(j.custId).name+' notified: technician has arrived on site (customer preference).');
+  },
+  runLate(r){const j=this.tj(); this.act(j.id+': Running late — '+r,()=>{j.late=r;}); this.lateOpen=false; this.alert(j.id+' technician running late ('+r+'). Dispatcher alerted.');
+    if(this.cust(j.custId).threshold<=30) this.alert(this.cust(j.custId).name+' notified of delay (threshold '+this.cust(j.custId).threshold+' min).'); },
+  checklistDone(j){return j.checklist.every(c=>c.at);},
+  tick(c){ if(c.at){return;} c.at=this.clock; this.act(this.tj().id+': Checklist acknowledged — '+c.t,()=>{}); },
+  failureTypes(j){const e=j.equipment.find(e=>e.id===j.unit)||j.equipment[0]; return FAILURES[e.type]||FAILURES.RTU;},
+  noteChanged(){ this.act(this.tj().id+': Field notes updated',()=>{}); if(this.offline) this.queue2[this.queue2.length-1].notes=true; },
+  draftSummary(){const j=this.tj(); const eq=j.equipment.find(e=>e.id===j.unit); const raw=(j.notes||'').trim();
+    if(!raw){this.say('Add a note first.');return;}
+    j.summary='Technician found '+(j.failure?j.failure.toLowerCase():'an issue')+(eq?' on '+eq.name:'')+'. '+raw.charAt(0).toUpperCase()+raw.slice(1).replace(/\.?$/,'.')+' (Draft for review. Parts, labor and prices come from structured fields only.)'; },
+  extraTotal(j){return j.extraParts.reduce((s,p)=>s+p.price*p.qty,0)+j.extraLabor*this.rate;},
+  invoiceTotal(j){return (j.contractAmount||0)+this.extraTotal(j);},
+  addPart(src){const p=this.priceList.find(p=>p.sku===this.partPick); if(!p)return; const j=this.tj(); this.clock+=8;
+    this.act(j.id+': Part added — '+p.name+' ('+src+')',()=>{const e=j.extraParts.find(x=>x.name===p.name); if(e)e.qty++; else j.extraParts.push({name:p.name,price:p.price,qty:1,src}); if(p.truck>0)p.truck--;}); this.partPick=''; },
+  scanPart(){ this.partPick=this.priceList[0].sku; if(this.tj().extraParts.some(p=>p.name===this.priceList[0].name)) this.partPick=this.priceList[1].sku; this.say('Scanned: '+this.priceList.find(p=>p.sku===this.partPick).name); this.addPart('scan'); },
+  laborAdj(d){const j=this.tj(); this.act(j.id+': Extra labor '+(d>0?'+':'')+d+'h',()=>{j.extraLabor=Math.max(0,j.extraLabor+d);});},
+  takePhoto(){const j=this.tj(); this.clock+=2; this.act(j.id+': Photo ('+this.photoCat+')',()=>{j.photos.push({cat:this.photoCat,at:this.clock,hue:(j.photos.length*47+200)%360});});},
+  needsApproval(j){const e=this.extraTotal(j); return e>0 && e>j.approvedTotal;},
+  pendingApproval(j){return j.approvals.find(a=>a.status==='Pending'||a.status==='Queued');},
+  requestApproval(){
+    const j=this.tj(); const amt=this.extraTotal(j); const prev=j.approvedTotal||0;
+    const lines=[...j.extraParts.map(p=>({t:p.name+' ×'+p.qty,v:p.price*p.qty}))]; if(j.extraLabor) lines.push({t:'Labor '+j.extraLabor.toFixed(1)+' h @ '+money(this.rate),v:j.extraLabor*this.rate});
+    const a={id:'Q-'+(j.approvals.length+1), amount:amt, lines, status:this.offline?'Queued':'Pending', supersedes:prev||null, by:''};
+    this.act(j.id+': Approval '+a.id+' requested for '+money(amt),()=>{j.approvals.push(a);});
+    if(!this.offline) this.alert(j.id+': '+a.id+' ('+money(amt)+') sent to customer for approval.'); else this.say('No signal. Approval request will be sent when you reconnect.');
+  },
+  sigInit(c){const x=c.getContext('2d'); x.lineWidth=2.5;x.lineCap='round';x.strokeStyle='#0f172a'; this.sigCtx=x; this.sigCanvas=c; let d=false;
+    const pos=e=>{const r=c.getBoundingClientRect();return [(e.clientX-r.left)*c.width/r.width,(e.clientY-r.top)*c.height/r.height];};
+    c.onpointerdown=e=>{d=true;x.beginPath();x.moveTo(...pos(e));c.setPointerCapture(e.pointerId);};
+    c.onpointermove=e=>{if(!d)return;x.lineTo(...pos(e));x.stroke();this.sigDrawn=true;}; c.onpointerup=()=>{d=false;};},
+  sigClear(){this.sigCtx.clearRect(0,0,999,999);this.sigDrawn=false;},
+  finishReqs(j){return [
+    {t:'Resolution chosen',ok:!!j.resolution},
+    {t:'Customer signature and name, or refusal reason',ok: j.refuse ? !!j.refusedReason : (this.sigDrawn && !!this.sigName.trim())},
+    {t:'Extra work fully approved ('+money(this.extraTotal(j))+' of '+money(j.approvedTotal)+')',ok:!this.needsApproval(j) && !this.pendingApproval(j)},
+  ];},
+  finishJob(){
+    const j=this.tj(); this.clock+=25;
+    this.act(j.id+': Job completed. Signature/refusal captured. Service report generated.',()=>{
+      j.laborMin=this.clock-j.workStart; j.status='Completed'; j.techSigned=true; j.day='today';
+      if(j.refuse) j.signature=null; else j.signature={name:this.sigName.trim(),at:this.clock,img:this.sigCanvas.toDataURL()};
+      if(j.poRequired===null) j.poRequired=this.cust(j.custId).poRequired; });
+    this.alert(j.id+' completed. Service report emailed to '+this.cust(j.custId).name+'. Work order entered billing readiness.');
+    this.reportJob=j.id;
+  },
+  toggleOffline(){
+    if(!this.offline){ this.offline=true; this.syncMsg=''; this.log('Technician phone lost signal'); return; }
+    this.offline=false; const q=this.queue2; this.queue2=[]; this.log('Technician phone reconnected — syncing '+q.length+' change(s)');
+    q.forEach(x=>this.log('Synced: '+x.label));
+    this.jobs.forEach(j=>j.approvals.forEach(a=>{ if(a.status==='Queued'){a.status='Pending'; this.alert(j.id+': '+a.id+' ('+money(a.amount)+') delivered to customer after reconnect.');} }));
+    let msg='Synced '+q.length+' change(s).';
+    if(q.some(x=>x.notes)){ const j=this.tj()||this.jobById('WO-2044'); const other=this.jobById('WO-2044'); if(other&&other.status==='Scheduled'){other.start+=15;}
+      msg+=' Merged: dispatcher moved WO-2044 by 15 min while you were offline; your field notes were kept untouched.'; this.log('Conflict resolved field-by-field: dispatcher schedule change + technician notes both kept'); }
+    this.syncMsg=msg;
+  },
+
+  // customer
+  user(){return this.users.find(u=>u.id===this.userId);},
+  userLocs(){return LOCS.filter(l=>this.user().locs.includes(l.id));},
+  userLocsText(){return this.userLocs().map(l=>l.label).join(', ');},
+  myJobs(done){return this.jobs.filter(j=>j.custId==='harbor' && this.user().locs.includes(j.locId) && (done ? j.status==='Completed' : j.status!=='Completed'));},
+  myApprovals(){const o=[]; this.jobs.forEach(j=>{ if(j.custId==='harbor' && this.user().locs.includes(j.locId)) j.approvals.forEach(a=>{ if(a.status==='Pending') o.push({j,a}); }); }); return o;},
+  myRequests(){const r=this.queue.filter(q=>q.custId==='harbor'&&this.user().locs.includes(q.locId)).map(q=>({...q,state:'Awaiting dispatcher review'}));
+    return r.concat(this.jobs.filter(j=>j.custId==='harbor'&&j.day==='today'&&j.id.startsWith('WO-20')&&j.title.includes('cooler')&&this.user().locs.includes(j.locId)).map(j=>({id:j.id,loc:j.loc,title:j.title,state:'Scheduled '+fmt(j.start)})));},
+  myInvoices(){return this.jobs.filter(j=>j.custId==='harbor'&&this.user().locs.includes(j.locId)&&j.qb.state==='synced');},
+  visitText(j){return j.status==='EnRoute'?'Technician on the way (approx. location, ETA '+fmt(this.clock+12)+')':j.status==='Working'?'Technician working on site':j.status==='OnSite'?'Technician arrived':'Scheduled'+(j.late?' (running late: '+j.late+')':'');},
+  decide(j,a,ok){ if(ok && a.amount>this.user().limit){this.say('Over your approval limit.');return;}
+    a.status=ok?'Approved':'Declined'; a.by=this.user().name; this.clock+=ok?15:0;
+    if(ok){ j.approvedTotal=a.amount; this.alert(j.id+': '+a.id+' approved for '+money(a.amount)+' by '+a.by+'. Technician notified.'); this.say('Approved. The technician can continue.'); }
+    else this.alert(j.id+': '+a.id+' declined by '+a.by+'. Technician notified.');
+  },
+  forward(j,a){ this.alert(j.id+': '+a.id+' ('+money(a.amount)+') exceeds '+this.user().name+'’s '+money(this.user().limit)+' limit. Forwarded to procurement (Dana Whitfield).'); this.say('Forwarded. Switch to Dana Whitfield to approve.'); },
+  submitRequest(){ const l=LOCS.find(l=>l.id===this.reqForm.locId); const id='REQ-'+(312+this.queue.length+this.n);
+    this.queue.push({id,custId:'harbor',locId:l.id,loc:l.label,title:this.reqForm.desc.slice(0,60),desc:this.reqForm.desc+(this.reqForm.photo?' (photo attached)':''),requested:this.reqForm.urgency,skill:'rtu',dur:90,emergency:false,slaDue:this.clock+8*60,equipment:EQUIP.rtu().slice(0,1),safety:'Check in at the store office.'});
+    this.alert(id+' received from '+this.user().name+' ('+l.label+'). Dispatcher reviews before scheduling.'); this.reqForm.desc=''; this.say('Request sent to the dispatcher.'); },
+
+  // billing
+  completedJobs(){return this.jobs.filter(j=>j.status==='Completed');},
+  blockers(j){const b=[]; if((j.poRequired??this.cust(j.custId).poRequired) && !j.po) b.push('Missing PO');
+    if(this.extraTotal(j)>j.approvedTotal) b.push('Missing customer approval');
+    if(!j.signature && !j.refusedReason) b.push('Missing customer signature');
+    if(!j.techSigned) b.push('Missing technician sign-off');
+    if(!j.checklist.every(c=>c.at)) b.push('Safety checklist incomplete'); return b;},
+  billStatus(j){ if(j.qb.state==='synced')return {t:'In QuickBooks',cls:'bg-slate-200 text-slate-700'}; if(j.qb.state==='pending')return {t:'Sync pending',cls:'bg-amber-100 text-amber-800'};
+    return this.blockers(j).length?{t:'Blocked',cls:'bg-red-100 text-red-800'}:{t:'Ready to invoice',cls:'bg-green-100 text-green-800'};},
+  billRows(){const f=this.billFilter; return this.completedJobs().filter(j=>f==='all'||(f==='ready'&&!this.blockers(j).length&&j.qb.state==='none')||(f==='pending'&&j.qb.state==='pending')||this.blockers(j).includes(f));},
+  billCount(f){const s=this.billFilter; this.billFilter=f; const n=this.billRows().length; this.billFilter=s; return n;},
+  atRisk(){return this.completedJobs().filter(j=>this.blockers(j).length).reduce((s,j)=>s+this.invoiceTotal(j),0);},
+  addPO(j){const v=(this.poDraft[j.id]||'').trim(); if(!/^[A-Za-z0-9-]{4,20}$/.test(v)){this.say('Enter a PO like PO-48213.');return;} j.po=v; this.log(j.id+': PO '+v+' captured by billing'); this.say('PO captured.');},
+  sendQB(j){ if(this.qbDown){ j.qb={state:'pending',msg:'QuickBooks unreachable. Invoice queued, will retry. Nothing lost.',ref:''}; this.log(j.id+': QuickBooks sync failed, queued for retry'); this.say('QuickBooks is down. Invoice stays pending.'); return; }
+    j.qb={state:'synced',msg:'',ref:'QB-INV-'+(10443+this.n++)}; this.log(j.id+': Invoice synced to QuickBooks as '+j.qb.ref); this.say('Synced to QuickBooks: '+j.qb.ref); },
+};}
+</script>
+</body>
+</html>
