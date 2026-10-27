@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -42,6 +43,7 @@ DEFAULTS: dict[str, Any] = {
         "standup_channel_id": None,
         "report_channel_id": None,
         "operations_channel_id": None,
+        "risks_channel_id": None,  # falls back to report_channel_id
         "standup": {
             "commands": ["daily", "standup", "checking"],
             "notification_mode": "summary",
@@ -69,7 +71,12 @@ DEFAULTS: dict[str, Any] = {
         "rejected_stuck_days": 2,
         "due_soon_days": 2,
         "notify_unassigned": True,
+        # task-hygiene checks (off until the first dry run has been reviewed: the first post notifies
+        # every existing offender once). Subtasks are skipped for the missing-field checks.
+        "hygiene": {"enabled": False, "no_due_date": True, "no_estimate": True, "no_description": True,
+                    "duplicates": True, "done_open_subtasks": True, "max_listed": 10},
     },
+    "risks": {"escalation_score": 15, "review_every_days": 7},
     "users": [],
 }
 
@@ -86,15 +93,41 @@ def _merge(base: dict, over: dict) -> dict:
 
 
 def load_config(path: Path | None = None) -> dict:
-    import yaml  # imported lazily: the gateway and /usr/bin/python3 both ship it
     path = path or CONFIG_PATH
     try:
-        raw = yaml.safe_load(path.read_text()) or {}
+        text = path.read_text()
     except FileNotFoundError:
         raise ConfigError(f"config not found: {path}")
+    raw = _load_yaml(text)
     cfg = _merge(DEFAULTS, raw.get("project_manager", raw))
     validate_config(cfg)
     return cfg
+
+
+def _load_yaml(text: str) -> dict:
+    """Parse the YAML config. PyYAML is a tiny, ubiquitous dependency; if the
+    running interpreter is missing it, install it into the same environment so
+    the config can be read (self-heal on a trimmed/flaky environment instead of
+    aborting with a cryptic 'No module named yaml')."""
+    try:
+        import yaml
+    except ImportError:
+        _ensure_pyyaml()
+        import yaml  # noqa: F401
+    return yaml.safe_load(text) or {}
+
+
+def _ensure_pyyaml() -> None:
+    """Best-effort install of PyYAML into the current interpreter, so a missing
+    optional dep no longer takes down every pm.py cron job (standup-summary,
+    report, health, follow-ups, ...)."""
+    import subprocess
+    import sys
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", "PyYAML"],
+        check=False,
+        capture_output=True,
+    )
 
 
 def validate_config(cfg: dict) -> list[str]:
@@ -299,6 +332,9 @@ def task_from_api(t: dict, mappings: dict) -> dict:
         "priority": ((t.get("priority") or {}) or {}).get("priority") if isinstance(t.get("priority"), dict)
         else t.get("priority"),
         "archived": bool(t.get("archived")),
+        "parent": t.get("parent"),
+        "time_estimate": t.get("time_estimate"),
+        "description_len": len((t.get("text_content") or t.get("description") or "").strip()),
     }
 
 
@@ -628,6 +664,72 @@ def detect_issues(cfg: dict, tasks: list[dict], entered: dict[str, datetime], no
             created = ms_to_dt(t.get("date_created")) or since  # unassigned since creation, not first poll
             out.append(Issue(f"unassigned:{t['task_id']}", "unassigned", t, pm_ids, pm_lab, created,
                              "sin responsable asignado", "asignar responsable"))
+    return out + detect_hygiene(cfg, tasks, now, directory)
+
+
+HYGIENE_KINDS = ("no_due_date", "no_estimate", "no_description", "duplicate", "done_open_subtasks")
+
+
+def _norm_name(name: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", unicodedata.normalize("NFKD", (name or "").lower())
+                  .encode("ascii", "ignore").decode())
+
+
+def detect_hygiene(cfg: dict, tasks: list[dict], now: datetime, directory: Directory) -> list[Issue]:
+    """Housekeeping issues on open tasks. A field the snapshot does not carry yet (old rows before the
+    next sync) is unknown, never flagged. Orphaned tasks are not checked: the board has no epics."""
+    h = cfg["followups"].get("hygiene") or {}
+    if not h.get("enabled"):
+        return []
+    pm_m, pm_id = directory.mention_key(cfg["discord"].get("project_manager"), "project manager")
+
+    def owner(t):
+        ids, labels = [], []
+        for a in t.get("assignees") or []:
+            lab, uid = directory.assignee_label(a["id"], a.get("username"), True)
+            labels.append(lab)
+            if uid:
+                ids.append(uid)
+        if labels:
+            return ids, ", ".join(labels)
+        return ([pm_id] if pm_id else []), (pm_m or "PM")
+
+    def issue(kind, t, why, step):
+        ids, lab = owner(t)
+        return Issue(f"{kind}:{t['task_id']}", kind, t, ids, lab, ms_to_dt(t.get("date_created")) or now, why, step)
+
+    open_t = [t for t in tasks if not t.get("archived") and t.get("category") != "closed"]
+    out: list[Issue] = []
+    for t in open_t:
+        if t.get("parent"):
+            continue
+        if h.get("no_due_date") and not t.get("due_date"):
+            out.append(issue("no_due_date", t, "sin fecha de entrega", "definir fecha de entrega"))
+        if h.get("no_estimate") and "time_estimate" in t and not t.get("time_estimate"):
+            out.append(issue("no_estimate", t, "sin estimación", "estimar el esfuerzo (lo define quien lo hace)"))
+        if h.get("no_description") and t.get("description_len") == 0:
+            out.append(issue("no_description", t, "sin descripción ni criterios de aceptación",
+                             "agregar contexto y criterios de aceptación"))
+    if h.get("duplicates"):
+        groups: dict[str, list[dict]] = {}
+        for t in open_t:
+            n = _norm_name(t.get("name"))
+            if len(n) >= 8:
+                groups.setdefault(n, []).append(t)
+        for g in groups.values():
+            for t in g if len(g) > 1 else []:
+                out.append(issue("duplicate", t, f"mismo título que {len(g) - 1} ticket(s) abierto(s)",
+                                 "revisar y fusionar o diferenciar"))
+    if h.get("done_open_subtasks"):
+        by_id = {t["task_id"]: t for t in tasks}
+        kids: dict[str, int] = {}
+        for t in open_t:
+            p = by_id.get(t.get("parent") or "")
+            if p and p.get("category") == "closed":
+                kids[p["task_id"]] = kids.get(p["task_id"], 0) + 1
+        for pid, n in kids.items():
+            out.append(issue("done_open_subtasks", by_id[pid], f"cerrado con {n} subtarea(s) abierta(s)",
+                             "cerrar las subtareas o reabrir el ticket"))
     return out
 
 
@@ -640,6 +742,8 @@ def followup_action(state: dict | None, issue: Issue, now: datetime, cfg: dict) 
         return "notify"
     first = datetime.fromisoformat(state["first_notified_at"])
     last = datetime.fromisoformat(state["last_notified_at"])
+    if issue.kind in HYGIENE_KINDS:
+        return None  # housekeeping: one notice, no chasing
     if issue.kind != "due_soon" and not state.get("escalated_at") and \
             now - first >= timedelta(days=f["escalate_after_days"]):
         return "escalate"
@@ -675,3 +779,43 @@ def health(cfg: dict, tasks: list[dict], issues: list[Issue], stale_n: int, stan
     return {"level": level, "why": why, "open": len(open_t), "closed": len(tasks) - len(open_t),
             "issues": kinds, "stale": stale_n, "stale_ratio": round(stale_ratio, 2),
             "standup_missing": standup_missing}
+
+
+# ---------------------------------------------------------------- risks and decisions
+
+RISK_STATUSES = ("open", "mitigated", "materialized", "closed")
+
+
+def risk_score(probability: int, impact: int) -> int:
+    return int(probability) * int(impact)
+
+
+def risk_level(score: int, cfg: dict) -> str:
+    esc = cfg["risks"]["escalation_score"]
+    return "🔴" if score >= esc else "🟡" if score >= 8 else "🟢"
+
+
+def build_risk_review(cfg: dict, risks: list[dict], today: date, directory: Directory) -> Message | None:
+    """Weekly RAID review of open risks, worst first. None when nothing is open (no noise)."""
+    open_r = sorted((r for r in risks if r["status"] in ("open", "materialized")),
+                    key=lambda r: (-r["score"], r["review_date"] or ""))
+    if not open_r:
+        return None
+    esc = cfg["risks"]["escalation_score"]
+    esc_m, esc_id = directory.mention_key(cfg["discord"].get("escalation_recipient"), "escalation recipient")
+    high = [r for r in open_r if r["score"] >= esc]
+    L = [f"🎲 **REVISIÓN DE RIESGOS — {fmt_day(today)}**",
+         f"{len(open_r)} abiertos · {len(high)} con puntaje ≥ {esc}", ""]
+    ids: list[str] = []
+    if high and esc_id:
+        ids.append(esc_id)
+        L += [f"**⚠️ Escalar** {esc_m}: " + ", ".join(f"#{r['id']}" for r in high), ""]
+    for r in open_r:
+        due = r["review_date"] and r["review_date"] <= today.isoformat()
+        L.append(f"{risk_level(r['score'], cfg)} **#{r['id']} {r['description']}** — {r['probability']}×{r['impact']}"
+                 f" = {r['score']} · responsable: {r['owner'] or 'sin asignar'}"
+                 f"{' · estado: ' + r['status'] if r['status'] != 'open' else ''}"
+                 f"{' · ⏰ revisión vencida' if due else ''}")
+        L.append(f"  mitigación: {r['mitigation'] or 'sin definir'}"
+                 + (f" · disparador: {r['trigger_text']}" if r.get("trigger_text") else ""))
+    return Message("\n".join(L), ids)
