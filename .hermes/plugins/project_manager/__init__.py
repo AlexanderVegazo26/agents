@@ -29,8 +29,14 @@ PYTHON = "/usr/bin/python3"
 TOOLSET = "project_manager"
 TIMEOUT = 300
 ACTIONS = ("report", "stale", "followups", "health", "standup_summary", "standup_remind", "sync",
-           "mappings", "healthcheck", "status")
-POSTABLE = {"report", "stale", "followups", "health", "standup_summary", "standup_remind"}
+           "mappings", "healthcheck", "status", "risk_list", "risk_review", "decision_list", "risk_add",
+           "risk_update", "decision_log")
+POSTABLE = {"report", "stale", "followups", "health", "standup_summary", "standup_remind", "risk_review"}
+WRITES = {"risk_add", "risk_update", "decision_log"}  # local RAID log only; need a person's conversation
+RAID_FIELDS = {"title": "title", "probability": "probability", "impact": "impact", "owner": "owner",
+               "mitigation": "mitigation", "contingency": "contingency", "trigger": "trigger",
+               "review_date": "review-date", "status": "status", "risk_id": "id", "text": "text",
+               "context": "context", "decided_by": "by"}
 
 SCHEMA = {
     "name": "project_manager",
@@ -41,7 +47,11 @@ SCHEMA = {
         "previous Monday-Sunday, daily = yesterday, on_demand = last `days` days), stale (tickets without "
         "updates), followups (open issues with owner, next step and escalation state), health (project health "
         "with evidence), standup_summary / standup_remind (today's daily status), sync (poll ClickUp now), "
-        "mappings (ClickUp<->Discord identity check), healthcheck, status. Default is a dry run that returns "
+        "mappings (ClickUp<->Discord identity check), healthcheck, status, risk_list / risk_review (RAID risk "
+        "log, score = probability x impact, escalate at >= 15), decision_list, and the writes risk_add / "
+        "risk_update / decision_log (local log only; fields: title, probability 1-5, impact 1-5, owner, "
+        "mitigation, contingency, trigger, review_date YYYY-MM-DD, status, risk_id, text, context, "
+        "decided_by; only write what the user stated, never invent). Default is a dry run that returns "
         "the text; post=true publishes to the team's Discord channel and pings people, so only set it when "
         "the user explicitly asked to publish in this conversation."
     ),
@@ -53,6 +63,13 @@ SCHEMA = {
                        "description": "report only; default weekly"},
             "days": {"type": "integer", "minimum": 1, "maximum": 90,
                      "description": "report with period=on_demand: how many days back"},
+            "title": {"type": "string"}, "probability": {"type": "integer", "minimum": 1, "maximum": 5},
+            "impact": {"type": "integer", "minimum": 1, "maximum": 5}, "owner": {"type": "string"},
+            "mitigation": {"type": "string"}, "contingency": {"type": "string"}, "trigger": {"type": "string"},
+            "review_date": {"type": "string"}, "status": {"type": "string",
+                                                         "enum": ["open", "mitigated", "materialized", "closed"]},
+            "risk_id": {"type": "integer"}, "text": {"type": "string"}, "context": {"type": "string"},
+            "decided_by": {"type": "string"},
             "post": {"type": "boolean", "description": "publish to Discord (default false = dry run)"},
         },
         "required": ["action"],
@@ -99,6 +116,15 @@ def _handle(params: dict, **_kwargs) -> str:
             if isinstance(d, bool) or not isinstance(d, int) or not 1 <= d <= 90:
                 return no("days must be a whole number from 1 to 90")
             argv.append(f"--days={d}")
+    for k, flag in RAID_FIELDS.items():
+        if params.get(k) is not None:
+            if action not in WRITES and action not in ("risk_list", "decision_list"):
+                continue
+            argv.append(f"--{flag}={params[k]}")
+    if action in WRITES:
+        if (problem := _post_problem()):
+            return no(problem)
+        argv.append("--source=agent")
     if params.get("post"):
         if action not in POSTABLE:
             return no(f"{action} has nothing to publish")
@@ -129,6 +155,8 @@ def _discord_factory(bot, adapter=None):
         sys.path.insert(0, str(HERE))
     import standup_discord
     standup_discord.setup(bot, adapter)
+    import coach_discord
+    coach_discord.setup(bot, adapter)
 
 
 def register(ctx) -> None:

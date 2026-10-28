@@ -186,3 +186,32 @@ Least privilege: the bot needed no new Discord permission (it already had Send M
 ClickUp. Every Discord message carries explicit `allowed_mentions`, so text from tickets or standups
 can't ping anyone not intended. The tool publishes only from human conversations; standup modal
 answers are shown publicly only through the standup post itself. Secrets are never printed.
+
+
+## Task hygiene (added 2026-10-27)
+
+`followups.hygiene` in the YAML (default `enabled: false`) adds five housekeeping checks to `pm.py followups`:
+no due date, no estimate, no description, possible duplicate (same normalized title among open tickets),
+and a closed ticket with open subtasks. Subtasks are skipped for the missing-field checks; orphaned
+tickets are not checked (the board has no epics). Each offender is notified once (no chasing, no
+escalation) and listed up to `max_listed` per group. Review a dry run (`pm.py followups`) before
+enabling: the first post notifies every existing offender.
+
+## Risk and decision log (added 2026-10-27)
+
+Local tables `risks` and `decisions` in pm.db (daily backup covers them); ClickUp is never written.
+Score = probability × impact (1–5); `risks.escalation_score` (default 15) mentions the escalation recipient
+in the review. Posts to `discord.risks_channel_id`, else the report channel.
+
+```bash
+pm.py risk-add --title "..." --probability 4 --impact 4 --owner lissette --mitigation "..." [--review-date 2026-11-03]
+pm.py risk-update --id 3 --status mitigated        # or --probability/--impact/--mitigation ...
+pm.py risk-list [--all]
+pm.py risk-review [--post]                         # silent when nothing is open
+pm.py decision-log --text "..." --context "..." --by jorge
+pm.py decision-list [--days N]                     # N = how many entries
+```
+
+Cron: `pm-risk-review`, Mon 10:15 (`scripts/pm_risk_review.py`). The agent tool exposes the same actions;
+the writes (`risk_add`, `risk_update`, `decision_log`) need a person's conversation and tag the entry `source=agent`.
+Every write is also recorded in `ops_log`.

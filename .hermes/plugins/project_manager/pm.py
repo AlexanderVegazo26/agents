@@ -11,6 +11,10 @@
     pm.py healthcheck                           integration health (exit 1 on problems)
     pm.py status                                state overview (sync, notifications, follow-ups)
     pm.py backup
+    pm.py risk-add --title T --probability 1-5 --impact 1-5 [--owner --mitigation --contingency --trigger --review-date]
+    pm.py risk-update --id N [any risk field, --status open|mitigated|materialized|closed]
+    pm.py risk-list [--all] | risk-review [--post]     RAID log (local DB; ClickUp is never written)
+    pm.py decision-log --text T [--context C --by WHO] | decision-list [--days N=how many]
 
 Without --post every command only prints what it would publish (dry run). With --post it
 publishes to the configured Discord channel, recording each message in the notification ledger
@@ -235,7 +239,10 @@ def current_issues(ctx: Ctx) -> list[C.Issue]:
 
 
 KIND_ES = {"blocked": "🚫 Bloqueado", "testing_stuck": "🧪 Esperando QA", "rejected_stuck": "❌ Rechazado sin corregir",
-           "overdue": "⏰ Vencido", "due_soon": "📅 Vence pronto", "unassigned": "👤 Sin responsable"}
+           "overdue": "⏰ Vencido", "due_soon": "📅 Vence pronto", "unassigned": "👤 Sin responsable",
+           "no_due_date": "📆 Sin fecha de entrega", "no_estimate": "⏱️ Sin estimación",
+           "no_description": "📝 Sin descripción", "duplicate": "🧬 Posible duplicado",
+           "done_open_subtasks": "🧩 Cerrado con subtareas abiertas"}
 
 
 def cmd_followups(ctx: Ctx, post: bool) -> dict:
@@ -271,11 +278,15 @@ def cmd_followups(ctx: Ctx, post: bool) -> dict:
                 again = " (seguimiento)" if any(a == "followup" for _, a in items) else ""
                 L.append(f"**{KIND_ES[kind]}{again} ({len(items)})** — {why + ' — ' if why else ''}"
                          f"responsable: {owner} — próximo paso: {step}")
-                for i, _ in sorted(items, key=lambda x: x[0].since):
+                cap = ctx.cfg["followups"]["hygiene"]["max_listed"] if kind in C.HYGIENE_KINDS else None
+                shown = sorted(items, key=lambda x: x[0].since)
+                for i, _ in shown[:cap]:
                     t = i.task or {}
                     extra = f"{i.why}; " if not why else ""
                     L.append(f"- {t.get('name','')} ({extra}abierto hace {(ctx.now - i.since).days} d)\n"
                              f"  <{t.get('url','')}>")
+                if cap and len(shown) > cap:
+                    L.append(f"… y {len(shown) - cap} más (`pm.py followups` los lista todos)")
                 L.append("")
         msg = C.Message("\n".join(L), sorted(users))
         key = f"followups:{ctx.now.astimezone(ctx.zone):%Y-%m-%dT%H}"
@@ -495,6 +506,78 @@ def cmd_status(ctx: Ctx) -> dict:
     }
 
 
+# ------------------------------------------------------------------ risks and decisions (local RAID log)
+
+
+def _fail(msg: str):
+    raise C.ConfigError(msg)
+
+
+def _int15(v, name):
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        _fail(f"{name} must be a whole number from 1 to 5")
+    if not 1 <= n <= 5:
+        _fail(f"{name} must be a whole number from 1 to 5")
+    return n
+
+
+def cmd_risk_add(ctx: Ctx, a) -> dict:
+    if not (a.title or "").strip():
+        _fail("--title (the risk description) is required")
+    p, i = _int15(a.probability, "--probability"), _int15(a.impact, "--impact")
+    review = a.review_date or (C.local_date(ctx.now, ctx.zone)
+                               + timedelta(days=ctx.cfg["risks"]["review_every_days"])).isoformat()
+    rid = ctx.store.add_risk(ctx.now, a.title.strip(), p, i, owner=a.owner, mitigation=a.mitigation,
+                             contingency=a.contingency, trigger_text=a.trigger, review_date=review, source=a.source)
+    ctx.store.log("info", "risk_add", f"#{rid} {p}x{i} by {a.source or 'cli'}: {a.title.strip()[:120]}")
+    return {"risk": ctx.store.risk(rid), "escalate": p * i >= ctx.cfg["risks"]["escalation_score"]}
+
+
+def cmd_risk_update(ctx: Ctx, a) -> dict:
+    if a.id is None:
+        _fail("--id is required")
+    if a.status and a.status not in C.RISK_STATUSES:
+        _fail(f"--status must be one of {', '.join(C.RISK_STATUSES)}")
+    before = ctx.store.risk(a.id)
+    r = ctx.store.update_risk(
+        ctx.now, a.id, description=a.title, owner=a.owner, mitigation=a.mitigation, contingency=a.contingency,
+        trigger_text=a.trigger, review_date=a.review_date, status=a.status,
+        probability=_int15(a.probability, "--probability") if a.probability is not None else None,
+        impact=_int15(a.impact, "--impact") if a.impact is not None else None)
+    if r is None:
+        _fail(f"risk #{a.id} does not exist")
+    ctx.store.log("info", "risk_update", f"#{a.id} by {a.source or 'cli'}: score {before['score']}->{r['score']},"
+                                         f" status {before['status']}->{r['status']}")
+    return {"before": before, "after": r}
+
+
+def cmd_risk_list(ctx: Ctx, a) -> dict:
+    return {"risks": ctx.store.risks(include_closed=a.all)}
+
+
+def cmd_risk_review(ctx: Ctx, post: bool) -> dict:
+    today = C.local_date(ctx.now, ctx.zone)
+    msg = C.build_risk_review(ctx.cfg, ctx.store.risks(), today, ctx.directory)
+    if msg is None:
+        return {"skipped": "no open risks"}
+    channel_key = "risks_channel_id" if ctx.cfg["discord"].get("risks_channel_id") else "report_channel_id"
+    return publish(ctx, f"risks:{today.isoformat()}", "risk_review", channel_key, msg, post)
+
+
+def cmd_decision_log(ctx: Ctx, a) -> dict:
+    if not (a.text or "").strip():
+        _fail("--text (the decision) is required")
+    did = ctx.store.add_decision(ctx.now, a.text.strip(), a.context, a.by, a.source)
+    ctx.store.log("info", "decision_log", f"#{did} by {a.source or 'cli'}: {a.text.strip()[:120]}")
+    return {"decision": ctx.store.decisions(1)[0]}
+
+
+def cmd_decision_list(ctx: Ctx, a) -> dict:
+    return {"decisions": ctx.store.decisions(a.days or 20)}
+
+
 # ------------------------------------------------------------------ main
 
 
@@ -502,13 +585,21 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pm.py")
     ap.add_argument("command", choices=["sync", "report", "stale", "followups", "health", "standup-prompt",
                                         "standup-remind", "standup-summary", "mappings", "healthcheck",
-                                        "status", "backup"])
+                                        "status", "backup", "risk-add", "risk-update", "risk-list", "risk-review",
+                                        "decision-log", "decision-list"])
     ap.add_argument("--period", default="weekly", choices=["daily", "weekly", "on_demand"])
     ap.add_argument("--days", type=int)
     ap.add_argument("--post", action="store_true", help="publish to Discord (default: dry run)")
     ap.add_argument("--force", action="store_true", help="run standup jobs on a non-workday")
     ap.add_argument("--cron", action="store_true", help="silent on success, one line on failure")
     ap.add_argument("--if-enabled", action="store_true", help="report: skip unless that period is enabled")
+    for flag in ("title", "owner", "mitigation", "contingency", "trigger", "review-date", "status", "text",
+                 "context", "by", "source"):
+        ap.add_argument(f"--{flag}")
+    ap.add_argument("--probability", type=int)
+    ap.add_argument("--impact", type=int)
+    ap.add_argument("--id", type=int)
+    ap.add_argument("--all", action="store_true", help="risk-list: include closed risks")
     a = ap.parse_args(argv)
     try:
         cfg = C.load_config()
@@ -548,6 +639,18 @@ def main(argv: list[str] | None = None) -> int:
                 return 0 if res["ok"] else 1
         elif a.command == "status":
             res = cmd_status(ctx)
+        elif a.command == "risk-add":
+            res = cmd_risk_add(ctx, a)
+        elif a.command == "risk-update":
+            res = cmd_risk_update(ctx, a)
+        elif a.command == "risk-list":
+            res = cmd_risk_list(ctx, a)
+        elif a.command == "risk-review":
+            res = cmd_risk_review(ctx, a.post)
+        elif a.command == "decision-log":
+            res = cmd_decision_log(ctx, a)
+        elif a.command == "decision-list":
+            res = cmd_decision_list(ctx, a)
         else:
             res = {"backup": str(store.backup(C.DATA_DIR / "backups"))}
     except Exception as e:

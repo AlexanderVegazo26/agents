@@ -418,3 +418,83 @@ class SyncTransientTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HygieneAndRaid(unittest.TestCase):
+    NOW = datetime(2026, 10, 27, 14, 0, tzinfo=timezone.utc)
+
+    def cfg(self, **h):
+        return C._merge(CFG, {"followups": {"hygiene": {"enabled": True, **h}}})
+
+    def snap(self, tid, name=None, **kw):
+        base = {"task_id": tid, "name": name or f"Ticket {tid} unico", "url": "u", "status": "open", "category": None,
+                "assignees": [{"id": "4", "username": "dev"}], "due_date": ms(self.NOW), "date_created": ms(self.NOW),
+                "archived": False, "parent": None, "time_estimate": 3600000, "description_len": 50}
+        base.update(kw)
+        return base
+
+    def kinds(self, tasks, cfg=None):
+        cfg = cfg or self.cfg()
+        d = C.Directory(cfg)
+        return sorted((i.kind, i.task["task_id"]) for i in C.detect_hygiene(cfg, tasks, self.NOW, d))
+
+    def test_disabled_by_default(self):
+        d = C.Directory(CFG)
+        self.assertEqual(C.detect_hygiene(CFG, [self.snap("a", due_date=None)], self.NOW, d), [])
+
+    def test_missing_fields_flagged_and_unknown_not(self):
+        t = [self.snap("a", due_date=None, time_estimate=None, description_len=0)]
+        self.assertEqual(self.kinds(t), [("no_description", "a"), ("no_due_date", "a"), ("no_estimate", "a")])
+        old = self.snap("b", due_date=ms(self.NOW))
+        del old["time_estimate"], old["description_len"]  # row from before the new fields: unknown
+        self.assertEqual(self.kinds([old]), [])
+
+    def test_closed_and_subtasks_skipped_and_hygiene_notifies_once(self):
+        t = [self.snap("c", category="closed", due_date=None), self.snap("s", parent="a", due_date=None)]
+        self.assertEqual(self.kinds(t), [])
+        i = C.detect_hygiene(self.cfg(), [self.snap("a", due_date=None)], self.NOW, C.Directory(self.cfg()))[0]
+        self.assertEqual(C.followup_action(None, i, self.NOW, self.cfg()), "notify")
+        st = {"first_notified_at": (self.NOW - timedelta(days=9)).isoformat(),
+              "last_notified_at": (self.NOW - timedelta(days=9)).isoformat()}
+        self.assertIsNone(C.followup_action(st, i, self.NOW, self.cfg()))
+
+    def test_duplicates_and_done_with_open_subtasks(self):
+        t = [self.snap("a", name="Fix login redirect"), self.snap("b", name="fix  LOGIN redirect!"),
+             self.snap("p", category="closed"), self.snap("k", parent="p")]
+        self.assertEqual(self.kinds(t), [("done_open_subtasks", "p"), ("duplicate", "a"), ("duplicate", "b")])
+
+    def test_unassigned_hygiene_goes_to_pm(self):
+        cfg = self.cfg()
+        i = C.detect_hygiene(cfg, [self.snap("a", assignees=[], due_date=None)], self.NOW, C.Directory(cfg))[0]
+        self.assertEqual(i.owner_ids, [LISS])
+
+    def test_risk_score_review_and_escalation(self):
+        d = tempfile.mkdtemp()
+        st = Store(Path(d) / "pm.db")
+        r1 = st.add_risk(self.NOW, "Vendor slips", 4, 4, owner="lissette", review_date="2026-10-20")
+        st.add_risk(self.NOW, "Minor UI debt", 2, 2)
+        self.assertEqual(st.risk(r1)["score"], 16)
+        msg = C.build_risk_review(CFG, st.risks(), self.NOW.date(), C.Directory(CFG))
+        self.assertIn("Vendor slips", msg.text)
+        self.assertIn("revisión vencida", msg.text)
+        self.assertEqual(msg.user_ids, [LISS])           # score >= 15 mentions the escalation recipient
+        self.assertLess(msg.text.index("Vendor"), msg.text.index("Minor"))  # worst first
+        st.update_risk(self.NOW, r1, status="closed")
+        st.update_risk(self.NOW, 2, status="closed")
+        self.assertIsNone(C.build_risk_review(CFG, st.risks(), self.NOW.date(), C.Directory(CFG)))  # no noise
+
+    def test_cli_validation_and_audit(self):
+        d = tempfile.mkdtemp()
+        ctx = pm.Ctx(CFG, Store(Path(d) / "pm.db"), now=self.NOW)
+        A = lambda **k: type("A", (), {"title": None, "owner": None, "mitigation": None, "contingency": None,
+                                       "trigger": None, "review_date": None, "status": None, "probability": None,
+                                       "impact": None, "id": None, "source": "test", "text": None, "context": None,
+                                       "by": None, "days": None, "all": False, **k})()
+        with self.assertRaises(C.ConfigError):
+            pm.cmd_risk_add(ctx, A(title="x", probability=6, impact=2))
+        r = pm.cmd_risk_add(ctx, A(title="x", probability=5, impact=4))
+        self.assertTrue(r["escalate"])
+        self.assertEqual(r["risk"]["review_date"], "2026-11-03")
+        out = pm.cmd_decision_log(ctx, A(text="Use Postgres", by="jorge"))
+        self.assertEqual(out["decision"]["text"], "Use Postgres")
+        self.assertTrue(any(l["kind"] == "risk_add" for l in ctx.store.recent_log(10)))

@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS standups(
   user_id TEXT NOT NULL, local_date TEXT NOT NULL, guild_id TEXT, completed TEXT, planned TEXT,
   blockers TEXT, submitted_at TEXT NOT NULL, updated_at TEXT NOT NULL, revision INTEGER DEFAULT 1,
   channel_id TEXT, message_ids TEXT, PRIMARY KEY(user_id, local_date));
+CREATE TABLE IF NOT EXISTS risks(
+  id INTEGER PRIMARY KEY, description TEXT NOT NULL, probability INTEGER NOT NULL, impact INTEGER NOT NULL,
+  score INTEGER NOT NULL, owner TEXT, mitigation TEXT, contingency TEXT, trigger_text TEXT,
+  review_date TEXT, status TEXT NOT NULL DEFAULT 'open', source TEXT, created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS decisions(
+  id INTEGER PRIMARY KEY, text TEXT NOT NULL, context TEXT, decided_by TEXT, source TEXT,
+  decided_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ops_log(
   id INTEGER PRIMARY KEY, ts TEXT NOT NULL, level TEXT, kind TEXT, detail TEXT);
 """
@@ -63,6 +71,45 @@ class Store:
         self.c.executescript(SCHEMA)
         if self.meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
+
+    # -- risks and decisions (RAID log; local only, ClickUp is never written)
+    def add_risk(self, now: datetime, description: str, probability: int, impact: int, **f) -> int:
+        cur = self.c.execute(
+            "INSERT INTO risks(description,probability,impact,score,owner,mitigation,contingency,trigger_text,"
+            "review_date,status,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (description, probability, impact, probability * impact, f.get("owner"), f.get("mitigation"),
+             f.get("contingency"), f.get("trigger_text"), f.get("review_date"), "open", f.get("source"),
+             iso(now), iso(now)))
+        return cur.lastrowid
+
+    def risk(self, rid: int) -> dict | None:
+        r = self.c.execute("SELECT * FROM risks WHERE id=?", (rid,)).fetchone()
+        return dict(r) if r else None
+
+    def update_risk(self, now: datetime, rid: int, **f) -> dict | None:
+        r = self.risk(rid)
+        if not r:
+            return None
+        r.update({k: v for k, v in f.items() if v is not None})
+        r["score"] = r["probability"] * r["impact"]
+        self.c.execute(
+            "UPDATE risks SET description=?,probability=?,impact=?,score=?,owner=?,mitigation=?,contingency=?,"
+            "trigger_text=?,review_date=?,status=?,updated_at=? WHERE id=?",
+            (r["description"], r["probability"], r["impact"], r["score"], r["owner"], r["mitigation"],
+             r["contingency"], r["trigger_text"], r["review_date"], r["status"], iso(now), rid))
+        return r
+
+    def risks(self, include_closed: bool = False) -> list[dict]:
+        q = "SELECT * FROM risks" + ("" if include_closed else " WHERE status IN ('open','materialized')")
+        return [dict(r) for r in self.c.execute(q + " ORDER BY score DESC, id")]
+
+    def add_decision(self, now: datetime, text: str, context: str | None, decided_by: str | None,
+                     source: str | None) -> int:
+        return self.c.execute("INSERT INTO decisions(text,context,decided_by,source,decided_at) VALUES(?,?,?,?,?)",
+                              (text, context, decided_by, source, iso(now))).lastrowid
+
+    def decisions(self, n: int = 20) -> list[dict]:
+        return [dict(r) for r in self.c.execute("SELECT * FROM decisions ORDER BY id DESC LIMIT ?", (n,))]
 
     # -- meta
     def meta(self, key: str) -> str | None:
