@@ -34,7 +34,7 @@ It does not start apps. A Node app like the ObraBase prototype still has to be r
 ## Install
 
 ```sh
-ln -s ~/Documents/repos/agents/.hermes/plugins/sonnet_link ~/.hermes/plugins/sonnet_link
+ln -s ~/Documents/repos/personal/agents/.hermes/plugins/sonnet_link ~/.hermes/plugins/sonnet_link
 ```
 
 In `~/.hermes/config.yaml`:

@@ -1,6 +1,6 @@
 ---
 name: meeting-notes
-description: Turn a completed call transcript into structured notes (summary, decisions, action items with owners, open questions, follow-up draft) and update long-term memory. Use after a meeting ends or when the user asks for notes or a recap of a call.
+description: "Notes, decisions and actions from a call transcript. Turn a completed call transcript into structured notes (summary, decisions, action items with owners, open questions, follow-up draft) and update long-term memory. Use after a meeting ends or when the user asks for notes or a recap of a call."
 version: 1.1.0
 author: Hermes Agent
 license: MIT
@@ -8,7 +8,7 @@ platforms: [linux]
 metadata:
   hermes:
     tags: [meetings, calls, notes, memory, follow-up]
-    related_skills: [meeting-bot-ops, meeting-briefing, meeting-live-questions, meeting-action-items]
+    related_skills: [meeting-bot-ops, meeting-briefing, meeting-live-questions]
 ---
 
 # Meeting Notes
@@ -107,6 +107,8 @@ Notes: <path>   (follow-up draft inside)
 
 - Never invent owners, dates, numbers or decisions. Missing → `unassigned`
   / `unstated`. Inferences labelled `Inference:`.
+- The follow-up is a draft. Sending it, or any message to the other side,
+  needs the user's approval on Telegram (`~/.hermes/goals/_policy.md`).
 - Use names exactly as the transcript or chat gives them; never guess who an
   empty speaker is.
 - Distinguish the user's commitments from the other side's — that split is

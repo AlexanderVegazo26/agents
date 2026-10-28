@@ -1,6 +1,6 @@
 ---
 name: meeting-bot-ops
-description: "Operate the self-hosted Vexa meeting bot: join meetings, check bot status, pull or search transcripts, read meeting chat, label meetings, stop bots. Use for anything involving the Hermes meeting-bot integration or a call Hermes should attend."
+description: "Run the Vexa meeting bot: join, status, transcripts. Operate the self-hosted Vexa meeting bot: join meetings, check bot status, pull or search transcripts, read meeting chat, label meetings, stop bots. Use for anything involving the Hermes meeting-bot integration or a call Hermes should attend."
 version: 1.1.0
 author: Hermes Agent
 license: MIT
@@ -64,7 +64,10 @@ and produces speaker-attributed transcripts.
 ## Answering questions about past calls
 
 - Use `search_transcripts` first ("when did Acme mention the budget?"); pull
-  a full transcript only for the matching meeting.
+  a full transcript only for the matching meeting. An hour-long call is
+  roughly 15k tokens: quote the relevant lines in your reply, not the whole
+  transcript, because Ornith's four slots are shared with cron jobs and PR
+  reviews.
 - Also search Basic Memory (`bm tool search-notes "<name>"`) — notes from
   past calls live in `~/.hermes/data/vexa-notes/` and are linked there.
 
@@ -72,9 +75,18 @@ and produces speaker-attributed transcripts.
 
 - **`speak_in_meeting` talks out loud to everyone.** Only use it when the
   user explicitly asks for that exact message to be spoken. Never on your own.
+  It speaks in Alexander's cloned voice (local VoiceStudio, ~3-10 s to start per
+  sentence). Keep each call to one or two sentences. `409` = bot not admitted
+  yet, retry once it is active; `503` = the voice engine is down (tell the user:
+  `llamastash start voicestudio --wait` on the host). Local Vexa patch:
+  ~/AI/engines/vexa-lite/voice-patch/README.md.
 - Consent: when asked, say the bot is there to transcribe and take notes.
-- Transcription is local faster-whisper (small, CPU): names, numbers and
-  jargon are often misheard. Cross-check them with the chat or the briefing;
+- Transcription is local faster-whisper on the CPU, model
+  `Systran/faster-whisper-small.en` (checked 2026-10-28). That model is
+  English-only: Spanish calls come out garbled even with `language: es`.
+  Warn the user before a Spanish call and lean on the chat and the briefing
+  until the model is switched to a multilingual one. Names, numbers and
+  jargon are often misheard in English too. Cross-check them with the chat or the briefing;
   flag uncertain ones as `(?)` rather than presenting them as fact. Vexa
   leaves the speaker empty when unsure — keep it unknown, don't guess.
 - `update_bot_config` may 404 on the open-core build; if it does, stop the
