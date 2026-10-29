@@ -23,7 +23,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import triggerd  # noqa: E402
 
-SECRET = "test-secret-0123456789abcdef"
+# Test-only HMAC key, never a real credential. The marker excuses this one line
+# from the secret scan (gitleaks generic-api-key); a path allowlist would excuse
+# the whole file, and .gitleaks.toml asks for the narrowest excuse that works.
+SECRET = "test-secret-0123456789abcdef"  # gitleaks:allow
 
 
 def sign(body: bytes, secret: str = SECRET) -> str:
