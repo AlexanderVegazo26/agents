@@ -16,7 +16,6 @@ import stat
 import sys
 import tempfile
 import threading
-import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +26,11 @@ import triggerd  # noqa: E402
 # from the secret scan (gitleaks generic-api-key); a path allowlist would excuse
 # the whole file, and .gitleaks.toml asks for the narrowest excuse that works.
 SECRET = "test-secret-0123456789abcdef"  # gitleaks:allow
+
+
+def read_lines(p: str) -> list[str]:
+    with open(p) as f:
+        return f.read().splitlines()
 
 
 def sign(body: bytes, secret: str = SECRET) -> str:
@@ -75,6 +79,7 @@ class TriggerdTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
+        cls.httpd.server_close()
         os.environ["PATH"] = cls.old_path
         cls.tmp.cleanup()
 
@@ -92,13 +97,13 @@ class TriggerdTest(unittest.TestCase):
         payload = json.dumps({"action": "opened",
                               "repository": {"full_name": "o/r"},
                               "issue": {"title": "URGENT: prod is down"}}).encode()
-        n0 = len(open(self.calls).read().splitlines()) if os.path.exists(self.calls) else 0
+        n0 = len(read_lines(self.calls)) if os.path.exists(self.calls) else 0
         code, data = self.post("/github/gh", payload,
                                {"x-github-event": "issues", "x-hub-signature-256": sign(payload)})
         self.assertEqual(code, 200, data)
         self.assertTrue(data["matched"])
-        time.sleep(0.2)
-        calls = open(self.calls).read().splitlines()
+        # dispatch runs synchronously before the response is sent: no wait needed
+        calls = read_lines(self.calls)
         self.assertEqual(json.loads(calls[-1]), ["cron", "run", "pr-reviewer"])
 
     def test_github_bad_signature_rejected(self):

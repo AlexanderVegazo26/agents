@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -67,6 +68,7 @@ class MonitorTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -150,6 +152,14 @@ class MonitorTest(unittest.TestCase):
         self.assertGreaterEqual(st["failures"], 2)
         line = cm.run_watch(w)                                 # 3rd hit succeeds -> recovery
         self.assertIn("recovered", line)
+
+    def test_http_error_releases_its_socket(self):
+        # a watch polling a failing URL every tick must not leak one socket per tick
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            cm.fetch(self.base + "/missing", None, 5, 1000)
+        self.assertEqual(caught.exception.code, 404, f"fetch {self.base}/missing")
+        self.assertTrue(caught.exception.fp is None or caught.exception.fp.closed,
+                        f"HTTPError for /missing still holds an open response: {caught.exception.fp!r}")
 
     def test_state_mode_emits_stable_lines(self):
         w = self.watch("s", "/text", "text_contains", "outage")

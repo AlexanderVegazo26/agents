@@ -153,6 +153,28 @@ jobs:
           # the log-level exclusion (bracketed logs fire).
           echo "--- sdlc-suite/tools/test_transcript_hook.py"
           python sdlc-suite/tools/test_transcript_hook.py
+          # The leak scanner. Seen red (16 failures) by disabling its tier-2
+          # pattern pass.
+          echo "--- sdlc-suite/tools/test_redact.py"
+          python sdlc-suite/tools/test_redact.py
+          # `init` readiness CLI. Seen red by forcing its exit code to 0.
+          echo "--- sdlc-suite/tools/init.test.mjs"
+          node sdlc-suite/tools/init.test.mjs
+          # The video-editing skill's EDL helpers, from the hand-edited source
+          # (the other trees carry generated copies). Seen red (11 failures) by
+          # making the silencedetect parser return nothing.
+          echo "--- sdlc-suite/skills/video-editing/scripts/test_edl_tools.py"
+          python -I -m unittest discover -s sdlc-suite/skills/video-editing/scripts -p 'test_*.py'
+          # hermes-proactive, the source of the live triggerd/watch/goals
+          # services. Run against a throwaway HOME so nothing can reach a real
+          # ~/.hermes. Seen red by accepting any webhook signature (triggerd),
+          # never finding a price (condition_monitor) and zeroing goal progress
+          # (goals).
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          for t in hermes-proactive/tests/test_*.py; do
+            echo "--- $t"
+            python "$t"
+          done
 
       - name: Autonomy schema and its JS mirror agree
         # Two implementations of one spec drift. This reads the gate names out of

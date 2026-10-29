@@ -67,7 +67,7 @@ def all_goals() -> list[tuple[str, dict]]:
     for fn in sorted(os.listdir(GOALS_DIR)):
         if fn.endswith(".json"):
             try:
-                out.append((fn[:-5], json.load(open(os.path.join(GOALS_DIR, fn)))))
+                out.append((fn[:-5], load(fn[:-5])))
             except (OSError, json.JSONDecodeError):
                 pass
     return out

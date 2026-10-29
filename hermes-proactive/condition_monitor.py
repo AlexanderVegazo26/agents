@@ -57,6 +57,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 from html.parser import HTMLParser
 
@@ -103,7 +104,12 @@ def visible_text(html: str) -> str:
 
 def fetch(url: str, headers: dict | None, timeout: int, max_bytes: int) -> tuple[bytes, str]:
     req = urllib.request.Request(url, headers=headers or {"User-Agent": "hermes-proactive/0.1"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (watch URLs are user-configured)
+    try:
+        r = urllib.request.urlopen(req, timeout=timeout)  # noqa: S310 (watch URLs are user-configured)
+    except urllib.error.HTTPError as ex:
+        ex.close()  # it holds the response socket; the caller only needs the status line
+        raise
+    with r:
         ctype = r.headers.get("content-type", "")
         return r.read(max_bytes + 1)[:max_bytes], ctype
 
