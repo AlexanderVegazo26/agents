@@ -91,7 +91,13 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus
 `--selftest`, `commandcode-suite/validate.py`, `.kimi-code/validate.py`,
 `commandcode-suite/verify-bodies.py`, a syntax check over every workflow script,
 and the runtime module suites. It runs unmodified on a fork with no repository
-secret. Running the four commands above locally is enough to predict it.
+secret. All of those are listed once, in `scripts/test-agent`, which CI's
+`validate` job runs as its only check: `python scripts/test-agent` locally
+predicts that job exactly (`--list` names the checks, `-k <name>` runs one).
+Its report is `.test-report/summary.md`: per failure the file:line, the failing
+lines and the command that reruns only that check. A new test file must be
+added to `CHECKS` there, with a comment saying how it was seen red; the runner
+fails naming any test file that no check runs.
 
 *Not yet in force:* a single repository-wide `sdlc-suite/tools/validate.py`. The
 per-tree validators above do the job today; consolidating them is pending. This

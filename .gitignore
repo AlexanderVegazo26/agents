@@ -99,3 +99,6 @@ learnings/quarantine/
 # --- Python build output ----------------------------------------------------
 __pycache__/
 *.pyc
+
+# --- scripts/test-agent report ----------------------------------------------
+.test-report/

@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+"""Run every blocking check this repository has, and write a report an agent can fix from.
+
+    python scripts/test-agent            # everything; exit 0 only if all passed
+    python scripts/test-agent --list     # the check names
+    python scripts/test-agent -k wiring  # only checks whose name contains "wiring"
+
+This is the single list of what CI's `validate` job runs (`.github/workflows/
+ci.yml` calls it and nothing else), so a suite is wired in one place, here, not
+twice. It also closes the gap that list had: a new test file was run by nothing
+until someone remembered to add it to ci.yml. The `every-test-file-is-run`
+check below now fails naming any test file that no check runs.
+
+Output, in `.test-report/` (gitignored, uploaded by CI as an artifact):
+  summary.md    per failure: check name, file:line, the failing lines from its
+                output, the exact command to rerun only that check, its log
+  results.json  the same, machine-readable
+  junit.xml     one testcase per check
+  logs/<name>.log  full stdout+stderr of every check
+
+Stdlib only, like everything else here: this repository has no package.json
+and no requirements file, and a test runner must not become a dependency for
+every adopter.
+
+Every check runs from the repository root with a fresh, empty HOME (nothing can
+read or write a real `~/.hermes`, `~/.claude` or `~/.config`), TZ=UTC and a
+fixed locale, and is killed after a timeout instead of hanging the run. Python
+checks run under the interpreter running this script and Node checks under the
+`node` on PATH, so no `python` alias is needed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PY = "{python}"
+NODE = "{node}"
+DEFAULT_TIMEOUT = 300
+
+# Test files by name. Anything matching that no check below runs is an error.
+TEST_FILE = re.compile(r"(^|/)(test_[^/]*\.py|[^/]*\.test\.m?js)$")
+# Generated copies of sdlc-suite/skills/: the hand-edited source is what runs
+# (generate_trees.py --check proves the copies are identical to it).
+GENERATED_COPY = re.compile(
+    r"^(\.agents|\.claude|\.codex|\.copilot|\.kimi-code|commandcode-suite)/skills/"
+)
+
+
+@dataclass
+class Check:
+    name: str
+    argv: list[str]
+    why: str
+    # Test files this check runs, for the every-test-file-is-run check. Defaults
+    # to the arguments that look like test files.
+    covers: list[str] = field(default_factory=list)
+    timeout: int = DEFAULT_TIMEOUT
+
+    def covered(self) -> list[str]:
+        return self.covers or [a for a in self.argv if TEST_FILE.search(a)]
+
+
+def _suite(path: str, why: str) -> Check:
+    runner = NODE if path.endswith((".js", ".mjs")) else PY
+    return Check(Path(path).name, [runner, path], why)
+
+
+# The order is CI's old step order. The "why" of each check is printed with its
+# failure: it is the history that explains what the gate protects, moved here
+# from ci.yml's step comments so it is not lost.
+CHECKS: list[Check] = [
+    Check("documented-counts", [PY, "sdlc-suite/tools/counts.py", "--check"],
+          "Every README here has at some point asserted a count that later stopped being true."),
+    Check("definitions-lf", [PY, "sdlc-suite/tools/eol_check.py", "--check"],
+          "Five agents once silently stopped registering ('agent type not found'); every one had "
+          "CRLF in its frontmatter. Measured on the bytes, not git ls-files --eol or file -b."),
+    Check("autonomy-schema", [PY, "sdlc-suite/tools/validate-autonomy.py", "sdlc-suite/autonomy.json"],
+          "The autonomy policy must validate against its schema."),
+    Check("syncheck-selftest", [NODE, "sdlc-suite/tools/syncheck.mjs", "--selftest"],
+          "Proves the syntax checker can fail before any green result from it is trusted."),
+    Check("workflow-scripts-compile",
+          [NODE, "sdlc-suite/tools/syncheck.mjs",
+           "sdlc-suite/workflows", ".claude/workflows", "commandcode-suite/workflows"],
+          "NOT node --check: on Node 26 it exits 0 on garbage for every file here, because "
+          "`export const meta = {` defers the parse. syncheck compiles via the host's own path."),
+    Check("wiring-sdlc-suite",
+          [NODE, "sdlc-suite/workflows/_wiring.test.js", "--src", "sdlc-suite/workflows"],
+          "Runtime wiring of the hand-edited workflow tree."),
+    Check("wiring-claude",
+          [NODE, "sdlc-suite/workflows/_wiring.test.js", "--src", ".claude/workflows"],
+          "The suite once reported 60/60 green while .claude/workflows carried none of the "
+          "CHG-16..22 wiring for six commits, because only the default tree was checked."),
+    # The shared workflow modules' suites. No framework; the exit code is the
+    # result. Each was shown to fail before the code it covers existed.
+    _suite("sdlc-suite/workflows/_brief.test.js", "Workflow brief module."),
+    _suite("sdlc-suite/workflows/_failure.test.js", "Failure classification and breaker module."),
+    _suite("sdlc-suite/workflows/_learnings.test.js", "Learnings loader module."),
+    _suite("sdlc-suite/workflows/_policy.test.js", "Autonomy policy bridge module."),
+    _suite("sdlc-suite/workflows/_state.test.js", "Run state module."),
+    _suite("sdlc-suite/workflows/_wiring.test.js", "Runtime wiring, default tree."),
+    _suite(".kimi-code/workflows/test_runner.py",
+           "runner.parallel() must return in submission order: a completion-ordered return "
+           "mislabels findings with no error anywhere (CHG-13)."),
+    _suite("sdlc-suite/tools/test_distil.py",
+           "The distiller's selection logic; its first two cases went red against the pre-fix "
+           "marker handling, under which a per-run distil could never emit a candidate."),
+    _suite("sdlc-suite/tools/test_improve.py",
+           "Process proposals from run records, including the guard that no proposal ever asks "
+           "for less checking."),
+    _suite("sdlc-suite/tools/test_image_generation.py",
+           "The image-generation wrapper with sd-cli faked. Seen red by removing the output-path "
+           "containment check (5 failures) and the PNG size check (1)."),
+    _suite("sdlc-suite/tools/test_transcript_hook.py",
+           "The transcript -> prototyper hook, run as Claude Code runs it. Seen red by removing "
+           "the recurring-speaker guard and the log-level exclusion."),
+    _suite("sdlc-suite/tools/test_redact.py",
+           "The leak scanner. Seen red (16 failures) by disabling its tier-2 pattern pass."),
+    _suite("sdlc-suite/tools/init.test.mjs",
+           "`init` readiness CLI. Seen red by forcing its exit code to 0."),
+    Check("test_edl_tools.py",
+          [PY, "-I", "-m", "unittest", "discover",
+           "-s", "sdlc-suite/skills/video-editing/scripts", "-p", "test_*.py"],
+          "The video-editing skill's EDL helpers, from the hand-edited source. Seen red "
+          "(11 failures) by making the silencedetect parser return nothing.",
+          covers=["sdlc-suite/skills/video-editing/scripts/test_edl_tools.py"]),
+    # hermes-proactive is the source of the live triggerd/watch/goals services;
+    # the fresh HOME every check gets keeps them away from a real ~/.hermes.
+    _suite("hermes-proactive/tests/test_condition_monitor.py",
+           "Seen red by never finding a price."),
+    _suite("hermes-proactive/tests/test_proactive_goals.py",
+           "Seen red by zeroing goal progress."),
+    _suite("hermes-proactive/tests/test_triggerd.py",
+           "Seen red by accepting any webhook signature."),
+    _suite("scripts/test_test_agent.py",
+           "This runner: a failure must name the check, file:line and rerun command, an unlisted "
+           "test file must fail, every check must get a fresh HOME."),
+    Check("autonomy-js-mirror", [PY, "sdlc-suite/tools/validate-autonomy.py", "--selftest"],
+          "Two implementations of one spec drift; this reads the gate names out of _policy.js "
+          "rather than restating them."),
+    Check("commandcode-structure", [PY, "commandcode-suite/validate.py"],
+          "commandcode-suite structure."),
+    Check("kimi-structure", [PY, ".kimi-code/validate.py"], ".kimi-code structure."),
+    Check("commandcode-bodies", [PY, "commandcode-suite/verify-bodies.py"],
+          "commandcode-suite agent bodies match sdlc-suite. It used to print mismatches and exit "
+          "0, a permanently green gate; it now exits 1 on mismatch and 2 on a zero-file scan."),
+    Check("generated-trees", [PY, "sdlc-suite/tools/generate_trees.py", "--check"],
+          "Every tree but sdlc-suite/ is generated; this makes editing the wrong copy an error "
+          "instead of a silent no-op. Fix with `python sdlc-suite/tools/generate_trees.py`."),
+    Check("pi-structure", [PY, ".pi/validate.py"],
+          "pi prompts' frontmatter, rewrites and scriptPaths, the root AGENTS.md copy, and the "
+          "sdlc extension selftest (no pi, no network, no LLM)."),
+    Check("hermes-structure", [PY, ".hermes/validate.py"],
+          "Hermes command skills and the sdlc plugin registering against a stub ctx, plus the "
+          "runner selftest (no hermes, no network, no LLM)."),
+    Check("runtime-block", [PY, "sdlc-suite/tools/runtime_block.py", "--check"],
+          "The runtime block is pasted into six workflows; one copy once lost the resume-path "
+          "traversal guard. Fix with `runtime_block.py --write`, never by editing a copy."),
+]
+
+
+@dataclass
+class Result:
+    name: str
+    command: str
+    passed: bool
+    seconds: float
+    log: str
+    why: str = ""
+    location: str = ""
+    excerpt: list[str] = field(default_factory=list)
+
+
+def find_unlisted(paths: list[str], checks: list[Check]) -> list[str]:
+    """Test files that no check runs (generated skill copies excepted)."""
+    covered = {c for check in checks for c in check.covered()}
+    return sorted(p for p in paths
+                  if TEST_FILE.search(p) and not GENERATED_COPY.match(p) and p not in covered)
+
+
+def repo_files(root: Path) -> list[str]:
+    """Tracked files plus untracked ones that are not ignored: a new test file
+    has to be caught before it is committed, not after."""
+    out = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=root, capture_output=True, check=True,
+    ).stdout.decode()
+    return [p for p in out.split("\0") if p]
+
+
+def check_all_tests_listed(root: Path, checks: list[Check]) -> tuple[bool, str]:
+    unlisted = find_unlisted(repo_files(root), checks)
+    if not unlisted:
+        return True, "OK: every test file is run by a check\n"
+    lines = [f"{p}:1: test file is run by no check" for p in unlisted]
+    lines.append("expected: every test file listed in CHECKS in scripts/test-agent "
+                 "(with a comment saying how it was seen red)")
+    lines.append(f"actual: {len(unlisted)} unlisted")
+    return False, "\n".join(lines) + "\n"
+
+
+# Lines worth showing from a failing check's output. Case-sensitive on
+# purpose: "missing" in a passing test's name is not a signal.
+SIGNAL = re.compile(
+    r"FAIL|Error|error:|[Aa]ssert|[Ee]xpected|[Aa]ctual|mismatch|drift|not ok|✗|"
+    r"Traceback|MISSING|differs|out of (date|sync)|unlisted|exit code"
+)
+# unittest's per-test progress lines ("test_x (...) ... FAIL") name the failing
+# tests but crowd out the assertion messages below them.
+PROGRESS = re.compile(r" \.\.\. (ok|FAIL|ERROR|skipped.*|expected failure)$")
+PY_FRAME = re.compile(r'File "([^"]+)", line (\d+)')
+PATH_LINE = re.compile(r"([\w./@+-]+\.(?:py|m?js|md|json|ya?ml|toml)):(\d+)")
+
+
+def _rel(path: str, root: Path) -> str | None:
+    p = Path(path.removeprefix("file://"))
+    if not p.is_absolute():
+        p = root / p
+    try:
+        rel = p.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    return str(rel) if p.exists() else None
+
+
+def locate(output: str, root: Path, check: Check) -> str:
+    """The most specific file:line inside the repository the output points at:
+    the innermost Python frame, else the first path:line, else the check's file."""
+    frames = [(f, n) for f, n in PY_FRAME.findall(output) if _rel(f, root)]
+    if frames:
+        f, n = frames[-1]
+        return f"{_rel(f, root)}:{n}"
+    for f, n in PATH_LINE.findall(output):
+        if _rel(f, root):
+            return f"{_rel(f, root)}:{n}"
+    for arg in check.argv[1:]:
+        if (root / arg).is_file():
+            return f"{arg} (no line in output)"
+    return "(no file in output)"
+
+
+def excerpt(output: str, limit: int = 30, tail: int = 8) -> list[str]:
+    """The failing lines (assertion messages, tracebacks, FAIL markers) plus the
+    last few lines of output, where most runners print their verdict."""
+    lines = [ln.rstrip() for ln in output.splitlines() if ln.strip()]
+    hits = [i for i, ln in enumerate(lines) if SIGNAL.search(ln) and not PROGRESS.search(ln)]
+    keep = sorted(set(hits[:limit - tail]) | set(range(max(0, len(lines) - tail), len(lines))))
+    return [lines[i][:400] for i in keep]
+
+
+def _argv(check: Check, node: str | None) -> list[str]:
+    return [sys.executable if a == PY else (node or "node") if a == NODE else a
+            for a in check.argv]
+
+
+def rerun_command(check: Check) -> str:
+    shown = ["python3" if a == PY else "node" if a == NODE else a for a in check.argv]
+    return f'HOME="$(mktemp -d)" TZ=UTC {shlex.join(shown)}'
+
+
+def run_check(check: Check, root: Path, logs: Path, node: str | None) -> Result:
+    command = rerun_command(check)
+    log = logs / f"{re.sub(r'[^A-Za-z0-9_.-]', '_', check.name)}.log"
+    start = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="test-agent-home-") as home:
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("XDG_", "HERMES_"))}
+        env.update(HOME=home, TZ="UTC", LC_ALL="C.UTF-8", LANG="C.UTF-8",
+                   PYTHONDONTWRITEBYTECODE="1", PYTHONHASHSEED="0", NO_COLOR="1")
+        if NODE in check.argv and node is None:
+            output, passed = "node: not found on PATH\n", False
+        else:
+            try:
+                proc = subprocess.run(_argv(check, node), cwd=root, env=env,
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, timeout=check.timeout)
+                output = proc.stdout.decode(errors="replace")
+                passed = proc.returncode == 0
+                if not passed:
+                    output += f"\n[test-agent] exit code {proc.returncode}, expected 0\n"
+            except subprocess.TimeoutExpired as exc:
+                output = (exc.stdout or b"").decode(errors="replace")
+                output += (f"\n[test-agent] timed out after {check.timeout} s "
+                           "(killed; a hang, not a failed assertion)\n")
+                passed = False
+    seconds = time.monotonic() - start
+    log.write_text(f"$ {command}\n{output}", encoding="utf-8")
+    result = Result(check.name, command, passed, seconds, str(log), check.why)
+    if not passed:
+        result.location = locate(output, root, check)
+        result.excerpt = excerpt(output)
+    return result
+
+
+def write_reports(results: list[Result], report: Path, root: Path) -> None:
+    failed = [r for r in results if not r.passed]
+    total = sum(r.seconds for r in results)
+    md = ["# test-agent summary", ""]
+    if failed:
+        md.append(f"**{len(failed)} of {len(results)} checks failed** ({total:.1f} s).")
+    else:
+        md.append(f"All {len(results)} checks passed ({total:.1f} s).")
+    for r in failed:
+        md += ["", f"## FAIL {r.name}", "",
+               f"- where: `{r.location}`",
+               f"- rerun only this: `{r.command}`",
+               *([] if "test-agent" in r.command else
+                 [f"  (or `python3 scripts/test-agent -k {shlex.quote(r.name)}`)"]),
+               f"- log: `{os.path.relpath(r.log, root)}`",
+               f"- what this gate protects: {r.why}",
+               "", "Failing output (expected vs actual is in these lines):", "", "```"]
+        md += r.excerpt
+        md.append("```")
+    md += ["", "## All checks", "", "| check | result | seconds |", "|---|---|---|"]
+    md += [f"| {r.name} | {'pass' if r.passed else '**FAIL**'} | {r.seconds:.1f} |"
+           for r in results]
+    (report / "summary.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+
+    (report / "results.json").write_text(json.dumps({
+        "passed": not failed,
+        "total": len(results),
+        "failed": len(failed),
+        "checks": [{**r.__dict__, "log": os.path.relpath(r.log, root)} for r in results],
+    }, indent=2) + "\n", encoding="utf-8")
+
+    suite = ET.Element("testsuite", name="test-agent", tests=str(len(results)),
+                       failures=str(len(failed)), time=f"{total:.3f}")
+    for r in results:
+        case = ET.SubElement(suite, "testcase", classname="test-agent", name=r.name,
+                             time=f"{r.seconds:.3f}")
+        if not r.passed:
+            fail = ET.SubElement(case, "failure", message=f"{r.location}")
+            fail.text = "\n".join([f"rerun: {r.command}", *r.excerpt])
+    ET.ElementTree(suite).write(report / "junit.xml", encoding="utf-8", xml_declaration=True)
+
+
+def run(checks: list[Check], root: Path, report: Path, only: str | None = None,
+        guard: bool = True) -> int:
+    if report.exists():
+        shutil.rmtree(report)
+    logs = report / "logs"
+    logs.mkdir(parents=True)
+    node = shutil.which("node")
+    selected = [c for c in checks if only is None or only in c.name]
+    results: list[Result] = []
+    if guard and (only is None or only in "every-test-file-is-run"):
+        start = time.monotonic()
+        ok, output = check_all_tests_listed(root, checks)
+        log = logs / "every-test-file-is-run.log"
+        log.write_text(output, encoding="utf-8")
+        r = Result("every-test-file-is-run", "python3 scripts/test-agent -k every-test-file-is-run",
+                   ok, time.monotonic() - start, str(log),
+                   "A test file that no check runs is a test nothing runs; CI used to list suites "
+                   "by hand and six went unrun until 2026-10-29.")
+        if not ok:
+            r.location = output.split(":1:")[0] + ":1"
+            r.excerpt = output.splitlines()
+        results.append(r)
+        print(f"{'ok  ' if ok else 'FAIL'} every-test-file-is-run", flush=True)
+    if only is not None and not selected and not results:
+        print(f"no check matches -k {only!r}; see --list", file=sys.stderr)
+        return 2
+    for check in selected:
+        r = run_check(check, root, logs, node)
+        results.append(r)
+        print(f"{'ok  ' if r.passed else 'FAIL'} {r.name} ({r.seconds:.1f} s)", flush=True)
+    write_reports(results, report, root)
+    failed = [r for r in results if not r.passed]
+    summary = os.path.relpath(report / "summary.md", root)
+    if failed:
+        print(f"\n{len(failed)} of {len(results)} failed: " + ", ".join(r.name for r in failed))
+        print(f"details, file:line and rerun commands: {summary}")
+        return 1
+    print(f"\nall {len(results)} checks passed; report: {summary}")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("-k", dest="only", help="run only checks whose name contains this")
+    ap.add_argument("--list", action="store_true", help="print the check names and exit")
+    ap.add_argument("--report", type=Path, default=ROOT / ".test-report",
+                    help="report directory (default: .test-report)")
+    args = ap.parse_args()
+    if args.list:
+        print("every-test-file-is-run")
+        for c in CHECKS:
+            print(c.name)
+        return 0
+    return run(CHECKS, ROOT, args.report, args.only)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

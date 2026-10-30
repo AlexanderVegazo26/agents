@@ -36,8 +36,9 @@ on:
     branches: [main]
   pull_request:
 
-# Read-only. Nothing in this workflow writes to the repository, comments on a
-# pull request, or publishes an artifact, so nothing needs more than this.
+# Read-only. Nothing in this workflow writes to the repository or comments on
+# a pull request; the test-report artifact is stored by the Actions service and
+# needs no write scope, so nothing needs more than this.
 permissions:
   contents: read
 
@@ -67,177 +68,34 @@ jobs:
         with:
           node-version: '26'
 
-      - name: Documented counts match the tree
-        # Every README here has at some point asserted a count that later
-        # stopped being true. This is the check that stops that recurring.
-        run: python sdlc-suite/tools/counts.py --check
-
-      - name: Definitions are LF, measured on the bytes
-        # Five agents once silently stopped registering — dispatch failed with
-        # "agent type not found" — and every one had CRLF in its frontmatter.
+      - name: Every check, via scripts/test-agent
+        # The list of checks lives in `scripts/test-agent` and only there; each
+        # entry carries the history this file's step comments used to (what the
+        # gate protects and how it was seen red). Before 2026-10-30 the suites
+        # were listed here by hand, and a new test file was run by nothing until
+        # someone remembered to add it: six were found unrun on 2026-10-29. The
+        # runner now fails naming any test file no check runs.
         #
-        # This asserts on `b"\r\n" in path.read_bytes()`, not on
-        # `git ls-files --eol` and not on `file -b`. The index attribute
-        # reports what git would store, not what is on disk, and `file -b`
-        # reports "JSON text data" for a CRLF JSON file. Only the bytes
-        # describe the case that actually reaches a harness.
-        run: python sdlc-suite/tools/eol_check.py --check
-
-      - name: Autonomy policy validates against its schema
-        run: python sdlc-suite/tools/validate-autonomy.py sdlc-suite/autonomy.json
-
-      - name: Workflow scripts compile
-        # NOT `node --check`. Measured on Node v26.1.0: it exits 0 on a dropped
-        # brace, an unterminated string, an unterminated block comment, top-level
-        # await and blatant garbage — for every file here — because each begins
-        # `export const meta = {`, which triggers ESM detection and defers the
-        # parse. It was wired as this job's only syntax gate for two trees and
-        # was inert on all of them. Independent review caught it by running it
-        # against a deliberately broken file, which is what rule 2 in this
-        # header requires and what did not happen the first time.
+        # It writes `.test-report/summary.md` (per failure: file:line, the
+        # failing lines, the exact command to rerun that one check), plus
+        # results.json, junit.xml and every check's full log. Each check gets a
+        # fresh empty HOME, so nothing can reach a real ~/.hermes.
         #
-        # `syncheck.mjs` compiles via the host's own path instead, detects the
-        # CommonJS dialect that commandcode-suite uses, and carries a --selftest
-        # that proves it can fail before any green result from it is trusted.
-        run: |
-          node sdlc-suite/tools/syncheck.mjs --selftest
-          node sdlc-suite/tools/syncheck.mjs             sdlc-suite/workflows .claude/workflows commandcode-suite/workflows
+        # Proven capable of failing (2026-10-30): an unlisted test file, the
+        # leak scanner's tier-2 pass disabled (16 failures, `test_redact.py:118`
+        # named), and the runner's own suite under three mutations.
+        run: python scripts/test-agent
 
-      - name: Runtime wiring, per workflow tree
-        # `_wiring.test.js` defaults to `sdlc-suite/workflows` and accepts
-        # `--src`. CI never passed it, so the suite reported 60/60 green while
-        # `.claude/workflows` — the live tree for bare-name invocation here —
-        # carried none of the CHG-16..22 wiring for six commits. Both trees are
-        # named explicitly; a tree absent from this list is a tree nothing checks.
-        run: |
-          node sdlc-suite/workflows/_wiring.test.js --src sdlc-suite/workflows
-          node sdlc-suite/workflows/_wiring.test.js --src .claude/workflows
-
-      - name: Runtime module tests
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # The shared workflow modules have real test suites. They use no test
-          # framework — this repository has no package.json, so a framework would
-          # be a new runtime dependency for every adopter — and signal the result
-          # through the exit code.
-          #
-          # Each suite's assertions were shown to fail before the code they cover
-          # existed. Three of them encode defects found that way rather than by
-          # review: `\Z` matching a literal Z in a JS regex, JSON.stringify
-          # escaping the newlines a multiline match needed, and a breaker that
-          # counted retry attempts tripping on one agent's own designed policy.
-          for t in sdlc-suite/workflows/*.test.js; do
-            echo "--- $t"
-            node "$t"
-          done
-          echo "--- .kimi-code/workflows/test_runner.py"
-          python .kimi-code/workflows/test_runner.py
-          # The distiller's selection logic. Its first two cases went red
-          # against the pre-fix marker handling, under which a per-run distil
-          # could never emit a candidate at all.
-          echo "--- sdlc-suite/tools/test_distil.py"
-          python sdlc-suite/tools/test_distil.py
-          # Process proposals from run records; includes the guard that no
-          # proposal ever asks for less checking.
-          echo "--- sdlc-suite/tools/test_improve.py"
-          python sdlc-suite/tools/test_improve.py
-          # The image-generation wrapper, with sd-cli faked. Seen red by removing
-          # the output-path containment check (5 failures) and the PNG size
-          # check (1). It cannot prove the real model renders; see SKILL.md.
-          echo "--- sdlc-suite/tools/test_image_generation.py"
-          python sdlc-suite/tools/test_image_generation.py
-          # The transcript -> prototyper hook, run as Claude Code runs it.
-          # Seen red by removing the recurring-speaker guard (YAML fires) and
-          # the log-level exclusion (bracketed logs fire).
-          echo "--- sdlc-suite/tools/test_transcript_hook.py"
-          python sdlc-suite/tools/test_transcript_hook.py
-          # The leak scanner. Seen red (16 failures) by disabling its tier-2
-          # pattern pass.
-          echo "--- sdlc-suite/tools/test_redact.py"
-          python sdlc-suite/tools/test_redact.py
-          # `init` readiness CLI. Seen red by forcing its exit code to 0.
-          echo "--- sdlc-suite/tools/init.test.mjs"
-          node sdlc-suite/tools/init.test.mjs
-          # The video-editing skill's EDL helpers, from the hand-edited source
-          # (the other trees carry generated copies). Seen red (11 failures) by
-          # making the silencedetect parser return nothing.
-          echo "--- sdlc-suite/skills/video-editing/scripts/test_edl_tools.py"
-          python -I -m unittest discover -s sdlc-suite/skills/video-editing/scripts -p 'test_*.py'
-          # hermes-proactive, the source of the live triggerd/watch/goals
-          # services. Run against a throwaway HOME so nothing can reach a real
-          # ~/.hermes. Seen red by accepting any webhook signature (triggerd),
-          # never finding a price (condition_monitor) and zeroing goal progress
-          # (goals).
-          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
-          for t in hermes-proactive/tests/test_*.py; do
-            echo "--- $t"
-            python "$t"
-          done
-
-      - name: Autonomy schema and its JS mirror agree
-        # Two implementations of one spec drift. This reads the gate names out of
-        # `_policy.js` rather than restating them, so it cannot pass by agreeing
-        # with a copy of itself.
-        run: python sdlc-suite/tools/validate-autonomy.py --selftest
-
-      - name: commandcode-suite structure
-        run: python commandcode-suite/validate.py
-
-      - name: .kimi-code structure
-        run: python .kimi-code/validate.py
-
-      # `commandcode-suite/verify-bodies.py` used to print "BODY MISMATCH: <file>"
-      # for each divergence and then exit 0 — wired plainly it was a permanently
-      # green step, the exact decorative gate rule 2 above exists to prevent.
-      # It now exits 1 on mismatch and 2 on a zero-file scan, and it compares
-      # bytes rather than universal-newline-translated text, so it is wired live.
-      # Proven capable of failing: appending one line to a generated agent body
-      # makes it exit 1 naming that file.
-      - name: commandcode-suite agent bodies match sdlc-suite
-        run: python commandcode-suite/verify-bodies.py
-
-      # Every tree but `sdlc-suite/` is generated. This is the check that makes
-      # editing the wrong copy an error instead of a silent no-op. Proven capable
-      # of failing: hand-editing one generated file makes it exit 1 naming the tree.
-      - name: Generated trees are in sync with sdlc-suite
-        run: python sdlc-suite/tools/generate_trees.py --check
-
-      # The pi port has two parts: the generated tree (`.pi/prompts/` and the
-      # root `AGENTS.md`, already covered by generate_trees.py --check above)
-      # and the hand-maintained `.pi/extensions/sdlc/`, which gives pi the two
-      # primitives the suite is written against — sub-agent dispatch and the
-      # Workflow sandbox. validate.py checks the prompts' frontmatter and
-      # rewrites, that every workflow-backed prompt names a script that
-      # exists and carries its pi note, that the root `AGENTS.md` is the
-      # generated copy of `sdlc-suite/pi/AGENTS.md`, and runs the extension's
-      # selftest under the host node (no pi, no network, no LLM).
-      #
-      # Proven capable of failing: a leftover `${CLAUDE_PLUGIN_ROOT}` in a
-      # prompt, a scriptPath that does not resolve, a drifted root
-      # `AGENTS.md`, or a broken selftest each exit 1 naming the file; an
-      # empty `.pi/prompts/` exits 2 rather than reading as a pass.
-      - name: .pi structure and sdlc extension selftest
-        run: python .pi/validate.py
-
-      # The Hermes port has the same two halves: the generated `.hermes/skills/`
-      # (the commands as skills) and `.hermes.md`, covered by --check above,
-      # and the hand-maintained `.hermes/plugins/sdlc/` plugin, whose runner
-      # imports the pi extension's lib.js. validate.py checks each command
-      # skill's frontmatter, leftover placeholders and scriptPath, registers
-      # the plugin against a stub ctx, and runs the runner's selftest (no
-      # hermes, no network, no LLM). Proven capable of failing: a scriptPath
-      # pointing at a missing script exits 1 naming the skill.
-      - name: .hermes structure and sdlc plugin selftest
-        run: python .hermes/validate.py
-
-      # The runtime block is pasted into six workflows because the sandbox has
-      # no `require`. Proven capable of failing: before this gate existed one
-      # copy had lost the resume-path traversal guard, and --check exited 1
-      # naming sdlc-feature.js.
-      - name: Workflow runtime block matches its canonical copy
-        run: python sdlc-suite/tools/runtime_block.py --check
+      - name: Keep the test report
+        # Needs no permission beyond the read-only token: artifacts are stored
+        # by the Actions service, not written to the repository.
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-report
+          path: .test-report/
+          include-hidden-files: true
+          retention-days: 14
 
       # ---------------------------------------------------------------------
       # Not yet live.
