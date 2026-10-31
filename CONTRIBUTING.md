@@ -99,6 +99,13 @@ lines and the command that reruns only that check. A new test file must be
 added to `CHECKS` there, with a comment saying how it was seen red; the runner
 fails naming any test file that no check runs.
 
+Replay evals live in `sdlc-suite/evals/`: `cases.v1.json` holds model and CLI
+outputs (phase results with BLOCKED entries, failure messages, learning files)
+with the properties the runtime's decision must have, and `replay.test.js`
+grades them deterministically against `sdlc-suite/workflows` (`--case <id>`
+reruns one, `--src` points it at another tree). No model is called. When a run
+produces output the runtime mishandled, add it there as a case first.
+
 *Not yet in force:* a single repository-wide `sdlc-suite/tools/validate.py`. The
 per-tree validators above do the job today; consolidating them is pending. This
 list does not name a command before that command exists.

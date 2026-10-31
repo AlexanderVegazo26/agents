@@ -111,6 +111,11 @@ CHECKS: list[Check] = [
     _suite("sdlc-suite/workflows/_policy.test.js", "Autonomy policy bridge module."),
     _suite("sdlc-suite/workflows/_state.test.js", "Run state module."),
     _suite("sdlc-suite/workflows/_wiring.test.js", "Runtime wiring, default tree."),
+    _suite("sdlc-suite/evals/replay.test.js",
+           "Replay evals (cases.v1.json): model/CLI output through the code that turns it into run "
+           "decisions (blocked gates, failure class + retry, learning neutralising). Seen red by six "
+           "injected faults: case-sensitive BLOCKED, JSON.stringify in the reducer, the \\Z "
+           "end-of-input bug, TRANSIENT matched before AUTH, AUTH retried 3x, policy neutraliser off."),
     _suite(".kimi-code/workflows/test_runner.py",
            "runner.parallel() must return in submission order: a completion-ordered return "
            "mislabels findings with no error anywhere (CHG-13)."),
