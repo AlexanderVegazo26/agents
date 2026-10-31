@@ -10,7 +10,7 @@
 # A note on trust, because this file executes code on your machine.
 #
 # A `rev:` pointing at a tag is not a pin. A tag is mutable — whoever controls
-# the upstream repository can move `v8.28.0` to a different commit, and every
+# the upstream repository can move `v8.30.1` to a different commit, and every
 # contributor who runs `pre-commit` afterwards silently executes the new code.
 # `rev:` below is therefore the full commit SHA that the tag pointed at when
 # this was written, which is immutable. The tag is recorded in the comment for
@@ -43,7 +43,7 @@ repos:
   # version is whatever you happen to have rather than the pinned one.
   # ---------------------------------------------------------------------
   - repo: https://github.com/gitleaks/gitleaks
-    rev: 4fb43823ef3d152d239e92d7d5cb04783b548062 # v8.28.0
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # v8.30.1
     hooks:
       - id: gitleaks
 

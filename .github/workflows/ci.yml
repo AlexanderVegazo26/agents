@@ -195,8 +195,8 @@ jobs:
           # release asset can be replaced; downloading and running an
           # unverified binary in CI is how a pipeline gets compromised. The
           # checksum is the thing that makes this safe, not the version pin.
-          GITLEAKS_VERSION: '8.28.0'
-          GITLEAKS_SHA256: 'a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb'
+          GITLEAKS_VERSION: '8.30.1'
+          GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
         run: |
           set -euo pipefail
           url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -231,7 +231,7 @@ jobs:
       # `--redact` because this repository is public and so are its Actions
       # logs. An unredacted finding would publish the exact secret the scan
       # just caught, in a log that outlives the branch. Checked on
-      # gitleaks 8.28.0: with both flags set the output carries RuleID, File
+      # gitleaks 8.28.0 and 8.30.1: with both flags set the output carries RuleID, File
       # and Line, and the secret itself appears zero times.
       - name: Scan the working tree
         shell: bash
