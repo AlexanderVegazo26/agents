@@ -8,7 +8,8 @@
 # the same class cannot come back in a later commit without CI saying so.
 #
 # Four things to know before editing. Each was measured against gitleaks
-# 8.28.0 on 2026-09-02, not assumed.
+# 8.28.0 on 2026-09-02, not assumed. scripts/test_gitleaks_rules.py proves
+# every rule and allowlist against fixtures; run it after any edit here.
 #
 #   1. Never answer a false positive with `disabledRules`. Disabling is global
 #      and silent: the rule stops firing everywhere and nothing in a later diff
@@ -21,6 +22,9 @@
 #      `targetRules` parses without error and is then SILENTLY IGNORED - the
 #      rule fires on the very file the allowlist named. The rule-level form
 #      works. Both were run against the same fixture before this was written.
+#      (2026-10-31: gitleaks 8.30.1 does honour the global form; rule-level
+#      stays, as it works on both. A rule-level allowlist with both `regexes`
+#      and `paths` needs `condition = "AND"`, see the project-name rule.)
 #
 #   3. Custom rules deliberately carry no `keywords`. `keywords` is a
 #      lowercased pre-filter: a rule that has one only evaluates its regex on
@@ -84,6 +88,13 @@ regex = '''(?i)\b(?:snagit[-_ ]?clone|nawi(?:[-_]vex)?)\b'''
 tags = ["repo-identifier", "private-project", "chg-03"]
   [[rules.allowlists]]
   description = "Only the two names that are ALREADY public, and only in the documents that must discuss them. Independent review caught the earlier version of this allowlist excusing the whole review document from every identifier rule - which would have published the employer name, the author's email, both home paths, the product codename and the requirement-id taxonomy, in the commit titled 'make the repository publishable', with the scanner told to stay quiet. Measured on origin/main before deciding: nawi appears in 4 files and snagit-clone in 3, deliberately, because .gitignore cannot exclude a directory without naming it and CLAUDE.md explains why it is excluded. The product's own pre-rename codename appeared in 0 and the requirement-id taxonomy in 0, so both were REDACTED from the documents rather than excused here — and the codename is dropped from this rule's pattern too, because spelling it out in a public config republishes the string the redaction removed. The project is now `nawi`, which the pattern does still carry. The distinction is the point: excuse what is already public, redact what is not."
+  # AND: excused only when the match is one of these names AND the file is
+  # one of these paths. Without it gitleaks ORs the two lists, and since the
+  # regex matches every hit this rule can produce, the rule excused the names
+  # in EVERY file - dead from the day it was written, with a green job on top
+  # (measured 2026-10-31 on 8.28.0 and 8.30.1). scripts/test_gitleaks_rules.py
+  # now proves it fires.
+  condition = "AND"
   regexTarget = "match"
   regexes = [
     '''(?i)^(?:snagit[-_ ]?clone|nawi(?:[-_]vex)?)$''',

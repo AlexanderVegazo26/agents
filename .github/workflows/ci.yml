@@ -208,6 +208,17 @@ jobs:
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" version
 
+      # A clean scan cannot tell "nothing to find" from "the rule is dead"; the
+      # private-project rule was dead for two months behind a green job. This
+      # proves each rule fires and each allowlist excuses only what it names,
+      # with the same binary the scan below uses. GITLEAKS_REQUIRED turns the
+      # test's no-binary skip into a failure here.
+      - name: Prove the rules fire
+        shell: bash
+        env:
+          GITLEAKS_REQUIRED: '1'
+        run: GITLEAKS="$RUNNER_TEMP/gitleaks" python3 scripts/test_gitleaks_rules.py
+
       # The binary is used directly rather than `gitleaks/gitleaks-action@v2`
       # for two reasons. It can be run locally, so the config's rules and
       # allowlists can each be proven to fire and to be excused before they

@@ -144,6 +144,11 @@ CHECKS: list[Check] = [
            "Seen red by zeroing goal progress."),
     _suite("hermes-proactive/tests/test_triggerd.py",
            "Seen red by accepting any webhook signature."),
+    _suite("scripts/test_gitleaks_rules.py",
+           "Every .gitleaks.toml rule fires and every allowlist excuses only its own rule on its "
+           "own paths; skips without a gitleaks binary (CI's secrets job requires one). Seen red "
+           "by deleting the project-name allowlist's `condition = \"AND\"`: that rule was dead, "
+           "its regex alone excused every hit."),
     _suite("scripts/test_test_agent.py",
            "This runner: a failure must name the check, file:line and rerun command, an unlisted "
            "test file must fail, every check must get a fresh HOME."),
