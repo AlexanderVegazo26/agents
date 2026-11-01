@@ -52,8 +52,55 @@ class ProactiveScanTest(unittest.TestCase):
         finally:
             ps.REPOS_DIR = old
         ids = {f["id"] for f in found}
-        self.assertIn("git-unpushed-repo", ids)
-        self.assertIn("git-dirty-repo", ids) if False else None  # no files -> clean
+        self.assertIn("git-unpushed-repo", ids, f"no-remote commit should be unpushed; got {ids}")
+        self.assertNotIn("git-dirty-repo", ids, f"empty commit leaves a clean tree; got {ids}")
+
+    def _scan_feed(self, body: str, st: dict | None = None) -> list[dict]:
+        feed = os.path.join(self.tmp.name, "feed.xml")
+        with open(feed, "w") as f:
+            f.write(body)
+        with open(ps.FEEDS, "w") as f:
+            json.dump([{"url": "file://" + feed, "name": "blog"}], f)
+        return ps.src_rss(st if st is not None else {})
+
+    def test_rss2_items_become_findings_once(self):
+        body = ("<rss version='2.0'><channel><title>t</title>"
+                "<item><title>Post A</title><link>https://ex.test/a</link></item>"
+                "</channel></rss>")
+        st: dict = {}
+        found = self._scan_feed(body, st)
+        self.assertEqual([f["suggestion"] for f in found], ["blog: Post A"],
+                         f"RSS 2.0 item should become one finding; got {found}")
+        self.assertEqual(found[0]["detail"], "https://ex.test/a")
+        self.assertEqual(self._scan_feed(body, st), [], "an item already seen must not re-surface")
+
+    def test_atom_entries_become_findings(self):
+        body = ("<?xml version='1.0'?><feed xmlns='http://www.w3.org/2005/Atom'><title>t</title>"
+                "<entry><title>Release v2</title>"
+                "<link rel='replies' href='https://ex.test/v2#comments'/>"
+                "<link rel='alternate' href='https://ex.test/v2'/></entry>"
+                "<entry><title>Bare</title><link href='https://ex.test/bare'/></entry>"
+                "</feed>")
+        found = self._scan_feed(body)
+        got = [(f["suggestion"], f.get("detail")) for f in found]
+        self.assertEqual(got, [("blog: Release v2", "https://ex.test/v2"),
+                               ("blog: Bare", "https://ex.test/bare")],
+                         "Atom <entry> should be read with its rel=alternate (or rel-less) link")
+
+    def test_rss1_rdf_items_become_findings(self):
+        body = ("<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#' "
+                "xmlns='http://purl.org/rss/1.0/'><channel><title>t</title></channel>"
+                "<item><title>Paper</title><link>https://ex.test/p</link></item></rdf:RDF>")
+        found = self._scan_feed(body)
+        self.assertEqual([f.get("detail") for f in found], ["https://ex.test/p"],
+                         f"RSS 1.0 (RDF) <item> should become a finding; got {found}")
+
+    def test_unreachable_feed_is_a_warning_not_a_crash(self):
+        with open(ps.FEEDS, "w") as f:
+            json.dump([{"url": "file://" + os.path.join(self.tmp.name, "missing.xml")}], f)
+        found = ps.src_rss({})
+        self.assertEqual([f["severity"] for f in found], ["warn"], f"got {found}")
+        self.assertTrue(found[0]["id"].startswith("rss-dead-"), found[0]["id"])
 
 
 class GoalsTest(unittest.TestCase):

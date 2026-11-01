@@ -146,7 +146,8 @@ CHECKS: list[Check] = [
     _suite("hermes-proactive/tests/test_condition_monitor.py",
            "Seen red by never finding a price."),
     _suite("hermes-proactive/tests/test_proactive_goals.py",
-           "Seen red by zeroing goal progress."),
+           "Seen red by zeroing goal progress, and by reading only RSS 2.0 <item> (Atom and "
+           "RSS 1.0 feeds gave no findings)."),
     _suite("hermes-proactive/tests/test_triggerd.py",
            "Seen red by accepting any webhook signature."),
     _suite("scripts/test_gitleaks_rules.py",

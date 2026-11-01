@@ -147,6 +147,25 @@ def hashlib_md5(s: str) -> str:
     return hashlib.md5(s.encode()).hexdigest()[:10]  # noqa: S324 - dedup id, not crypto
 
 
+_ATOM = "{http://www.w3.org/2005/Atom}"
+_RSS1 = "{http://purl.org/rss/1.0/}"
+
+
+def _feed_entries(root: ET.Element) -> list[tuple[str, str]]:
+    """(title, link) per entry of an RSS 2.0, RSS 1.0 (RDF) or Atom feed."""
+    out = []
+    for ns in ("", _RSS1):
+        for item in root.iter(ns + "item"):
+            out.append(((item.findtext(ns + "title") or "").strip(),
+                        (item.findtext(ns + "link") or "").strip()))
+    for entry in root.iter(_ATOM + "entry"):
+        links = entry.findall(_ATOM + "link")
+        alt = [x for x in links if x.get("rel", "alternate") == "alternate"]
+        out.append(((entry.findtext(_ATOM + "title") or "").strip(),
+                    ((alt or [ET.Element("link")])[0].get("href") or "").strip()))
+    return out
+
+
 def src_rss(state: dict) -> list[dict]:
     out = []
     feeds = []
@@ -162,9 +181,7 @@ def src_rss(state: dict) -> list[dict]:
             out.append({"id": f"rss-dead-{hashlib_md5(feed['url'])}", "severity": "warn",
                         "source": "rss", "suggestion": f"RSS feed unreachable: {feed.get('name') or feed['url']}"})
             continue
-        for item in root.iter("item"):
-            link = (item.findtext("link") or "").strip()
-            title = (item.findtext("title") or "").strip()
+        for title, link in _feed_entries(root):
             if not link or link in seen:
                 continue
             seen[link] = now
