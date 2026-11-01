@@ -203,7 +203,10 @@ def src_disk() -> list[dict]:
             continue
         pct = (st.f_blocks - st.f_bfree) / max(st.f_blocks, 1) * 100
         if pct >= DISK_THRESHOLD_PCT:
-            out.append({"id": f"disk-{path.strip('/') or 'root'}-{(int(pct))}", "severity": "warn" if pct < 95 else "action",
+            # id = path + severity band, not the percent: 91% -> 92% is the same
+            # finding (TTL/ack apply); crossing into "action" alerts again
+            severity = "warn" if pct < 95 else "action"
+            out.append({"id": f"disk-{path.strip('/') or 'root'}-{severity}", "severity": severity,
                         "source": "disk",
                         "suggestion": f"{path}: {pct:.0f}% full — clean up before something breaks"})
     return out
@@ -217,9 +220,17 @@ SOURCES = {"git": src_git, "github": src_github, "rss": src_rss, "disk": src_dis
 def load_state() -> dict:
     try:
         with open(STATE) as f:
-            return json.load(f)
+            st = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return {"delivered": {}, "acked": []}
+        st = {}
+    if not isinstance(st, dict):
+        st = {}
+    # older or hand-edited state files may lack a key; ack/list/run index both
+    if not isinstance(st.get("delivered"), dict):
+        st["delivered"] = {}
+    if not isinstance(st.get("acked"), list):
+        st["acked"] = []
+    return st
 
 
 def save_state(st: dict) -> None:

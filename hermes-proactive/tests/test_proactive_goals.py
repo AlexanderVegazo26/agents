@@ -40,6 +40,59 @@ class ProactiveScanTest(unittest.TestCase):
         st["acked"].append("a")
         self.assertEqual(ps.pending(f, st), [])
 
+    def _write_state(self, obj):
+        with open(ps.STATE, "w") as f:
+            json.dump(obj, f)
+
+    def test_state_file_missing_keys_is_repaired_on_load(self):
+        # a hand-edited or older state file without "acked"/"delivered" made
+        # `ack`, `list` and `run` crash with KeyError
+        for raw in ({"delivered": {"x": 1.0}}, {"acked": ["y"]}, {}, [], "junk"):
+            self._write_state(raw)
+            st = ps.load_state()
+            self.assertIsInstance(st.get("delivered"), dict, f"state loaded from {raw!r}: delivered = {st.get('delivered')!r}")
+            self.assertIsInstance(st.get("acked"), list, f"state loaded from {raw!r}: acked = {st.get('acked')!r}")
+            ps.pending([{"id": "z", "severity": "info", "suggestion": "s"}], st)  # must not raise
+        self._write_state({"delivered": {"x": 1.0}})
+        self.assertEqual(ps.load_state()["delivered"], {"x": 1.0}, "existing delivered map should survive the repair")
+
+    def test_cli_ack_on_state_without_acked_key(self):
+        self._write_state({"delivered": {"disk-root-warn": 1.0}})
+        old = sys.argv
+        try:
+            sys.argv = ["proactive_scan.py", "ack", "disk-root-warn"]
+            self.assertEqual(ps.main(), 0, "ack should succeed on a state file lacking 'acked'")
+        finally:
+            sys.argv = old
+        with open(ps.STATE) as f:
+            saved = json.load(f)
+        self.assertEqual(saved.get("acked"), ["disk-root-warn"], f"saved state: {saved!r}")
+
+    def _disk_ids(self, used_pct):
+        class _St:
+            f_blocks = 1000
+            f_bfree = 1000 - used_pct * 10
+        orig = ps.os.statvfs
+        ps.os.statvfs = lambda _p: _St()
+        try:
+            return [f["id"] for f in ps.src_disk()]
+        finally:
+            ps.os.statvfs = orig
+
+    def test_disk_finding_id_is_stable_within_a_band(self):
+        # the id used to embed the integer percent, so 91% -> 92% re-alerted
+        # despite the 7-day TTL and an ack of the 91% finding silenced nothing
+        self.assertEqual(self._disk_ids(85), [], "85% is under the 90% threshold")
+        warn91, warn94 = self._disk_ids(91), self._disk_ids(94)
+        self.assertEqual(warn91, warn94, "91% and 94% are the same warn band: same ids, no re-alert")
+        st = ps.load_state()
+        f91 = [{"id": i, "severity": "warn", "suggestion": "s"} for i in warn91]
+        self.assertEqual(len(ps.pending(f91, st)), 2, "first scan delivers home + root")
+        f94 = [{"id": i, "severity": "warn", "suggestion": "s"} for i in warn94]
+        self.assertEqual(ps.pending(f94, st), [], "growth within the band must not re-alert inside the TTL")
+        action96 = self._disk_ids(96)
+        self.assertFalse(set(action96) & set(warn91), f"crossing into the action band should alert again: {warn91} vs {action96}")
+
     def test_git_source_on_temp_repo(self):
         d = os.path.join(self.tmp.name, "repo")
         subprocess.run(["git", "init", "-q", d], check=True)
