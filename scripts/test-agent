@@ -150,6 +150,9 @@ CHECKS: list[Check] = [
            "RSS 1.0 feeds gave no findings)."),
     _suite("hermes-proactive/tests/test_triggerd.py",
            "Seen red by accepting any webhook signature."),
+    _suite("hermes-proactive/tests/test_notify.py",
+           "hp.notify, the Telegram hand-off all three services share, with tg_send.py faked. "
+           "Seen red by ignoring tg_send's exit code (2 failures) and by dropping --chat (1)."),
     _suite("scripts/test_gitleaks_rules.py",
            "Every .gitleaks.toml rule fires and every allowlist excuses only its own rule on its "
            "own paths; skips without a gitleaks binary (CI's secrets job requires one). Seen red "

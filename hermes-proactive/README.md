@@ -97,6 +97,7 @@ tests/                 stdlib unittest smoke suites (no network, no secrets)
 python3 tests/test_condition_monitor.py   # local HTTP fixture server
 python3 tests/test_triggerd.py            # signed/unsigned webhook end-to-end
 python3 tests/test_proactive_goals.py
+python3 tests/test_notify.py              # Telegram hand-off, tg_send.py faked
 ```
 
 ## Security notes
