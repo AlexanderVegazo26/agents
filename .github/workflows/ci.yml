@@ -32,9 +32,10 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * 1' # weekly, Monday 07:00 UTC (no run on every push to main)
 
 # Read-only. Nothing in this workflow writes to the repository or comments on
 # a pull request; the test-report artifact is stored by the Actions service and
