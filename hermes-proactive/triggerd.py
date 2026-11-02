@@ -315,7 +315,7 @@ def main() -> int:
     try:
         cfg = load_config()
     except FileNotFoundError:
-        if args.cmd != "serve":
+        if args.cmd not in ("serve", "add-github", "add-generic"):
             print(f"no config at {CONFIG} — create one with add-github/add-generic", file=sys.stderr)
             return 1
         cfg = {"host": "127.0.0.1", "port": 8471, "rules": []}

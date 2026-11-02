@@ -147,5 +147,149 @@ class TriggerdTest(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class TriggerdCliTest(unittest.TestCase):
+    """The management CLI (add-*/list/remove/test) against a temp config.
+
+    triggerd.CONFIG and triggerd.LOG are module constants, so each test points
+    them at a fresh temp dir: the real ~/.hermes is never read or written.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cfg_path = os.path.join(tmp.name, "home", "triggers.json")
+        self.log_path = os.path.join(tmp.name, "home", "state", "triggerd.log")
+        self.tmp = tmp.name
+        for name, val in (("CONFIG", self.cfg_path), ("LOG", self.log_path)):
+            old = getattr(triggerd, name)
+            setattr(triggerd, name, val)
+            self.addCleanup(setattr, triggerd, name, old)
+
+    def run_cli(self, *argv, stdin: bytes | None = None):
+        """Run triggerd.main() with argv; return (exit code, stdout, stderr)."""
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        old_argv, old_stdin = sys.argv, sys.stdin
+        sys.argv = ["triggerd.py", *argv]
+        if stdin is not None:
+            sys.stdin = io.TextIOWrapper(io.BytesIO(stdin))
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = triggerd.main()
+        finally:
+            sys.argv, sys.stdin = old_argv, old_stdin
+        return code, out.getvalue(), err.getvalue()
+
+    def rules(self) -> list[dict]:
+        with open(self.cfg_path) as f:
+            return json.load(f)["rules"]
+
+    def payload_file(self, payload: dict) -> str:
+        p = os.path.join(self.tmp, "payload.json")
+        with open(p, "w") as f:
+            json.dump(payload, f)
+        return p
+
+    def add_github(self, rule_id="gh", *extra):
+        return self.run_cli("add-github", rule_id, "--job", "pr-reviewer",
+                            "--secret-env", "TRIGGER_SECRET_GH", *extra)
+
+    def test_add_github_creates_config_with_only_the_given_match_fields(self):
+        code, out, _ = self.add_github("gh", "--event", "issues", "--action", "opened",
+                                       "--repo", "o/r", "--json-path", "issue.title",
+                                       "--contains", "urgent")
+        self.assertEqual(code, 0)
+        self.assertIn("1 rules total", out)
+        self.assertEqual(self.rules(), [{
+            "id": "gh", "source": "github", "secret_env": "TRIGGER_SECRET_GH",
+            "match": {"event": "issues", "action": "opened", "repo": "o/r",
+                      "json_path": "issue.title", "contains": "urgent"},
+            "job": "pr-reviewer", "notify": True}])
+
+    def test_add_generic_with_command_and_no_notify(self):
+        code, _, _ = self.run_cli("add-generic", "gen", "--job", "e2e", "--secret-env", "S",
+                                  "--json-path", "status", "--equals", "failed",
+                                  "--command", "echo hi", "--no-notify")
+        self.assertEqual(code, 0)
+        rule = self.rules()[0]
+        self.assertEqual((rule["source"], rule["notify"], rule["command"]), ("generic", False, "echo hi"))
+        self.assertEqual(rule["match"], {"json_path": "status", "equals": "failed"})
+
+    def test_adding_an_existing_id_replaces_the_rule(self):
+        self.add_github("gh", "--event", "push")
+        code, out, _ = self.add_github("gh", "--event", "issues")
+        self.assertEqual(code, 0)
+        self.assertIn("1 rules total", out)
+        self.assertEqual([r["match"] for r in self.rules()], [{"event": "issues"}],
+                         "re-adding rule 'gh' should replace it, not append a second one")
+
+    def test_remove_reports_how_many_rules_went(self):
+        self.add_github("a")
+        self.add_github("b")
+        code, out, _ = self.run_cli("remove", "a")
+        self.assertEqual((code, out.strip()), (0, "removed 1 rule(s)"))
+        self.assertEqual([r["id"] for r in self.rules()], ["b"])
+        _, out, _ = self.run_cli("remove", "missing")
+        self.assertEqual(out.strip(), "removed 0 rule(s)")
+
+    def test_commands_other_than_serve_fail_clearly_without_a_config(self):
+        code, out, err = self.run_cli("list")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn(self.cfg_path, err)
+        self.assertIn("add-github/add-generic", err)
+        self.assertFalse(os.path.exists(self.cfg_path), "a failed list must not create the config")
+
+    def test_list_prints_rules_then_recent_deliveries(self):
+        self.add_github("gh", "--event", "push")
+        triggerd.log_event({"rule": "gh", "ok": True})
+        code, out, _ = self.run_cli("list")
+        self.assertEqual(code, 0)
+        rules_part, deliveries = out.split("--- recent deliveries ---\n")
+        self.assertEqual(json.loads(rules_part)[0]["id"], "gh")
+        self.assertEqual(json.loads(deliveries.strip())["rule"], "gh")
+
+    def test_list_without_a_delivery_log_still_works(self):
+        self.add_github("gh")
+        code, out, _ = self.run_cli("list")
+        self.assertEqual(code, 0)
+        self.assertTrue(out.endswith("--- recent deliveries ---\n"), out)
+
+    def test_test_matching_payload_dry_runs_without_dispatching(self):
+        self.run_cli("add-generic", "gen", "--job", "e2e", "--secret-env", "S",
+                     "--json-path", "status", "--equals", "failed", "--command", "touch NEVER")
+        p = self.payload_file({"status": "failed"})
+        code, out, _ = self.run_cli("test", "gen", p)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("match: True (matched)"), out)
+        result = json.loads(out.split("\n", 1)[1])
+        self.assertEqual((result["rule"], result["job"], result["dry_run"]), ("gen", "e2e", True))
+        self.assertNotIn("dispatch", result, "test must never run the hermes job")
+        self.assertNotIn("command", result, "test must never run the rule's shell command")
+
+    def test_test_non_matching_payload_exits_1_and_says_why(self):
+        self.run_cli("add-generic", "gen", "--job", "e2e", "--secret-env", "S",
+                     "--json-path", "status", "--equals", "failed")
+        code, out, _ = self.run_cli("test", "gen", self.payload_file({"status": "ok"}))
+        self.assertEqual(code, 1)
+        self.assertEqual(out.strip(), "match: False (status='ok' != 'failed')")
+
+    def test_test_reads_the_payload_from_stdin_and_honours_event(self):
+        self.add_github("gh", "--event", "push")
+        body = json.dumps({"ref": "x"}).encode()
+        code, out, _ = self.run_cli("test", "gh", "-", "--event", "push", stdin=body)
+        self.assertEqual(code, 0, out)
+        code, out, _ = self.run_cli("test", "gh", "-", "--event", "issues", stdin=body)
+        self.assertEqual(code, 1)
+        self.assertIn("event 'issues' != 'push'", out)
+
+    def test_test_unknown_rule_exits_1(self):
+        self.add_github("gh")
+        code, _, err = self.run_cli("test", "nope", self.payload_file({}))
+        self.assertEqual(code, 1)
+        self.assertIn("no rule 'nope'", err)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
