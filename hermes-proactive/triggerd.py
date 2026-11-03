@@ -43,7 +43,7 @@ Config: ~/.hermes/triggers.json
 
 CLI:
   serve [--host H] [--port P] [--once]    run the receiver (--once: handle one
-                                          request then exit — used by tests)
+                                          POST, whatever its outcome, then exit)
   list                                    show rules + recent deliveries
   add-github / add-generic ...            append a rule interactively/flag-wise
   remove <id> | test <id> <payload.json>  dry-run matching without dispatch
@@ -59,6 +59,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -212,6 +213,18 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(404, {"error": "not found"})
 
     def do_POST(self):
+        try:
+            self._handle_post()
+        finally:
+            if self.server.once:
+                # Single-request mode (tests): stop after the first delivery,
+                # whatever its outcome. This runs on a request thread, so it
+                # can't just raise SystemExit (that ends only this thread and
+                # serve_forever keeps going); shutdown() blocks until the serve
+                # loop exits, hence its own thread.
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def _handle_post(self):
         cfg, environ = self.server.cfg, self.server.environ
         parts = [p for p in self.path.split("/") if p]
         if len(parts) != 2 or parts[0] not in ("github", "hook"):
@@ -254,8 +267,6 @@ class Handler(BaseHTTPRequestHandler):
                          dry_run=self.server.dry_run)
         log_event({"rule": rule_id, "ok": result["ok"], "matched": True, "result": result})
         self._reply(200 if result["ok"] else 500, {"matched": True, **result})
-        if self.server.once:
-            raise SystemExit(0)  # single-request mode (tests)
 
 
 def serve(cfg: dict, *, host: str | None, port: int | None, once: bool = False,
@@ -267,7 +278,7 @@ def serve(cfg: dict, *, host: str | None, port: int | None, once: bool = False,
           f"({len(cfg['rules'])} rules)")
     try:
         srv.serve_forever()
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         pass
     finally:
         srv.server_close()
@@ -283,7 +294,7 @@ def main() -> int:
     s = sub.add_parser("serve")
     s.add_argument("--host", default=None)
     s.add_argument("--port", type=int, default=None)
-    s.add_argument("--once", action="store_true", help="handle one request then exit (tests)")
+    s.add_argument("--once", action="store_true", help="handle one POST, whatever its outcome, then exit (tests)")
 
     sub.add_parser("list")
 

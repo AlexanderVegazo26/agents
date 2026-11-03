@@ -291,5 +291,99 @@ class TriggerdCliTest(unittest.TestCase):
         self.assertIn("no rule 'nope'", err)
 
 
+class TriggerdServeOnceCliTest(unittest.TestCase):
+    """`triggerd.py --dry-run serve --once` as a real process.
+
+    HOME is a temp dir (triggerd reads ~/.hermes at import), a fake `hermes`
+    on PATH records cron dispatches, and the config asks for port 0 so the OS
+    picks a free one; the "listening on" line says which.
+    """
+
+    TIMEOUT = 15
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = tmp.name
+        hermes = os.path.join(self.home, ".hermes")
+        os.makedirs(os.path.join(hermes, "state"))
+        bindir = os.path.join(self.home, "bin")
+        os.makedirs(bindir)
+        self.calls = os.path.join(self.home, "calls.jsonl")
+        fake = os.path.join(bindir, "hermes")
+        with open(fake, "w") as f:
+            f.write(f"#!{sys.executable}\nimport json,sys\n"
+                    f"open({self.calls!r},'a').write(json.dumps(sys.argv[1:])+'\\n')\n")
+        os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC)
+        with open(os.path.join(hermes, "triggers.json"), "w") as f:
+            json.dump({"host": "127.0.0.1", "port": 0, "rules": [
+                {"id": "gen", "source": "generic", "secret_env": "TRIGGER_SECRET_DEPLOY",
+                 "match": {"json_path": "status", "equals": "failed"},
+                 "job": "e2e-smoke-run", "notify": True}]}, f)
+        with open(os.path.join(hermes, ".env"), "w") as f:
+            f.write(f"TRIGGER_SECRET_DEPLOY={SECRET}\n")
+        self.log = os.path.join(hermes, "state", "triggerd.log")
+        self.env = {"HOME": self.home, "PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
+                    "PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+
+    def start(self):
+        import subprocess
+        script = os.path.join(os.path.dirname(HERE), "triggerd.py")
+        proc = subprocess.Popen([sys.executable, script, "--dry-run", "serve", "--once"],
+                                env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True)
+        self.addCleanup(lambda: proc.poll() is None and (proc.kill(), proc.wait()))
+        line = proc.stdout.readline()
+        self.assertIn("triggerd listening on http://127.0.0.1:", line,
+                      f"serve should announce its address first; stderr: {proc.stderr.read() if not line else ''}")
+        port = int(line.split("http://127.0.0.1:", 1)[1].split()[0])
+        return proc, port
+
+    def post(self, port, body: bytes, sig: str):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=self.TIMEOUT)
+        conn.request("POST", "/hook/gen", body=body,
+                     headers={"content-type": "application/json", "x-trigger-signature": sig})
+        r = conn.getresponse()
+        data = json.loads(r.read().decode())
+        conn.close()
+        return r.status, data
+
+    def wait_exit(self, proc) -> tuple[int, str]:
+        import subprocess
+        try:
+            out, err = proc.communicate(timeout=self.TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+            self.fail(f"serve --once still running {self.TIMEOUT}s after its one request "
+                      f"(it must exit); stdout={out!r} stderr={err!r}")
+        self.assertEqual(proc.returncode, 0, f"serve --once exit code; stderr={err!r}")
+        return out, err
+
+    def test_once_dispatches_the_matching_delivery_then_exits(self):
+        proc, port = self.start()
+        body = json.dumps({"status": "failed", "issue": {"title": "deploy 42 failed"}}).encode()
+        status, data = self.post(port, body, sign(body))
+        self.assertEqual((status, data.get("matched"), data.get("ok")), (200, True, True),
+                         f"signed matching delivery, secret from ~/.hermes/.env; reply={data}")
+        out, _ = self.wait_exit(proc)
+        self.assertEqual(read_lines(self.calls), ['["cron", "run", "e2e-smoke-run"]'],
+                         "the rule's job should be fired once through `hermes cron run`")
+        self.assertIn("[dry-run] 🔔 trigger gen: deploy 42 failed -> job e2e-smoke-run", out,
+                      "--dry-run should reach the notifier (printed, not sent)")
+        recs = [json.loads(l) for l in read_lines(self.log)]
+        self.assertEqual([("startup" in r, r.get("rule"), r.get("matched")) for r in recs],
+                         [(True, None, None), (False, "gen", True)],
+                         f"log should hold the startup record then the delivery; log={recs}")
+
+    def test_once_also_exits_after_a_rejected_delivery(self):
+        proc, port = self.start()
+        body = b'{"status": "failed"}'
+        status, data = self.post(port, body, sign(body, "wrong-secret"))
+        self.assertEqual(status, 403, f"bad signature should be refused; reply={data}")
+        self.wait_exit(proc)
+        self.assertFalse(os.path.exists(self.calls), "a refused delivery must not dispatch")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
