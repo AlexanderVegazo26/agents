@@ -147,7 +147,8 @@ CHECKS: list[Check] = [
            "Seen red by never finding a price."),
     _suite("hermes-proactive/tests/test_proactive_goals.py",
            "Seen red by zeroing goal progress, and by reading only RSS 2.0 <item> (Atom and "
-           "RSS 1.0 feeds gave no findings)."),
+           "RSS 1.0 feeds gave no findings), and by reverting the CLI fixes (`test <source>` "
+           "scanned one source per letter of its name; add-feed stored a URL twice)."),
     _suite("hermes-proactive/tests/test_triggerd.py",
            "Seen red by accepting any webhook signature."),
     _suite("hermes-proactive/tests/test_notify.py",

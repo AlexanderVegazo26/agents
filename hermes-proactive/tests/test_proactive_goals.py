@@ -156,6 +156,121 @@ class ProactiveScanTest(unittest.TestCase):
         self.assertTrue(found[0]["id"].startswith("rss-dead-"), found[0]["id"])
 
 
+class ProactiveScanCliTest(unittest.TestCase):
+    """The `run`/`list`/`ack`/`add-feed`/`test` CLI, with fake sources (no git, disk, network)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._saved = (ps.STATE, ps.FEEDS, dict(ps.SOURCES), ps.send_message)
+        ps.STATE = os.path.join(self.tmp.name, "state", "proactive_state.json")
+        ps.FEEDS = os.path.join(self.tmp.name, "hermes", "feeds.json")
+        self.findings = {
+            "git": [{"id": "git-dirty-a", "severity": "info", "source": "git", "suggestion": "a: dirty"}],
+            "disk": [{"id": "disk-root-action", "severity": "action", "source": "disk",
+                      "suggestion": "/: 97% full", "detail": "du -sh /var"}],
+        }
+        ps.SOURCES.clear()
+        ps.SOURCES.update({n: (lambda n=n: list(self.findings[n])) for n in self.findings})
+        self.sent = []
+        ps.send_message = lambda text, **kw: self.sent.append((text, kw)) or True
+
+    def tearDown(self):
+        ps.STATE, ps.FEEDS, sources, ps.send_message = self._saved
+        ps.SOURCES.clear()
+        ps.SOURCES.update(sources)
+        self.tmp.cleanup()
+
+    def cli(self, *argv):
+        import contextlib
+        import io
+        out = io.StringIO()
+        old = sys.argv
+        try:
+            sys.argv = ["proactive_scan.py", *argv]
+            with contextlib.redirect_stdout(out):
+                rc = ps.main()
+        finally:
+            sys.argv = old
+        return rc, out.getvalue()
+
+    def saved_state(self):
+        with open(ps.STATE) as f:
+            return json.load(f)
+
+    def test_run_prints_new_findings_most_severe_first_then_nothing_new(self):
+        rc, out = self.cli("run")
+        self.assertEqual(rc, 0, out)
+        lines = out.splitlines()
+        self.assertEqual(lines, ["[ACTION] /: 97% full", "    du -sh /var", "[INFO  ] a: dirty"],
+                         f"run output should list action before info, with detail indented:\n{out}")
+        self.assertEqual(set(self.saved_state()["delivered"]), {"git-dirty-a", "disk-root-action"},
+                         "both findings should be recorded as delivered")
+        rc, out = self.cli("run")
+        self.assertEqual((rc, out.strip()), (0, "no new findings"), "an immediate re-run must not re-alert")
+        self.assertEqual(self.sent, [], "run without --notify must not send anything")
+
+    def test_run_source_filter_scans_only_that_source(self):
+        rc, out = self.cli("run", "--source", "git")
+        self.assertEqual((rc, out.strip()), (0, "[INFO  ] a: dirty"), f"--source git output:\n{out}")
+        self.assertEqual(list(self.saved_state()["delivered"]), ["git-dirty-a"])
+
+    def test_failing_source_becomes_a_warning_finding(self):
+        def boom():
+            raise RuntimeError("gh not logged in")
+        ps.SOURCES["github"] = boom
+        rc, out = self.cli("run", "--source", "github")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.strip(), "[WARN  ] source github errored: gh not logged in",
+                         "a crashing source should surface as a warn finding, not kill the scan")
+
+    def test_notify_sends_one_message_and_honours_dry_run(self):
+        rc, out = self.cli("--dry-run", "run", "--notify")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(self.sent), 1, f"--notify should send exactly one message; sent {self.sent}")
+        text, kw = self.sent[0]
+        self.assertTrue(text.startswith("🧭 proactive scan — 2 new finding(s):\n[ACTION] /: 97% full"), text)
+        self.assertEqual(kw, {"dry_run": True}, "--dry-run must reach send_message")
+        self.cli("run", "--notify")
+        self.assertEqual(len(self.sent), 1, "nothing new -> no second message")
+
+    def test_ack_silences_a_finding_and_list_marks_it(self):
+        self.cli("run")
+        rc, out = self.cli("ack", "git-dirty-a")
+        self.assertEqual((rc, out.strip()), (0, "acked 'git-dirty-a'"))
+        self.cli("ack", "git-dirty-a")
+        self.assertEqual(self.saved_state()["acked"], ["git-dirty-a"], "acking twice must not duplicate the id")
+        rc, out = self.cli("list")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.splitlines()[1:], ["  [active] disk-root-action", "  [ACKED ] git-dirty-a"],
+                         f"list output:\n{out}")
+        # age every delivery past the 7-day TTL and rescan: only the un-acked one re-alerts
+        st = self.saved_state()
+        st["delivered"] = {k: v - 8 * 86400 for k, v in st["delivered"].items()}
+        with open(ps.STATE, "w") as f:
+            json.dump(st, f)
+        rc, out = self.cli("run")
+        self.assertNotIn("a: dirty", out, "an acked finding must stay silent after the TTL")
+        self.assertIn("/: 97% full", out, "an un-acked finding re-alerts after the TTL")
+
+    def test_test_dumps_raw_findings_without_touching_state(self):
+        rc, out = self.cli("test", "disk")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(out), self.findings["disk"], "test should print the source's raw findings")
+        self.assertFalse(os.path.exists(ps.STATE), "test must not write the state file")
+
+    def test_add_feed_creates_the_file_and_ignores_a_duplicate_url(self):
+        rc, out = self.cli("add-feed", "https://ex.test/rss", "--name", "Ex")
+        self.assertEqual((rc, out.strip()), (0, "feed added (1 total)"), "add-feed must create a missing parent dir")
+        self.cli("add-feed", "https://ex.test/atom")
+        rc, out = self.cli("add-feed", "https://ex.test/rss", "--name", "Again")
+        self.assertEqual((rc, out.strip()), (0, "feed already registered (2 total)"), out)
+        with open(ps.FEEDS) as f:
+            feeds = json.load(f)
+        self.assertEqual(feeds, [{"url": "https://ex.test/rss", "name": "Ex"},
+                                 {"url": "https://ex.test/atom", "name": "https://ex.test/atom"}],
+                         "a re-added URL must not be stored twice; name defaults to the URL")
+
+
 class GoalsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -170,13 +170,15 @@ def src_rss(state: dict) -> list[dict]:
     out = []
     feeds = []
     if os.path.exists(FEEDS):
-        feeds = json.load(open(FEEDS))
+        with open(FEEDS) as f:
+            feeds = json.load(f)
     seen = state.setdefault("rss_seen", {})
     now = time.time()
     for feed in feeds:
         try:
             req = urllib.request.Request(feed["url"], headers={"User-Agent": "hermes-proactive/0.1"})
-            root = ET.fromstring(urllib.request.urlopen(req, timeout=20).read(500_000))  # noqa: S310
+            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
+                root = ET.fromstring(resp.read(500_000))
         except Exception:  # noqa: BLE001 - a dead feed shouldn't kill the scan
             out.append({"id": f"rss-dead-{hashlib_md5(feed['url'])}", "severity": "warn",
                         "source": "rss", "suggestion": f"RSS feed unreachable: {feed.get('name') or feed['url']}"})
@@ -282,8 +284,15 @@ def main() -> int:
     st = load_state()
 
     if args.cmd == "add-feed":
-        feeds = json.load(open(FEEDS)) if os.path.exists(FEEDS) else []
+        feeds = []
+        if os.path.exists(FEEDS):
+            with open(FEEDS) as f:
+                feeds = json.load(f)
+        if any(fd.get("url") == args.url for fd in feeds):
+            print(f"feed already registered ({len(feeds)} total)")
+            return 0
         feeds.append({"url": args.url, "name": args.name or args.url})
+        os.makedirs(os.path.dirname(FEEDS), exist_ok=True)
         with open(FEEDS, "w") as f:
             json.dump(feeds, f, indent=1)
         print(f"feed added ({len(feeds)} total)")
@@ -305,7 +314,8 @@ def main() -> int:
                 print(f"  [{mark}] {i}")
             return 0
 
-        names = args.source or sorted(SOURCES)
+        # `test` takes one positional source; `run --source` is an append list
+        names = [args.source] if args.cmd == "test" else (args.source or sorted(SOURCES))
         findings = []
         for n in names:
             try:
