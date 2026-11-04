@@ -233,6 +233,18 @@ class ProactiveScanCliTest(unittest.TestCase):
         self.cli("run", "--notify")
         self.assertEqual(len(self.sent), 1, "nothing new -> no second message")
 
+    def test_dry_run_is_accepted_after_the_subcommand_too(self):
+        rc, out = self.cli("run", "--notify", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([kw for _, kw in self.sent], [{"dry_run": True}],
+                         f"`run --notify --dry-run` must send once, as a dry run; sent {self.sent}")
+        st = self.saved_state()
+        st["delivered"] = {}
+        with open(ps.STATE, "w") as f:
+            json.dump(st, f)
+        self.cli("run", "--notify")
+        self.assertEqual(self.sent[-1][1], {"dry_run": False}, "without --dry-run the message is really sent")
+
     def test_ack_silences_a_finding_and_list_marks_it(self):
         self.cli("run")
         rc, out = self.cli("ack", "git-dirty-a")

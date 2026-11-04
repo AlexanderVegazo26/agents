@@ -174,6 +174,28 @@ class MonitorTest(unittest.TestCase):
         names = [x["name"] for x in cm.list_watches()]
         self.assertIn("x", names)
 
+    def test_dry_run_reaches_run_watch_before_or_after_the_subcommand(self):
+        import contextlib
+        import io
+        with open(os.path.join(cm.WATCH_DIR, "x.json"), "w") as f:
+            json.dump(self.watch("x", "/text", "changed"), f)
+        calls = []
+        old_run = cm.run_watch
+        cm.run_watch = lambda w, **kw: calls.append((w["name"], kw)) and None
+        self.addCleanup(setattr, cm, "run_watch", old_run)
+        cases = (["--dry-run", "run-all", "--notify"], ["run-all", "--notify", "--dry-run"],
+                 ["check", "x", "--notify", "--dry-run"], ["run-all", "--notify"])
+        for argv in cases:
+            old_argv, sys.argv = sys.argv, ["condition_monitor.py", *argv]
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    rc = cm.main()
+            finally:
+                sys.argv = old_argv
+            self.assertEqual(rc, 0, f"{argv} exit code")
+        self.assertEqual([kw["dry_run"] for _, kw in calls], [True, True, True, False],
+                         f"dry_run passed to run_watch() for {cases}; calls={calls}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -321,6 +321,12 @@ def main() -> int:
     t.add_argument("payload", help="path to JSON payload file (use '-' for stdin)")
     t.add_argument("--event", default=None, help="X-GitHub-Event value to simulate")
 
+    # --dry-run also works after the subcommand (`serve --dry-run`); SUPPRESS keeps
+    # a --dry-run given before the subcommand from being reset to False.
+    for p in sub.choices.values():
+        p.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,
+                       help="match and log deliveries without dispatching jobs")
+
     args = ap.parse_args()
 
     try:

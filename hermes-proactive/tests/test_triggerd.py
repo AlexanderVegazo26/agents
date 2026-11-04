@@ -268,6 +268,17 @@ class TriggerdCliTest(unittest.TestCase):
         self.assertNotIn("dispatch", result, "test must never run the hermes job")
         self.assertNotIn("command", result, "test must never run the rule's shell command")
 
+    def test_dry_run_reaches_serve_before_or_after_the_subcommand(self):
+        calls = []
+        old = triggerd.serve
+        triggerd.serve = lambda cfg, **kw: calls.append(kw)
+        self.addCleanup(setattr, triggerd, "serve", old)
+        for argv in (["--dry-run", "serve", "--once"], ["serve", "--once", "--dry-run"], ["serve", "--once"]):
+            code, out, err = self.run_cli(*argv)
+            self.assertEqual(code, 0, f"{argv}: {out}{err}")
+        self.assertEqual([kw["dry_run"] for kw in calls], [True, True, False],
+                         f"dry_run passed to serve() for each argv; calls={calls}")
+
     def test_test_non_matching_payload_exits_1_and_says_why(self):
         self.run_cli("add-generic", "gen", "--job", "e2e", "--secret-env", "S",
                      "--json-path", "status", "--equals", "failed")

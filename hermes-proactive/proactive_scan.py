@@ -23,7 +23,7 @@ on every scan — that recurring nudge loop is the point.
 
 CLI:
   run [--notify] [--source S]...    scan + print/emit new findings
-  list                              pending (un-acked) findings
+  list                              known finding ids (acked ones marked)
   ack <finding-id>                  silence permanently
   add-feed <url> [--name N]         register an RSS source
   test <source>                     dump raw findings, no state changes
@@ -279,6 +279,12 @@ def main() -> int:
     af.add_argument("--name", default=None)
     t = sub.add_parser("test")
     t.add_argument("source", choices=sorted(SOURCES))
+
+    # --dry-run also works after the subcommand (`run --notify --dry-run`); SUPPRESS keeps
+    # a --dry-run given before the subcommand from being reset to False.
+    for p in sub.choices.values():
+        p.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,
+                       help="print the notification instead of sending it")
 
     args = ap.parse_args()
     st = load_state()

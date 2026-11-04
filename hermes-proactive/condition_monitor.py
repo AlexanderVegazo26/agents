@@ -342,6 +342,12 @@ def main() -> int:
     ra.add_argument("--notify", action="store_true")
     ra.add_argument("--mode", choices=("state", "transitions"), default="transitions")
 
+    # --dry-run also works after the subcommand (`run-all --notify --dry-run`); SUPPRESS keeps
+    # a --dry-run given before the subcommand from being reset to False.
+    for p in sub.choices.values():
+        p.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,
+                       help="print instead of sending Telegram")
+
     args = ap.parse_args()
     os.makedirs(WATCH_DIR, exist_ok=True)
 
