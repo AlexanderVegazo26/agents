@@ -192,10 +192,17 @@ function buildBrief({ manifests = [], lens, criteria = '', budget }) {
     const room = Math.max(0, cap - head.length - marker.length - 400)
     body = clamp(body, room)
     truncated = true
+    // The omitted list stays capped here too. Joined uncapped, 400 changed files
+    // made this marker larger than a 16k budget on its own: the post-condition
+    // below then clamped EVERY builder summary to nothing and still returned an
+    // over-budget brief holding only the file list — the one thing a lens can
+    // recover with Glob, kept in place of the reasoning it cannot recover.
     marker =
       `\n\n[TRUNCATED: this brief exceeded its ${cap}-character budget and the ` +
       `builder summaries were cut mid-text.\n` +
-      (omitted.length ? ` Omitted files: ${omitted.join(', ')}\n` : '') +
+      (omitted.length
+        ? ` Omitted files (${omitted.length}): ${joinCapped(omitted, Math.floor(cap * 0.25))}\n`
+        : '') +
       ` You are seeing a PARTIAL account of the implementation. Read the changed ` +
       `files directly before concluding, and state in your verdict that your brief ` +
       `was truncated.]`

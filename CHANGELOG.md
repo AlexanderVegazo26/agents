@@ -40,6 +40,16 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 - Found while testing: FFmpeg 9.0.2 has no `-filter_complex_script`; the form is
   `-/filter_complex <file>`. `motion-graphics`'s reference still names the old option.
 
+### Fixed
+
+- **Workflow briefs (`_brief.js`) stay within budget when the file list is long.** When
+  the summaries still overran after the file lists were dropped, the second truncation
+  marker joined every omitted path uncapped. With 12 builders and 396 files, the
+  `performance` brief came back at 21,108 characters against a 16,000 budget, with every
+  builder summary clamped away and only the paths left. The marker now caps the list
+  like the first one does (`Omitted files (N): …and K more`), so the summaries survive
+  and `overBudget` stays false.
+
 ## [2.0.0] — 2026-09-29
 
 The suite runs under Codex on a local Qwen3.8-27B, and gains a local

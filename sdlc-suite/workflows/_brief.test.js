@@ -177,6 +177,28 @@ test('the file list is dropped BEFORE any summary is cut', () => {
   assert.ok(r.text.includes('x'.repeat(1_000)), 'the whole summary survived the file-list drop')
 })
 
+test('many builders with many files still fit, and every builder keeps its summary', () => {
+  // 12 builders x 33 files: the file list alone is ~20k characters. Before the
+  // step-2 marker capped it, this returned 21,108 chars against the 16,000
+  // performance budget with every summary clamped away and only paths left.
+  const ms = Array.from({ length: 12 }, (_, i) => ({
+    label: `builder-${i}`,
+    summary: `summary-of-builder-${i} ` + 'x'.repeat(1_900),
+    filesChanged: Array.from({ length: 33 }, (_, j) => ({
+      path: `src/module_${i}/very/deep/path/component_file_${j}.ts`, role: 'implementation',
+    })),
+    criteriaAddressed: ['AC-1'],
+  }))
+  const r = b.buildBrief({ manifests: ms, lens: 'performance', criteria: 'AC-1 thing' })
+  assert.ok(r.chars <= 16_000, `12 builders / 396 files: ${r.chars} chars > 16000 budget`)
+  assert.strictEqual(r.overBudget, false, 'the cap is satisfiable, so overBudget must be false')
+  assert.strictEqual(r.truncated, true)
+  assert.strictEqual(r.omittedFiles.length, 396)
+  assert.ok(r.text.includes('Omitted files (396)'), 'the marker must still count the omitted files')
+  assert.ok(r.text.includes('summary-of-builder-0'),
+    'the first builder summary must survive; the brief held only paths')
+})
+
 test('omitted files are named individually, not counted', () => {
   const m = manifest('backend', 60, 500)
   const r = b.buildBrief({ manifests: [m], lens: 'performance' })
