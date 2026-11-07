@@ -200,6 +200,13 @@ function buildBrief({ manifests = [], lens, criteria = '', budget }) {
     marker =
       `\n\n[TRUNCATED: this brief exceeded its ${cap}-character budget and the ` +
       `builder summaries were cut mid-text.\n` +
+      // Keep step 1's per-builder note. Rebuilding the marker used to drop it,
+      // so a builder whose summary hit SUMMARY_CAP — and whose label was then
+      // clamped out of the body — was named nowhere in the brief.
+      (clamped.length
+        ? ` Over the ${SUMMARY_CAP}-character per-builder summary cap, cut first: ` +
+          `${joinCapped(clamped, Math.floor(cap * 0.05))}\n`
+        : '') +
       (omitted.length
         ? ` Omitted files (${omitted.length}): ${joinCapped(omitted, Math.floor(cap * 0.25))}\n`
         : '') +

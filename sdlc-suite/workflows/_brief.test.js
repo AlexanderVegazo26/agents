@@ -253,4 +253,69 @@ test('the build manifest schema forbids extra keys and caps the summary', () => 
   assert.deepStrictEqual(s.required, ['summary', 'filesChanged', 'criteriaAddressed'])
 })
 
+console.log('\nproperties — seeded random manifests (deterministic: same seed, same cases)')
+
+// mulberry32: tiny seeded PRNG, so a failure names a seed + case that reproduces.
+function rng(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+test('buildBrief holds its contract over 400 seeded random build phases', () => {
+  const SEED = 20261107
+  const r = rng(SEED)
+  const pick = a => a[Math.floor(r() * a.length)]
+  const lenses = [...Object.keys(b.LENS_BUDGETS), 'unknown-lens']
+  for (let i = 0; i < 400; i++) {
+    const nBuilders = Math.floor(r() * 6)
+    const manifests = Array.from({ length: nBuilders }, (_, k) => ({
+      label: `builder-${k}`,
+      summary: 'x'.repeat(pick([0, 50, 1_999, 2_000, 2_001, 9_000, 60_000])),
+      diffRef: r() < 0.8 ? `HEAD~${k + 1}..HEAD` : undefined,
+      filesChanged: Array.from({ length: pick([0, 1, 7, 60, 400, 1500]) },
+        (_, j) => ({ path: `src/b${k}/mod-${j}.ts`, role: 'implementation' })),
+      criteriaAddressed: ['AC-1'],
+    }))
+    const criteria = 'c'.repeat(pick([0, 20, 900, 5_000, 40_000]))
+    const lens = pick(lenses)
+    const budget = r() < 0.25 ? pick([0, 1, 300, 4_000, 100_000]) : undefined
+    const out = b.buildBrief({ manifests, lens, criteria, budget })
+    const ctx = `seed ${SEED} case ${i}: ${nBuilders} builders, lens ${lens}, budget ${budget}, ` +
+      `criteria ${criteria.length} chars -> ${out.chars} chars`
+    const cap = budget ?? b.LENS_BUDGETS[lens] ?? b.DEFAULT_BUDGET
+
+    assert.strictEqual(out.budget, cap, `${ctx}: budget reported ${out.budget}, expected ${cap}`)
+    assert.strictEqual(out.chars, out.text.length, `${ctx}: chars ${out.chars} != text.length`)
+    assert.ok(out.chars <= cap || out.overBudget,
+      `${ctx}: over the ${cap} cap without overBudget`)
+    if (criteria) assert.ok(out.text.includes(criteria), `${ctx}: acceptance criteria were cut`)
+    assert.strictEqual(out.text.includes('[TRUNCATED'), out.truncated,
+      `${ctx}: marker present=${out.text.includes('[TRUNCATED')} but truncated=${out.truncated}`)
+    if (out.omittedFiles.length) {
+      assert.ok(out.text.includes(`(${out.omittedFiles.length})`),
+        `${ctx}: ${out.omittedFiles.length} files omitted but the marker does not count them`)
+    }
+    for (const m of manifests) {
+      if (m.summary.length > b.SUMMARY_CAP) {
+        assert.ok(out.truncated, `${ctx}: ${m.label} summary > cap but truncated=false`)
+        if (!out.overBudget) {
+          assert.ok(out.text.includes(m.label),
+            `${ctx}: ${m.label}'s ${m.summary.length}-char summary was clamped but no part of the ` +
+            'brief names it (step-2 marker dropped the step-1 clamp note)')
+        }
+      }
+      if (!out.truncated) {
+        assert.ok(out.text.includes(`### ${m.label}`), `${ctx}: ${m.label} missing from an untruncated brief`)
+        for (const f of m.filesChanged) {
+          assert.ok(out.text.includes(f.path), `${ctx}: ${f.path} missing from an untruncated brief`)
+        }
+      }
+    }
+  }
+})
+
 console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)
