@@ -16,9 +16,12 @@ const f = require('./_failure.js')
 
 let passed = 0
 function test(name, fn) {
-  const r = fn()
   const done = () => { passed++; console.log(`  pass  ${name}`) }
   const fail = e => { console.error(`  FAIL  ${name}\n        ${e.message}`); process.exitCode = 1 }
+  // A synchronous throw is a failure of THIS test: before, it escaped main() and
+  // ended the file with no FAIL line, skipping every later test.
+  let r
+  try { r = fn() } catch (e) { return fail(e) }
   if (r && typeof r.then === 'function') return r.then(done, fail)
   try { done() } catch (e) { fail(e) }
 }
@@ -370,6 +373,86 @@ async function main() {
           `seed ${SEED} run ${run}: breaker state for ${phase} differs from the model`)
       }
     }
+  })
+
+  await test('classify() follows the class precedence over 1000 seeded random mixes — AUTH always beats TRANSIENT', () => {
+    const SEED = 20261109
+    const r = rng(SEED)
+    const pick = a => a[Math.floor(r() * a.length)]
+    // The model's own precedence and corpus (not f's PATTERNS), so a reordered or
+    // narrowed pattern shows up as a red case. LOGIC is never inferred from text.
+    const PRECEDENCE = [f.Failure.AUTH, f.Failure.ENV_DRIFT, f.Failure.BAD_INPUT,
+      f.Failure.TRANSIENT, f.Failure.TOOL]
+    const TOKENS = {
+      [f.Failure.AUTH]: ['HTTP 401 Unauthorized', 'status 403', 'Forbidden', 'invalid api key',
+        'INVALID_API_KEY', 'unauthenticated MCP server', 'not logged in', 'authentication failed',
+        'token expired', 'permission denied'],
+      [f.Failure.ENV_DRIFT]: ['fatal: not a git repository', 'no such file or directory: .claude/agents',
+        'missing scaffold', 'version mismatch', 'pi requires node version 26', 'ENOTDIR',
+        'cwd /tmp/run-x does not exist'],
+      [f.Failure.BAD_INPUT]: ['Unexpected token o in JSON', 'output did not conform', 'schema check',
+        'not valid JSON', 'json parse error', 'failed to parse reply', 'validation failed',
+        'missing required field: id'],
+      [f.Failure.TRANSIENT]: ['HTTP 429', 'upstream returned 503', 'rate limit exceeded',
+        'Too Many Requests', 'ETIMEDOUT', 'ECONNRESET', 'connect ECONNREFUSED 127.0.0.1:8080',
+        'getaddrinfo EAI_AGAIN', 'socket hang up', 'network error', 'service temporarily unavailable',
+        'model overloaded', 'request timed out'],
+      // Not 'Permission denied (publickey)': it also reads as AUTH's 'permission denied'.
+      [f.Failure.TOOL]: ['spawn kimi ENOENT', 'kimi: command not found', "'cmdc' is not recognized",
+        'open x.txt: no such file or directory', 'process exited with code 2', 'Cannot find module ./x'],
+    }
+    const FILLER = ['while running the phase', 'stderr follows', 'attempt finished', '[sdlc]',
+      'see failures.jsonl', 'kimi -p', 'agent build-2']
+    const SEPS = [' ', ': ', '\n', ' | ', '; ']
+    const recase = s => pick([x => x, x => x.toUpperCase(), x => x.toLowerCase()])(s)
+
+    // Corpus sanity: each token alone is its own class, each filler alone is the fallback.
+    for (const cls of PRECEDENCE) {
+      for (const tok of TOKENS[cls]) {
+        assert.strictEqual(f.classify({ stderr: tok }), cls, `corpus token "${tok}" alone should be ${cls}`)
+      }
+    }
+    for (const w of FILLER) {
+      assert.strictEqual(f.classify({ stderr: w }), f.Failure.TOOL, `filler "${w}" alone should fall back to tool`)
+    }
+
+    let authVsTransient = 0
+    for (let run = 0; run < 1000; run++) {
+      const present = PRECEDENCE.filter(() => r() < 0.35)
+      const pieces = []
+      for (const cls of present) {
+        const n = 1 + Math.floor(r() * 2)
+        for (let i = 0; i < n; i++) pieces.push(recase(pick(TOKENS[cls])))
+      }
+      const nFill = Math.floor(r() * 4)
+      for (let i = 0; i < nFill; i++) pieces.push(pick(FILLER))
+      // Shuffle (Fisher-Yates) so position never decides the class.
+      for (let i = pieces.length - 1; i > 0; i--) {
+        const j = Math.floor(r() * (i + 1));
+        [pieces[i], pieces[j]] = [pieces[j], pieces[i]]
+      }
+      // Spread the pieces over the three text fields the boundary may fill.
+      const fields = { message: [], stderr: [], stdout: [] }
+      for (const p of pieces) fields[pick(Object.keys(fields))].push(p)
+      const info = {}
+      for (const [k, v] of Object.entries(fields)) {
+        if (v.length) info[k] = v.reduce((acc, p) => acc + pick(SEPS) + p)
+      }
+      info.code = pick([undefined, 0, 1, 2, 127])
+      if (r() < 0.15) info.timedOut = true
+
+      const expected = info.timedOut ? f.Failure.TRANSIENT
+        : PRECEDENCE.find(c => present.includes(c)) || f.Failure.TOOL
+      if (!info.timedOut && present.includes(f.Failure.AUTH) && present.includes(f.Failure.TRANSIENT)) {
+        authVsTransient++
+      }
+      const got = f.classify(info)
+      assert.strictEqual(got, expected,
+        `seed ${SEED} run ${run}: classify(${JSON.stringify(info)}) = ${got}, expected ${expected} ` +
+        `(classes present: [${present.join(', ')}]${info.timedOut ? ', timedOut' : ''})`)
+    }
+    assert.ok(authVsTransient >= 50,
+      `seed ${SEED}: only ${authVsTransient} runs mixed AUTH with TRANSIENT text; the property needs >= 50`)
   })
 
   console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)
