@@ -306,7 +306,12 @@ function gateTableForPrompt(resolved) {
 // that is the last thing in a phase output is never terminated and never
 // captured. That is precisely the disappearing-gate failure this reducer exists
 // to prevent, and it was caught by the fault injection rather than by review.
-const BLOCKED_RE = /^[ \t]*BLOCKED[ \t]*[—–-][ \t]*([\w.]+)[ \t]*$([\s\S]*?)(?=^\S|(?![\s\S]))/gmi
+//
+// An entry also ends at the next BLOCKED header, indented or not. The header may
+// be indented (agents indent whole blocks), and an indented header used to read
+// as a continuation line of the entry before it: that gate vanished and its
+// `Action withheld` overwrote the previous entry's.
+const BLOCKED_RE = /^[ \t]*BLOCKED[ \t]*[—–-][ \t]*([\w.]+)[ \t]*$([\s\S]*?)(?=^\S|^[ \t]*BLOCKED[ \t]*[—–-][ \t]*[\w.]+[ \t]*$|(?![\s\S]))/gmi
 
 const FIELD_MAP = {
   'action withheld': 'actionWithheld',
@@ -316,10 +321,16 @@ const FIELD_MAP = {
   'authorize by': 'authorizeBy',
 }
 
+// CRLF (and a lone CR) are line breaks like LF. Without this a Windows agent's
+// entry kept its gate but lost every field: `(.*)$` stops at the `\r` and never
+// reaches the end, so `actionWithheld` vanished, and with it the dedupe key, so
+// two distinct withheld deploys collapsed into one bare `{ gate }`.
+const toLf = text => String(text).replace(/\r\n?/g, '\n')
+
 function parseFields(block) {
   const out = {}
   let current = null
-  for (const line of String(block).split('\n')) {
+  for (const line of toLf(block).split('\n')) {
     const m = line.match(/^[ \t]+([A-Za-z ]+?):[ \t]*(.*)$/)
     if (m && FIELD_MAP[m[1].trim().toLowerCase()]) {
       current = FIELD_MAP[m[1].trim().toLowerCase()]
@@ -363,7 +374,8 @@ function collectBlockedGates(phaseOutputs) {
   const seen = new Set()
   const texts = []
   for (const output of phaseOutputs || []) stringsIn(output, texts)
-  for (const text of texts) {
+  for (const raw of texts) {
+    const text = toLf(raw)
     BLOCKED_RE.lastIndex = 0
     let m
     while ((m = BLOCKED_RE.exec(text)) !== null) {

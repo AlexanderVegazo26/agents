@@ -268,4 +268,110 @@ test('a non-string phase output (an object result) is still scanned', () => {
   assert.strictEqual(got[0].gate, 'act.grantAccess')
 })
 
+test('CRLF entries keep their fields, and two distinct CRLF deploys stay two gates', () => {
+  // A Windows agent (or a CLI that writes CRLF) produced `{ gate }` with every
+  // field dropped: `(.*)$` in parseFields stopped at the `\r`. With
+  // actionWithheld gone the dedupe key collapsed two distinct deploys into one.
+  const entry = a => `BLOCKED — act.deploy\r\n  Action withheld: ${a}\r\n  Why gated:       prod\r\n`
+  const got = p.collectBlockedGates([entry('ship api'), entry('ship web')])
+  assert.deepStrictEqual(got, [
+    { gate: 'act.deploy', actionWithheld: 'ship api', whyGated: 'prod' },
+    { gate: 'act.deploy', actionWithheld: 'ship web', whyGated: 'prod' },
+  ], `CRLF entries parsed as ${JSON.stringify(got)}`)
+  assert.deepStrictEqual(p.parseFields('\r\n  Prepared: x\r\n    y\r\n'), { prepared: 'x y' },
+    'parseFields on a CRLF block')
+})
+
+test('an indented BLOCKED header after another entry starts a new entry instead of vanishing', () => {
+  // Agents indent whole blocks. The second header read as a continuation of the
+  // first entry, so act.sendEmail vanished and its action overwrote act.deploy's.
+  const got = p.collectBlockedGates([
+    '  BLOCKED — act.deploy\n    Action withheld: ship api\n  BLOCKED — act.sendEmail\n    Action withheld: mail all users\n',
+  ])
+  assert.deepStrictEqual(got, [
+    { gate: 'act.deploy', actionWithheld: 'ship api' },
+    { gate: 'act.sendEmail', actionWithheld: 'mail all users' },
+  ], `indented entries parsed as ${JSON.stringify(got)}`)
+})
+
+// mulberry32: tiny seeded PRNG, so a failure names a seed + run that reproduces.
+function rng(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+test('collectBlockedGates recovers every entry over 500 seeded random phase-output sets — no gate or field vanishes', () => {
+  const SEED = 20261108
+  const r = rng(SEED)
+  const pick = a => a[Math.floor(r() * a.length)]
+  const GATES_POOL = ['act.deploy', 'act.destructiveMigration', 'act.grantAccess', 'act.sendEmail', 'spend.over_budget']
+  // The documented labels (the model's own copy, not FIELD_MAP) and casings an agent produces.
+  const LABELS = { actionWithheld: 'Action withheld', whyGated: 'Why gated', prepared: 'Prepared',
+    unblocks: 'Unblocks', authorizeBy: 'Authorize by' }
+  const recase = s => pick([s, s.toLowerCase(), s.toUpperCase()])
+  const WORDS = ['ship', 'v2.4.0', 'to', 'production', 'rollback', 'takes', '20', 'min', 'users.legacy', 'RELEASE.md']
+  const phrase = () => Array.from({ length: 1 + Math.floor(r() * 4) }, () => pick(WORDS)).join(' ')
+  const PROSE = ['All checks green.', 'Migration plan written.', 'Notes follow:', 'The run was not blocked here.']
+  let checkedEntries = 0
+  let crlfSets = 0
+
+  for (let run = 0; run < 500; run++) {
+    const eol = pick(['\n', '\r\n', '\r\n', '\r'])
+    if (eol !== '\n') crlfSets++
+    const expected = []
+    const outputs = []
+    const nOutputs = 1 + Math.floor(r() * 3)
+    let uid = 0
+    for (let o = 0; o < nOutputs; o++) {
+      const lines = []
+      if (r() < 0.7) lines.push(pick(PROSE))
+      const nEntries = Math.floor(r() * 3)
+      for (let e = 0; e < nEntries; e++) {
+        const gate = pick(GATES_POOL)
+        // A unique withheld action, so only the deliberate repeats below dedupe.
+        const fields = { actionWithheld: `${phrase()} #${run}-${uid++}` }
+        for (const k of Object.keys(LABELS).slice(1)) if (r() < 0.6) fields[k] = phrase()
+        lines.push(`${pick(['', ' ', '\t'])}${recase('BLOCKED')}${pick(['', ' ', '\t'])}${pick(['—', '–', '-'])}` +
+          `${pick([' ', '  ', '\t'])}${gate}${pick(['', ' ', '\t'])}`)
+        const want = { gate }
+        for (const [k, v] of Object.entries(fields)) {
+          const wrap = r() < 0.25 ? phrase() : null
+          lines.push(`${pick(['  ', '    ', '\t'])}${recase(LABELS[k])}:${pick(['', ' ', '       '])}${v}`)
+          if (wrap) lines.push(`${pick(['  ', '                   '])}${wrap}`)
+          want[k] = wrap ? `${v} ${wrap}` : v
+        }
+        expected.push(want)
+        if (r() < 0.5) lines.push(pick(PROSE))
+      }
+      let text = lines.join(eol)
+      if (r() < 0.5) text += eol
+      // The shapes agents return: a raw string or a schema object, sometimes nested.
+      outputs.push(pick([
+        () => text,
+        () => ({ verdict: 'Go', notes: text }),
+        () => ({ result: { items: [text] } }),
+        () => [text],
+      ])())
+    }
+    // A phase that repeats an earlier entry verbatim adds no new gate.
+    if (expected.length && r() < 0.3) {
+      const dup = pick(expected)
+      const rep = [`BLOCKED — ${dup.gate}`, ...Object.entries(dup).filter(([k]) => k !== 'gate')
+        .map(([k, v]) => `  ${LABELS[k]}: ${v}`)].join(eol)
+      outputs.push({ notes: rep })
+    }
+
+    const got = p.collectBlockedGates(outputs)
+    assert.deepStrictEqual(got, expected,
+      `seed ${SEED} run ${run} (eol ${JSON.stringify(eol)}): outputs ${JSON.stringify(outputs)}`)
+    checkedEntries += expected.length
+  }
+  assert.ok(checkedEntries >= 500, `only ${checkedEntries} entries generated over 500 runs`)
+  assert.ok(crlfSets >= 200, `only ${crlfSets} of 500 runs used CR/CRLF line endings`)
+})
+
 console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)
