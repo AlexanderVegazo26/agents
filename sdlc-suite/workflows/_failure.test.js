@@ -41,6 +41,16 @@ function thrower(times, err) {
 
 const e = (msg, extra = {}) => Object.assign(new Error(msg), extra)
 
+// mulberry32: tiny seeded PRNG, so a failure names a seed + run + call that reproduces.
+function rng(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
 async function main() {
   console.log('classify() — the class must be inferable from what the boundary produced')
 
@@ -222,6 +232,144 @@ async function main() {
     assert.strictEqual(r.ok, true)
     assert.strictEqual(r.attempts, 2)
     assert.strictEqual(h.records.length, 1, 'the recovered attempt is still recorded')
+  })
+
+  console.log('\nproperties — seeded random call sequences against a reference model')
+
+  await test('withRetry + Breaker match the reference model over 300 seeded random runs', async () => {
+    const SEED = 20261108
+    const r = rng(SEED)
+    const pick = a => a[Math.floor(r() * a.length)]
+    const classes = Object.values(f.Failure)
+    const phases = ['Requirements', 'Build', 'Verify']
+    // The model's own copy of the policy table (not f.POLICY), so a changed
+    // attempt count or give-up action shows up here as a red case.
+    const MODEL = {
+      [f.Failure.TRANSIENT]: { maxAttempts: 3, backoff: true, onExhausted: 'continue' },
+      [f.Failure.TOOL]: { maxAttempts: 2, backoff: false, onExhausted: 'stop-phase' },
+      [f.Failure.AUTH]: { maxAttempts: 1, backoff: false, onExhausted: 'escalate' },
+      [f.Failure.BAD_INPUT]: { maxAttempts: 3, backoff: false, onExhausted: 'continue' },
+      [f.Failure.LOGIC]: { maxAttempts: 1, backoff: false, onExhausted: 'continue' },
+      [f.Failure.ENV_DRIFT]: { maxAttempts: 1, backoff: false, onExhausted: 'stop-run' },
+    }
+    assert.deepStrictEqual(Object.keys(MODEL).sort(), [...classes].sort(),
+      'every failure class needs a row in the model table')
+
+    for (let run = 0; run < 300; run++) {
+      const threshold = 1 + Math.floor(r() * 4)
+      const breaker = new f.Breaker(threshold)
+      // Reference model state, kept apart from the Breaker under test.
+      const counts = new Map()   // `${phase}\0${class}` -> exhausted calls
+      const tripped = new Map()  // phase -> {class, count}
+      const nCalls = 1 + Math.floor(r() * 12)
+
+      for (let call = 0; call < nCalls; call++) {
+        const phase = pick(phases)
+        // Attempt k fails with failures[k-1]; past the list the call succeeds.
+        const failures = Array.from({ length: Math.floor(r() * 5) }, () => pick(classes))
+        const ctx = `seed ${SEED} run ${run} call ${call}: phase ${phase}, threshold ${threshold}, ` +
+          `failures [${failures.join(', ')}]`
+
+        let fnCalls = 0
+        const records = []
+        const delays = []
+        const rands = []
+        const res = await f.withRetry(async ({ attempt }) => {
+          fnCalls++
+          assert.strictEqual(attempt, fnCalls, `${ctx}: fn got attempt ${attempt} on call ${fnCalls}`)
+          if (attempt > failures.length) return `ok-${call}`
+          throw Object.assign(new Error(`injected ${failures[attempt - 1]}`),
+            { failureClass: failures[attempt - 1] })
+        }, {
+          label: `agent-${call}`, phase, breaker,
+          onFailure: rec => records.push(rec),
+          sleep: async ms => { delays.push(ms) },
+          rand: () => { const v = r(); rands.push(v); return v },
+        })
+
+        // --- expected outcome from the model ---
+        if (tripped.has(phase)) {
+          const t = tripped.get(phase)
+          assert.deepStrictEqual(
+            [res.ok, res.skipped, res.attempts, res.class, res.stop, fnCalls, records.length],
+            [false, true, 0, t.class, 'phase', 0, 0],
+            `${ctx}: phase was tripped by ${t.count} x ${t.class}; the call must be skipped without running fn`)
+          continue
+        }
+
+        const expRecords = []
+        const expDelays = []
+        let expected = null
+        for (let a = 1; ; a++) {
+          if (a > failures.length) { expected = { ok: true, value: `ok-${call}`, attempts: a }; break }
+          const cls = failures[a - 1]
+          const pol = MODEL[cls]
+          const final = a >= pol.maxAttempts
+          let count
+          if (final) {
+            const key = `${phase}\0${cls}`
+            count = (counts.get(key) || 0) + 1
+            counts.set(key, count)
+            if (count >= threshold && !tripped.has(phase)) tripped.set(phase, { class: cls, count })
+          }
+          expRecords.push({ class: cls, attempt: a, of: pol.maxAttempts, final, breakerCount: count })
+          if (final) {
+            expected = {
+              ok: false, class: cls, attempts: a,
+              escalate: pol.onExhausted === 'escalate',
+              stop: pol.onExhausted === 'stop-run' ? 'run'
+                : pol.onExhausted === 'stop-phase' || tripped.has(phase) ? 'phase' : null,
+            }
+            break
+          }
+          if (pol.backoff) expDelays.push(a)
+        }
+
+        assert.strictEqual(res.ok, expected.ok, `${ctx}: ok ${res.ok}, expected ${expected.ok}`)
+        assert.strictEqual(res.attempts, expected.attempts,
+          `${ctx}: ${res.attempts} attempts, expected ${expected.attempts}`)
+        assert.strictEqual(fnCalls, expected.attempts, `${ctx}: fn ran ${fnCalls} times, expected ${expected.attempts}`)
+        if (expected.ok) {
+          assert.strictEqual(res.value, expected.value, `${ctx}: value ${res.value}`)
+        } else {
+          assert.deepStrictEqual(
+            { class: res.class, escalate: res.escalate, stop: res.stop },
+            { class: expected.class, escalate: expected.escalate, stop: expected.stop },
+            `${ctx}: wrong give-up result`)
+        }
+
+        assert.strictEqual(records.length, expRecords.length,
+          `${ctx}: ${records.length} failure records, expected one per failed attempt (${expRecords.length})`)
+        records.forEach((rec, i) => {
+          const e = expRecords[i]
+          const rctx = `${ctx}: record ${i}`
+          assert.deepStrictEqual(
+            { label: rec.label, phase: rec.phase, class: rec.class, attempt: rec.attempt, of: rec.of,
+              breakerCount: rec.breakerCount },
+            { label: `agent-${call}`, phase, class: e.class, attempt: e.attempt, of: e.of,
+              breakerCount: e.breakerCount },
+            `${rctx}: fields differ`)
+          assert.strictEqual(/^no further attempts/.test(rec.strategyNext), e.final,
+            `${rctx}: strategyNext "${rec.strategyNext}" but final=${e.final}`)
+        })
+
+        // Backoff only before a TRANSIENT retry, never after the last attempt,
+        // full jitter under the doubling ceiling (base 1000, cap 30000).
+        assert.strictEqual(delays.length, expDelays.length,
+          `${ctx}: slept ${delays.length} times (${delays.join(', ')}), expected before attempts ` +
+          `after [${expDelays.join(', ')}]`)
+        delays.forEach((ms, i) => {
+          const ceiling = Math.min(30000, 1000 * 2 ** (expDelays[i] - 1))
+          assert.strictEqual(ms, Math.floor(rands[i] * ceiling),
+            `${ctx}: delay ${i} was ${ms}, expected floor(${rands[i]} * ${ceiling})`)
+        })
+      }
+
+      for (const phase of phases) {
+        assert.deepStrictEqual(breaker.trippedInfo(phase), tripped.get(phase) || null,
+          `seed ${SEED} run ${run}: breaker state for ${phase} differs from the model`)
+      }
+    }
   })
 
   console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)
