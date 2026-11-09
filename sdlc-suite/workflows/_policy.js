@@ -103,7 +103,10 @@ function validate(policy) {
         if (k === '$comment') continue
         if (!GATES[cls].includes(k)) {
           // The whole point of the schema. A near-miss is the likely case, so say so.
-          const near = GATES[cls].find(g => g.toLowerCase().startsWith(k.slice(0, 4).toLowerCase()))
+          // Same rule as validate-autonomy.py: the first four letters match. A
+          // startsWith(key[:4]) test suggested a gate for '' or 'g' (every gate
+          // starts with ''); test_autonomy_mirror.py holds the two mirrors equal.
+          const near = GATES[cls].find(g => g.slice(0, 4).toLowerCase() === k.slice(0, 4).toLowerCase())
           errors.push(
             `unknown gate preAuthorized.${cls}.${k}` + (near ? ` — did you mean ${near}?` : '')
           )
@@ -283,7 +286,7 @@ function gateTableForPrompt(resolved) {
     on.length
       ? `Pre-authorized, proceed and record that you acted under standing authorization: ${on.join(', ')}.`
       : 'Pre-authorized: nothing.',
-    `NOT pre-authorized: ${off.join(', ')}.`,
+    off.length ? `NOT pre-authorized: ${off.join(', ')}.` : 'NOT pre-authorized: nothing.',
     `On hitting a gate that is not pre-authorized: ${resolved.onBlocked}. Emit a`,
     'BLOCKED entry in the documented format and continue with everything that does',
     'not depend on it. A gate absent from this list is an unanswered question,',

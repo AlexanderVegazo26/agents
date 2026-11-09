@@ -374,4 +374,44 @@ test('collectBlockedGates recovers every entry over 500 seeded random phase-outp
   assert.ok(crlfSets >= 200, `only ${crlfSets} of 500 runs used CR/CRLF line endings`)
 })
 
+test('a near-miss hint needs the first four letters to match: no "did you mean" for "" or "g"', () => {
+  const pol = k => ({ mode: 'unattended', preAuthorized: { decide: { [k]: true }, act: {} },
+    onBlocked: 'halt', escalation: {} })
+  for (const k of ['', 'g', 'pri', 'xroadmapCommit']) {
+    const errs = p.validate(pol(k))
+    assert.deepStrictEqual(errs, [`unknown gate preAuthorized.decide.${k}`],
+      `key ${JSON.stringify(k)}: expected a bare unknown-gate error (validate-autonomy.py's rule), got ${JSON.stringify(errs)}`)
+  }
+  assert.deepStrictEqual(p.validate(pol('ROADmap')),
+    ['unknown gate preAuthorized.decide.ROADmap — did you mean roadmapCommit?'])
+})
+
+test('gateTableForPrompt lists every gate exactly once, on the side it resolved to, over 300 seeded gate sets', () => {
+  const SEED = 20261109
+  const r = rng(SEED)
+  const all = [...p.GATES.decide.map(g => `decide.${g}`), ...p.GATES.act.map(g => `act.${g}`)]
+  const listAfter = (text, label) => {
+    const line = text.split('\n').find(l => l.startsWith(label))
+    assert.ok(line, `no line starting ${JSON.stringify(label)} in:\n${text}`)
+    const body = line.slice(label.length).replace(/\.$/, '').trim()
+    return body === 'nothing' ? [] : body.split(', ')
+  }
+  for (let run = 0; run < 300; run++) {
+    // Runs 0 and 1 are the edges: everything on, everything off.
+    const density = run === 0 ? 1 : run === 1 ? 0 : r()
+    const gates = { decide: {}, act: {} }
+    for (const cls of ['decide', 'act']) for (const g of p.GATES[cls]) gates[cls][g] = r() < density
+    const want = all.filter(n => { const [c, g] = n.split('.'); return gates[c][g] })
+    const text = p.gateTableForPrompt({ gates, source: '/repo/.claude/autonomy.json', degraded: false,
+      mode: 'unattended', onBlocked: r() < 0.5 ? 'halt' : 'record-and-continue', errors: [] })
+    const ctx = `seed ${SEED} run ${run}, on = ${JSON.stringify(want)}:\n${text}`
+    const on = listAfter(text, want.length
+      ? 'Pre-authorized, proceed and record that you acted under standing authorization:' : 'Pre-authorized:')
+    const off = listAfter(text, 'NOT pre-authorized:')
+    assert.deepStrictEqual(on, want, `pre-authorized list wrong, ${ctx}`)
+    assert.deepStrictEqual(off, all.filter(n => !want.includes(n)), `NOT pre-authorized list wrong, ${ctx}`)
+    assert.ok(!/:\s*\.$/m.test(text), `an empty list rendered as ": .", ${ctx}`)
+  }
+})
+
 console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)

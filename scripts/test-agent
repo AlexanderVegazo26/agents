@@ -162,6 +162,10 @@ CHECKS: list[Check] = [
     _suite("scripts/test_test_agent.py",
            "This runner: a failure must name the check, file:line and rerun command, an unlisted "
            "test file must fail, every check must get a fresh HOME."),
+    _suite("sdlc-suite/tools/test_autonomy_mirror.py",
+           "validate-autonomy.py and _policy.js validate() give the same errors for 600 seeded "
+           "mutated policies. Seen red (5+ policies) by _policy.js's old near-miss rule, which "
+           "suggested a gate for '' or 'g'."),
     Check("autonomy-js-mirror", [PY, "sdlc-suite/tools/validate-autonomy.py", "--selftest"],
           "Two implementations of one spec drift; this reads the gate names out of _policy.js "
           "rather than restating them."),
