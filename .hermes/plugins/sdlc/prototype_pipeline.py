@@ -70,7 +70,7 @@ WORK_BASE = Path(os.environ.get("SDLC_PROTOTYPES_DIR") or Path.home() / "prototy
 STATE_BASE = Path(os.environ.get("SDLC_PROTOTYPES_STATE") or Path.home() / ".local" / "state" / "sdlc-prototypes")
 SANDBOX_BASE = "/workspace/prototypes"  # the docker volume target in config.yaml
 TTL_HOURS = float(os.environ.get("SDLC_PROTOTYPE_TTL_HOURS", "24"))
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
+SLUG_RE = re.compile(r"\A[a-z0-9][a-z0-9-]{0,80}\Z")  # \Z: "$" also matches before a trailing newline
 TUNNEL_RE = re.compile(r"https://(?!api\.)[a-z0-9-]+\.trycloudflare\.com")
 TUNNEL_WAIT = 60
 PUBLIC_WAIT = 90
@@ -465,9 +465,12 @@ def read_untrusted(path: Path, limit: int = 64 * 1024) -> str:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return ""
+    # fstat before fdopen: fdopen raises IsADirectoryError on a directory
+    # (and would leak the fd), so the regular-file check must come first.
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        return ""
     with os.fdopen(fd, "rb") as fh:
-        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-            return ""
         return fh.read(limit).decode("utf-8", "replace")
 
 

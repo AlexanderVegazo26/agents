@@ -128,6 +128,12 @@ CHECKS: list[Check] = [
     _suite("sdlc-suite/tools/test_image_generation.py",
            "The image-generation wrapper with sd-cli faked. Seen red by removing the output-path "
            "containment check (5 failures) and the PNG size check (1)."),
+    _suite(".hermes/plugins/sdlc/test_prototype_pipeline.py",
+           "The /idea pipeline's publishing boundary (vet_copy, read_untrusted, write_state, the "
+           "static Handler, slugs). Seen red by 15 mutants, one per guard (nlink, lstat, symlink "
+           "follow, root containment, listings, nosniff, O_NOFOLLOW/O_NONBLOCK, S_ISREG, slug "
+           "anchor); found a slug '$' anchor that accepted a trailing newline and a directory "
+           "crashing read_untrusted."),
     _suite("sdlc-suite/tools/test_transcript_hook.py",
            "The transcript -> prototyper hook, run as Claude Code runs it. Seen red by removing "
            "the recurring-speaker guard and the log-level exclusion."),
