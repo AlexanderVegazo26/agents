@@ -335,4 +335,161 @@ test('close() records attempt, learningsLoaded, retries and repairRounds', () =>
   assert.deepStrictEqual(o.repairRounds, { rounds: 1, max: 2 })
 })
 
+console.log('\nproperty: seeded attempt sequences driven like the workflow bridge')
+
+// mulberry32: tiny seeded PRNG, so a failure names a seed + run that reproduces.
+function rng(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// Distinct slugs on purpose: two titles sharing a slug is not a real workflow.
+const TITLE_POOL = ['Requirements', 'Design', 'Build', 'Verify', 'Release', 'Review',
+  'Discover', 'Merge', 'Build & Test', 'Verify (4 lenses)']
+
+/**
+ * Each step reopens the run from disk, exactly as the workflows' `openRun`,
+ * `recordPhase` and `closeRun` bridges do (one fresh process per boundary), so
+ * the property covers the on-disk protocol rather than one in-memory object.
+ * The reference model is the contract in `_state.js`'s header: completed phases
+ * form a prefix, a resume replays exactly that prefix with the bytes it wrote,
+ * and `resumableFrom` names the first phase that still has to run.
+ */
+function runScenario(seed, runIdx) {
+  const rand = rng(seed + runIdx)
+  const pick = n => Math.floor(rand() * n)
+  const pool = TITLE_POOL.slice()
+  const titles = []
+  for (let n = 2 + pick(5); titles.length < n;) titles.push(pool.splice(pick(pool.length), 1)[0])
+
+  const cwd = tmpRepo()
+  const trace = []
+  const where = () => `seed ${seed} run ${runIdx}, phases ${JSON.stringify(titles)}, steps: ${trace.join(' > ')}`
+  const reopen = runId => openRun({ workflow: 'w', cwd, resumeFrom: runId, logger: quiet })
+  const readManifest = runId =>
+    JSON.parse(fs.readFileSync(path.join(cwd, '.claude', 'runs', runId, 'manifest.json'), 'utf8'))
+
+  // Model state.
+  const done = []            // completed prefix, in order
+  const written = {}         // title -> the token its completion wrote
+  let resumableFrom = null   // first phase that still has to run, once one started
+  let attempts = 0
+  let runId = null
+
+  try {
+    for (let a = 0; a < 4 && done.length < titles.length; a++) {
+      // --- open (the `openRun` bridge)
+      let run
+      if (runId === null) {
+        run = openRun({ workflow: 'w', cwd, logger: quiet })
+        runId = run.runId
+      } else {
+        run = reopen(runId)
+        run.beginAttempt()
+      }
+      attempts++
+      trace.push(`open#${attempts}`)
+      assert.deepStrictEqual([...run.resumedPhases].sort(), done.slice().sort(),
+        `resume must replay exactly the completed prefix; ${where()}`)
+      for (const t of done) {
+        assert.strictEqual(run.resumed(t) && run.resumed(t).token, written[t],
+          `resumed("${t}") must return the artifact its completion wrote; ${where()}`)
+      }
+      run.startPhase(titles[0])
+      if (done.length === 0) resumableFrom = titles[0]
+
+      // --- phases, from the first one the prefix does not cover
+      let stop = null
+      for (let i = done.length; i < titles.length && !stop; i++) {
+        const title = titles[i]
+        const next = titles[i + 1] || null
+        const r = rand()
+        if (r < 0.6) {
+          const token = `a${attempts}-p${i}-${pick(1e6)}`
+          const b = reopen(runId)   // the `recordPhase` bridge
+          b.completePhase(title, { agents: [{ label: title, result: token }], token })
+          if (next) b.startPhase(next)
+          done.push(title)
+          written[title] = token
+          resumableFrom = next
+          trace.push(`complete ${title}`)
+        } else if (r < 0.8) {
+          reopen(runId).failPhase(title, 'breaker tripped')   // the chain stops here
+          resumableFrom = title
+          stop = 'stopped'
+          trace.push(`trip ${title}`)
+        } else {
+          stop = 'crashed'
+          trace.push(`crash in ${title}`)
+        }
+      }
+
+      // --- close (the `closeRun` bridge), skipped when the process was killed
+      const killed = stop === 'crashed' && rand() < 0.5
+      if (!killed) {
+        const c = reopen(runId)
+        c.resumedPhases = new Set()
+        const status = stop || 'completed'
+        const o = c.close({ status })
+        trace.push(`close ${status}`)
+        assert.deepStrictEqual(o.phasesCompleted, done,
+          `outcome.phasesCompleted must be the completed prefix in order; ${where()}`)
+        assert.strictEqual(o.resumableFrom, resumableFrom,
+          `outcome.resumableFrom must name the first phase still to run; ${where()}`)
+        assert.strictEqual(o.attempt, attempts, `outcome.attempt; ${where()}`)
+        assert.strictEqual(readManifest(runId).status, status, `manifest.status after close; ${where()}`)
+      } else {
+        trace.push('killed')
+      }
+
+      // --- what is on disk after every attempt
+      const m = readManifest(runId)
+      const ts = m.phases.map(p => p.title)
+      assert.strictEqual(new Set(ts).size, ts.length, `a title appears once in manifest.phases ${JSON.stringify(ts)}; ${where()}`)
+      assert.deepStrictEqual(m.phases.filter(p => p.status === 'complete').map(p => p.title), done,
+        `manifest's complete phases must be the completed prefix; ${where()}`)
+      assert.strictEqual(m.resumableFrom, resumableFrom, `manifest.resumableFrom; ${where()}`)
+      assert.strictEqual(m.attempt, attempts, `manifest.attempt; ${where()}`)
+      const dir = path.join(cwd, '.claude', 'runs', runId)
+      const artifacts = m.phases.filter(p => p.status === 'complete').map(p => p.artifact)
+      assert.strictEqual(new Set(artifacts).size, artifacts.length,
+        `every complete phase has its own artifact file ${JSON.stringify(artifacts)}; ${where()}`)
+      // The documented layout: phase-1-requirements.json, phase-2-design.json, ...
+      // A phase that tripped and later completed keeps its place in the sequence.
+      const slugOf = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      assert.deepStrictEqual(artifacts, done.map((t, i) => `phase-${i + 1}-${slugOf(t)}.json`),
+        `artifacts must be numbered 1..n in phase order; ${where()}`)
+      const onDisk = fs.readdirSync(dir).filter(n => /^phase-.*\.json$/.test(n)).sort()
+      assert.deepStrictEqual(onDisk, artifacts.slice().sort(),
+        `phase files on disk must be exactly the complete phases' artifacts; ${where()}`)
+      for (const p of m.phases.filter(q => q.status === 'complete')) {
+        const art = JSON.parse(fs.readFileSync(path.join(dir, p.artifact), 'utf8'))
+        assert.strictEqual(art.phase, p.title, `${p.artifact} names its phase; ${where()}`)
+        assert.strictEqual(art.token, written[p.title], `${p.artifact} holds what "${p.title}" wrote; ${where()}`)
+        assert.ok(art.durationMs >= 0, `${p.artifact} durationMs ${art.durationMs} >= 0; ${where()}`)
+      }
+    }
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
+  return { completedAll: done.length === titles.length, attempts }
+}
+
+test('300 seeded runs: resume replays the completed prefix and resumableFrom names the next phase', () => {
+  const seed = Number(process.env.STATE_PROPERTY_SEED || 20261108)
+  let finished = 0, resumedRuns = 0
+  for (let i = 0; i < 300; i++) {
+    const r = runScenario(seed, i)
+    if (r.completedAll) finished++
+    if (r.attempts > 1) resumedRuns++
+  }
+  // The generator must actually reach both endings, or the property proves little.
+  assert.ok(finished >= 30, `only ${finished} of 300 runs completed every phase (seed ${seed})`)
+  assert.ok(resumedRuns >= 100, `only ${resumedRuns} of 300 runs were resumed (seed ${seed})`)
+})
+
 console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)
