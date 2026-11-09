@@ -221,6 +221,149 @@
       }
     },
     {
+      "id": "brief-fits-whole-no-marker",
+      "kind": "brief",
+      "note": "Two builders well inside the review budget: everything is passed through and nothing claims a truncation.",
+      "lens": "review",
+      "criteria": "AC-1: failed calls retry with backoff\nAC-2: the breaker trips after 3 failures\nAC-3: the retry count is configurable",
+      "manifests": [
+        { "label": "builder-retry", "summary": "Added the retry wrapper with jittered backoff.", "diffRef": "HEAD~2..HEAD",
+          "filesChanged": [{ "path": "src/retry.js", "role": "implementation" }, { "path": "test/retry.test.js", "role": "test" }],
+          "criteriaAddressed": ["AC-1"], "notAddressed": [{ "id": "AC-3", "why": "needs product input" }] },
+        { "label": "builder-breaker", "summary": "Circuit breaker opens after three consecutive failures.",
+          "filesChanged": [{ "path": "src/breaker.js", "role": "implementation" }], "criteriaAddressed": ["AC-2"] }
+      ],
+      "expect": {
+        "truncated": false, "overBudget": false, "budget": 24000, "omittedCount": 0,
+        "textMatch": ["Files changed:\\n  - src/retry\\.js \\(implementation\\)", "Diff: `HEAD~2\\.\\.HEAD`",
+                      "Deliberately NOT addressed:\\n  - AC-3: needs product input", "Criteria addressed: AC-2"]
+      }
+    },
+    {
+      "id": "brief-file-list-dropped-before-summaries",
+      "kind": "brief",
+      "note": "Over budget only because of the file lists: step 1 drops them (a lens can Glob them back), keeps every summary, and names what it dropped in a capped list.",
+      "lens": "review",
+      "budget": 3000,
+      "manifests": [
+        { "label": "builder-ui", "summary": "Moved the settings form to the shared field components.", "filesChanged": [{ "files": "src/settings/field_component_", "times": 60 }] },
+        { "label": "builder-api", "summary": "Settings endpoint validates with the shared schema.", "filesChanged": [{ "files": "src/api/settings_handler_", "times": 60, "role": "test" }] }
+      ],
+      "expect": {
+        "truncated": true, "overBudget": false, "omittedCount": 120,
+        "textMatch": ["Moved the settings form to the shared field components\\.", "Settings endpoint validates with the shared schema\\.",
+                      "file list was omitted to stay within a 3000-character budget", "Omitted \\(120\\): src/settings/field_component_0, ", "…and \\d+ more",
+                      "Read the changed files directly"],
+        "textNotMatch": ["summaries were cut mid-text", "Files changed:"]
+      }
+    },
+    {
+      "id": "brief-summary-over-cap-names-builder",
+      "kind": "brief",
+      "note": "A builder that ignored the 2000-char summary cap is cut, and the brief says whose summary was cut even though the whole brief fits.",
+      "lens": "qa",
+      "manifests": [
+        { "label": "builder-verbose", "summary": { "repeat": "Refactored the request handler. ", "times": 80 }, "filesChanged": [{ "path": "src/handler.js", "role": "implementation" }] },
+        { "label": "builder-terse", "summary": "Added the missing test.", "filesChanged": [{ "path": "test/handler.test.js", "role": "test" }] }
+      ],
+      "expect": {
+        "truncated": true, "overBudget": false, "budget": 32000, "omittedCount": 0,
+        "textMatch": ["The summary from builder-verbose exceeded the 2000-character per-builder cap and was cut mid-text", "  - src/handler\\.js \\(implementation\\)", "Added the missing test\\."],
+        "textNotMatch": ["file list was omitted"]
+      }
+    },
+    {
+      "id": "brief-summaries-cut-step-two",
+      "kind": "brief",
+      "note": "Summaries alone exceed the budget: step 2 cuts them mid-text, keeps the criteria whole, and the result still fits.",
+      "lens": "security",
+      "budget": 3000,
+      "criteria": "AC-1: tokens are never logged",
+      "manifests": [
+        { "label": "builder-1", "summary": { "repeat": "Redacted token fields. ", "times": 80 } },
+        { "label": "builder-2", "summary": { "repeat": "Scrubbed auth headers. ", "times": 80 } },
+        { "label": "builder-3", "summary": { "repeat": "Masked session ids now. ", "times": 75 } }
+      ],
+      "expect": {
+        "truncated": true, "overBudget": false, "omittedCount": 0,
+        "textMatch": ["^## Acceptance criteria\\nAC-1: tokens are never logged\\n\\n## Implementation\\n### builder-1", "exceeded its 3000-character budget and the builder summaries were cut mid-text", "PARTIAL account"],
+        "textNotMatch": ["### builder-3", "Omitted files"]
+      }
+    },
+    {
+      "id": "brief-405-files-step-two-capped-marker",
+      "kind": "brief",
+      "note": "The 400-file regression: with summaries over budget AND hundreds of files, the omitted list in the step-2 marker stays capped so the reasoning, not the file list, fills the brief.",
+      "lens": "performance",
+      "manifests": [
+        { "label": "builder-1", "summary": { "repeat": "Batched the queries. ", "times": 90 }, "filesChanged": [{ "files": "pkg/b1/query_", "times": 45 }] },
+        { "label": "builder-2", "summary": { "repeat": "Cached the lookups. ", "times": 95 }, "filesChanged": [{ "files": "pkg/b2/lookup_", "times": 45 }] },
+        { "label": "builder-3", "summary": { "repeat": "Streamed the export. ", "times": 90 }, "filesChanged": [{ "files": "pkg/b3/export_", "times": 45 }] },
+        { "label": "builder-4", "summary": { "repeat": "Pooled connections. ", "times": 95 }, "filesChanged": [{ "files": "pkg/b4/pool_", "times": 45 }] },
+        { "label": "builder-5", "summary": { "repeat": "Indexed the column. ", "times": 95 }, "filesChanged": [{ "files": "pkg/b5/index_", "times": 45 }] },
+        { "label": "builder-6", "summary": { "repeat": "Lazy-loaded images. ", "times": 95 }, "filesChanged": [{ "files": "pkg/b6/image_", "times": 45 }] },
+        { "label": "builder-7", "summary": { "repeat": "Debounced the input. ", "times": 90 }, "filesChanged": [{ "files": "pkg/b7/input_", "times": 45 }] },
+        { "label": "builder-8", "summary": { "repeat": "Trimmed the bundle. ", "times": 95 }, "filesChanged": [{ "files": "pkg/b8/bundle_", "times": 45 }] },
+        { "label": "builder-9", "summary": { "repeat": "Reused the buffers. ", "times": 95 }, "filesChanged": [{ "files": "pkg/b9/buffer_", "times": 45 }] }
+      ],
+      "expect": {
+        "truncated": true, "overBudget": false, "budget": 16000, "omittedCount": 405,
+        "textMatch": ["^### builder-1\\nBatched the queries\\.", "summaries were cut mid-text", "Omitted files \\(405\\): pkg/b1/query_0, ", "…and \\d+ more"]
+      }
+    },
+    {
+      "id": "brief-clamped-builder-named-after-step-two",
+      "kind": "brief",
+      "note": "A builder over the summary cap whose label is then cut out of the body by step 2 must still be named in the rebuilt marker.",
+      "lens": "review",
+      "budget": 3000,
+      "manifests": [
+        { "label": "builder-a", "summary": { "repeat": "Ported the parser. ", "times": 95 } },
+        { "label": "builder-b", "summary": { "repeat": "Wrote parser tests. ", "times": 90 } },
+        { "label": "builder-big", "summary": { "repeat": "Rewrote the tokenizer. ", "times": 120 } }
+      ],
+      "expect": {
+        "truncated": true, "overBudget": false,
+        "textMatch": ["Over the 2000-character per-builder summary cap, cut first: builder-big\\n", "summaries were cut mid-text"],
+        "textNotMatch": ["### builder-big"]
+      }
+    },
+    {
+      "id": "brief-cap-below-criteria-reported",
+      "kind": "brief",
+      "note": "Criteria longer than the whole budget: they are never cut, the brief says it is partial, and overBudget reports the unsatisfiable cap instead of hiding it.",
+      "lens": "qa",
+      "budget": 1000,
+      "criteria": { "repeat": "AC-1: the export endpoint streams CSV rows. ", "times": 40 },
+      "manifests": [{ "label": "builder-export", "summary": "Export now streams instead of buffering.", "filesChanged": [{ "path": "src/export.js", "role": "implementation" }] }],
+      "expect": {
+        "truncated": true, "overBudget": true, "budget": 1000, "omittedCount": 1,
+        "textMatch": ["\\[TRUNCATED: this brief exceeded its 1000-character budget", "Omitted files \\(1\\): src/export\\.js"],
+        "textNotMatch": ["Export now streams instead of buffering"]
+      }
+    },
+    {
+      "id": "brief-zero-budget-cuts-everything",
+      "kind": "brief",
+      "note": "A zero budget must cut the body to nothing (the slice(0, -1) clamp bug once kept all but the last character while reporting truncated).",
+      "lens": "review",
+      "budget": 0,
+      "manifests": [{ "label": "builder-x", "summary": "Added the retry wrapper." }],
+      "expect": {
+        "truncated": true, "overBudget": true, "budget": 0,
+        "textMatch": ["^\\n\\n\\[TRUNCATED: "],
+        "textNotMatch": ["Added the retry wrappe", "### builder-x"]
+      }
+    },
+    {
+      "id": "brief-unknown-lens-default-budget",
+      "kind": "brief",
+      "note": "A lens without its own budget gets DEFAULT_BUDGET, not an unbounded or zero one.",
+      "lens": "docs",
+      "manifests": [{ "label": "builder-docs", "summary": "Documented the retry options.", "filesChanged": [{ "path": "docs/retry.md", "role": "docs" }] }],
+      "expect": { "truncated": false, "overBudget": false, "budget": 24000, "textMatch": ["  - docs/retry\\.md \\(docs\\)"] }
+    },
+    {
       "id": "learning-no-frontmatter-rejected",
       "kind": "learning",
       "text": "Just remember to run the tests.\n",

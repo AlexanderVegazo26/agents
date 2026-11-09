@@ -10,7 +10,9 @@
  * The agents in this suite are prompts; what code decides is how their output
  * becomes a run's result: which gates were hit (`_policy.collectBlockedGates`),
  * how a failed call is classified and retried (`_failure.classify`/`withRetry`),
- * and what a learning file may put into later prompts (`_learnings.parseLearning`).
+ * what a learning file may put into later prompts (`_learnings.parseLearning`),
+ * and what a verify lens is told about the build (`_brief.buildBrief`: budget
+ * clamping and its truncation marker).
  * Each case replays one model- or CLI-produced text through that code and checks
  * the decision with deterministic graders (exact, regex, rule). No model is
  * called, no clock or randomness is used, and the exit code is the result: the
@@ -36,6 +38,7 @@ const ONLY = opt('--case', null)
 const policy = require(path.join(SRC, '_policy.js'))
 const failure = require(path.join(SRC, '_failure.js'))
 const learnings = require(path.join(SRC, '_learnings.js'))
+const brief = require(path.join(SRC, '_brief.js'))
 
 const show = v => util.inspect(v, { depth: 6, breakLength: Infinity })
 const rel = p => path.relative(process.cwd(), p) || p
@@ -46,6 +49,24 @@ const KINDS = {
   'failure-class': c => c.failure && typeof c.failure === 'object' && typeof c.expect.class === 'string',
   'retry': c => Array.isArray(c.attempts) && c.attempts.length > 0 && typeof c.expect.ok === 'boolean',
   'learning': c => typeof c.text === 'string',
+  'brief': c => Array.isArray(c.manifests) && typeof c.lens === 'string' && typeof c.expect.truncated === 'boolean',
+}
+
+/**
+ * Long texts would bury a case, so any string in a brief case may be written as
+ * `{"repeat": "<unit>", "times": N}` (the unit repeated N times) or
+ * `{"files": "<prefix>", "times": N, "role": "<role>"}` inside `filesChanged`
+ * (N entries `<prefix>0`, `<prefix>1`, ...). Expanded before grading.
+ */
+function expand(v) {
+  if (Array.isArray(v)) return v.flatMap(x => (x && typeof x === 'object' && 'files' in x)
+    ? Array.from({ length: x.times }, (_, i) => ({ path: `${x.files}${i}`, role: x.role || 'implementation' }))
+    : [expand(x)])
+  if (v && typeof v === 'object') {
+    if (typeof v.repeat === 'string' && Number.isInteger(v.times)) return v.repeat.repeat(v.times)
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, expand(x)]))
+  }
+  return v
 }
 
 function validateDataset(data) {
@@ -154,7 +175,41 @@ async function grade(c) {
     for (const [k, pat] of Object.entries(e.notMatch || {})) errs.push(...notRegex(k, pat, l[k]))
     return errs
   }
+  if (c.kind === 'brief') {
+    const manifests = expand(c.manifests)
+    const criteria = expand(c.criteria || '')
+    const b = brief.buildBrief({ manifests, lens: c.lens, criteria, budget: c.budget })
+    const errs = []
+    for (const k of ['truncated', 'overBudget', 'budget']) if (k in e) errs.push(...exact(k, e[k], b[k]))
+    if ('omittedCount' in e) errs.push(...exact('omittedFiles.length', e.omittedCount, b.omittedFiles.length))
+    for (const pat of e.textMatch || []) errs.push(...regex('text', pat, b.text))
+    for (const pat of e.textNotMatch || []) errs.push(...notRegex('text', pat, b.text))
+    return errs.concat(briefRules(b, manifests, criteria))
+  }
   return [`unknown kind ${c.kind}`]
+}
+
+// Rules every brief must satisfy, whatever the case expects. These are the
+// module's reason to exist: a lens may get a partial brief, never one that
+// looks whole.
+function briefRules(b, manifests, criteria) {
+  const errs = []
+  const short = s => show(s.length > 80 ? `${s.slice(0, 80)}… (${s.length} chars)` : s)
+  if (b.chars !== b.text.length) errs.push(`rule chars-is-length: expected chars ${b.text.length}, actual ${b.chars}`)
+  if (!b.overBudget && b.chars > b.budget) errs.push(`rule within-budget: expected chars <= ${b.budget}, actual ${b.chars} (and overBudget false)`)
+  if (b.overBudget !== (b.chars > b.budget)) errs.push(`rule over-budget-reported: overBudget ${b.overBudget} but chars ${b.chars} vs budget ${b.budget}`)
+  if (criteria && !b.text.includes(criteria)) errs.push(`rule criteria-kept: acceptance criteria ${short(criteria)} not verbatim in the brief`)
+  const partial = manifests.filter(m => !b.text.includes(String(m.summary ?? '')))
+  if (partial.length && !b.truncated) errs.push(`rule no-silent-partial: summaries of ${show(partial.map(m => m.label))} missing from the brief, but truncated is false`)
+  if (b.truncated && !/\[TRUNCATED/.test(b.text)) errs.push(`rule marker-present: truncated is true but the brief has no [TRUNCATED marker; text ends ${short(b.text.slice(-120))}`)
+  if (!b.truncated && /\[TRUNCATED/.test(b.text)) errs.push('rule marker-present: truncated is false but the brief carries a [TRUNCATED marker')
+  const files = manifests.flatMap(m => (m.filesChanged || []).map(f => f.path))
+  const lostFiles = files.filter(f => !b.text.includes(f) && !b.omittedFiles.includes(f))
+  if (lostFiles.length) errs.push(`rule files-listed-or-omitted: ${lostFiles.length} changed files neither in the brief nor in omittedFiles, e.g. ${show(lostFiles.slice(0, 3))}`)
+  const over = manifests.filter(m => String(m.summary ?? '').length > brief.SUMMARY_CAP && m.label)
+  const unnamed = over.filter(m => !b.text.includes(m.label))
+  if (unnamed.length) errs.push(`rule clamped-builder-named: ${show(unnamed.map(m => m.label))} exceeded the ${brief.SUMMARY_CAP}-char summary cap but are named nowhere in the brief`)
+  return errs
 }
 
 async function main() {

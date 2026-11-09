@@ -100,8 +100,9 @@ added to `CHECKS` there, with a comment saying how it was seen red; the runner
 fails naming any test file that no check runs.
 
 Replay evals live in `sdlc-suite/evals/`: `cases.v1.json` holds model and CLI
-outputs (phase results with BLOCKED entries, failure messages, learning files)
-with the properties the runtime's decision must have, and `replay.test.js`
+outputs (phase results with BLOCKED entries, failure messages, learning files,
+builder manifests for the verify-lens brief budget) with the properties the
+runtime's decision must have, and `replay.test.js`
 grades them deterministically against `sdlc-suite/workflows` (`--case <id>`
 reruns one, `--src` points it at another tree). No model is called. When a run
 produces output the runtime mishandled, add it there as a case first.
