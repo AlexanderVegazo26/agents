@@ -221,6 +221,14 @@ def _read_lf(p: Path) -> str:
 # Target definitions
 # --------------------------------------------------------------------------- #
 
+
+#: Claude Code subagent model aliases an agent may pin (MODEL-ROUTING.md).
+#: "inherit" = follow the session model.
+MODEL_TIERS = {"inherit", "fable", "opus", "sonnet", "haiku"}
+#: Claude Code subagent effort levels, lowest to highest.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
 @dataclass
 class Target:
     name: str
@@ -251,7 +259,11 @@ class Target:
     #: frontmatter key order; keys not listed are appended in source order.
     #: `version` sits second, matching where the source carries it, so the
     #: Markdown trees are byte-comparable against sdlc-suite/ line for line.
-    key_order: tuple = ("name", "version", "description", "tools", "skills", "model")
+    key_order: tuple = ("name", "version", "description", "tools", "skills", "model", "effort")
+    #: frontmatter keys this harness does not understand and must not receive.
+    #: `effort` is a Claude Code subagent setting; other harnesses would either
+    #: reject it or pass it through as noise.
+    drop_keys: set = field(default_factory=set)
     #: also generate `workflows/*.js`. True only where the tree is a straight
     #: de-namespaced copy of the canonical scripts — see desired_files().
     workflows: bool = False
@@ -277,8 +289,10 @@ TARGETS = {
         # `Agent(x)` is not a Command Code tool name — `commandcode-suite/validate.py`
         # rejects it as unknown. Its own converter dropped these grants; so do we.
         agent_grants="drop",
-        # "inherit" is omitted so the agent follows the session model.
-        model_map={"inherit": None},
+        # Command Code offers no Claude models, so every routing tier is
+        # omitted and the agent follows the session model (see MODEL_TIERS).
+        model_map={tier: None for tier in MODEL_TIERS},
+        drop_keys={"effort"},
     ),
 
     # Kimi Code. Adds whenToUse and a subagents list; the six flow skills live
@@ -353,7 +367,7 @@ def render_tools(front: dict, t: Target) -> str:
 def emit_markdown(name: str, front: dict, body: str, t: Target, src_rel: str) -> str:
     lines = ["---"]
     for k in t.key_order:
-        if k not in front:
+        if k not in front or k in t.drop_keys:
             continue
         v = front[k]
         if k == "tools":
@@ -375,7 +389,7 @@ def emit_markdown(name: str, front: dict, body: str, t: Target, src_rel: str) ->
                 v = t.model_map[v]
         lines.append(f"{k}: {v}")
     for k in front:
-        if k not in t.key_order:
+        if k not in t.key_order and k not in t.drop_keys:
             lines.append(f"{k}: {front[k]}")
     lines.append("---")
     lines.append("")
@@ -575,12 +589,19 @@ def render_agent(md_path: Path, t: Target) -> str:
         text = denamespace(text)
     front, body = parse_frontmatter(text)
     src_rel = f"sdlc-suite/agents/{md_path.name}"
-    # Every agent follows the session model. A pin is not portable: qa-runner's
-    # `sonnet` became `claude-sonnet-5` under Command Code, which offers no Claude
-    # models, and an unmapped id would pass through verbatim with no warning.
-    if front.get("model", "inherit") != "inherit":
-        raise SystemExit(f"{src_rel}: model {front['model']!r} -- agents must "
-                         f"use `model: inherit` (or omit it) to follow the session")
+    # Model routing (sdlc-suite/MODEL-ROUTING.md): an agent may name a Claude
+    # Code tier alias and an effort level, never a concrete model id. A concrete
+    # id is not portable -- qa-runner's `sonnet` once became `claude-sonnet-5`
+    # under Command Code, which offers no Claude models -- so only the aliases
+    # are accepted, and every non-Claude target maps them away (model_map /
+    # drop_keys) or to its own tiers (Hermes `role_model_aliases`).
+    model = front.get("model", "inherit")
+    if model not in MODEL_TIERS:
+        raise SystemExit(f"{src_rel}: model {model!r} -- use one of "
+                         f"{sorted(MODEL_TIERS)} (a tier alias, never a model id)")
+    effort = front.get("effort")
+    if effort is not None and effort not in EFFORT_LEVELS:
+        raise SystemExit(f"{src_rel}: effort {effort!r} -- use one of {EFFORT_LEVELS}")
     return EMITTERS[t.agent_format](md_path.stem, front, body, t, src_rel)
 
 

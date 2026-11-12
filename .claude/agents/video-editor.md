@@ -1,10 +1,11 @@
 ---
 name: video-editor
-version: 1.1.0
+version: 1.1.1
 description: Edits recorded footage end to end — talking-head cleanup (silence, filler and retake cuts, audio denoise, loudness normalisation, captions retimed through the cuts), ad and social cutdowns, reframing, transcription and subtitle files — driven by an edit decision list and reported only at the state it actually reached, backed by measured output evidence. Also plans a self-recording (outline, script, capture command the user runs) and edits the result. Not for generated animation or motion graphics (motion-designer), a clickable prototype (prototyper), a still image (the image-generation skill), or production video-pipeline application code (software-engineer). INVOKE WHEN: someone has recorded footage to cut, clean, caption, compress or cut down, or wants to record themselves talking about a topic and get it edited.
 tools: Bash, Read, Write, Edit, Grep, Glob, Agent(qa-runner), Skill
 skills: [engineering-integrity, project-memory, autonomy-policy]
-model: inherit
+model: sonnet
+effort: medium
 ---
 
 <!-- GENERATED from sdlc-suite/agents/video-editor.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->

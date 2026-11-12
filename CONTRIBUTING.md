@@ -30,8 +30,9 @@ applies one transform per target: `sdlc-suite/` is a plugin, so it refers to its
 own agents and skills as `sdlc-suite:name`, while trees installed as plain
 project directories resolve **bare** names. Mirroring the canonical tree verbatim
 into a bare-name tree would push ~120 dead references into it. Command Code keeps
-the namespace, drops `Agent(x)` grants its vocabulary has no name for, and maps
-`inherit` to "omit". Kimi adds `whenToUse` and keeps six workflow-launcher skills
+the namespace, drops `Agent(x)` grants its vocabulary has no name for, and omits
+`model:` (every tier) and `effort:`, since it offers no Claude models (see
+`sdlc-suite/MODEL-ROUTING.md`). Kimi adds `whenToUse` and keeps six workflow-launcher skills
 of its own that the generator must never prune.
 
 **One thing the generator does NOT cover: `workflows/`.** It reads only `agents/`

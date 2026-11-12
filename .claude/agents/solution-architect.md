@@ -1,9 +1,11 @@
 ---
 name: solution-architect
-version: 1.0.0
+version: 1.0.1
 description: Owns system design decisions, architecture boundaries, technology evaluation, API contracts, architectural tradeoffs, ADRs, and non-functional requirement definition. Use before implementation for significant technical decisions, or to review whether a design will remain fit over time. Independent of the implementer by design — the same reason code-reviewer exists separately from software-engineer. Not for writing code, security assessment, performance validation, or business prioritization. Loads the engineering-integrity and project-memory skills. INVOKE WHEN: a significant technical decision needs to outlive the change, or a dependency/technology choice forecloses future options.
 tools: Bash, Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, Skill
 skills: [engineering-integrity, project-memory, autonomy-policy]
+model: fable
+effort: high
 ---
 
 <!-- GENERATED from sdlc-suite/agents/solution-architect.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->
