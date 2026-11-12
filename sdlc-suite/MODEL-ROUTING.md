@@ -38,6 +38,35 @@ you have (security).
    never certifies its own work (ROUTING.md §2). Review runs on a different
    agent, and usually a different tier, from the one that wrote the code.
 
+## Operating principles
+
+These sit beside the three rules and apply to every agent and every session.
+
+4. **No plan-mode ceremony.** Current models plan well inside their own turn,
+   so a separate read-only plan mode is not a required step. Planning still
+   happens: for work that crosses a stage, the plan is a committed `plan.md`
+   written by a planning-tier agent, because that file is what review and the
+   next stage read. For a change inside one stage, the agent plans and acts in
+   one pass.
+5. **Every mistake is written down where it will be read again.** A correction,
+   a wrong assumption or a fix that took two tries becomes, in this order of
+   preference: a test or replay eval that fails without the fix; a line in the
+   repository's `CLAUDE.md` when it is a rule for that repository; a skill when
+   it is a procedure reused across repositories; or a memory entry. A lesson
+   kept only in chat is lost.
+6. **Talk to loops, not to agents.** Recurring work runs as a loop or a
+   scheduled routine (Claude Code `/loop`, cloud routines, or a repo-loop tick)
+   that prompts the agents on its own while tokens are available. People
+   reorder the loop's queue and approve its gates; they do not drive each turn.
+7. **Minimal context, minimal tools.** An agent gets the smallest prompt and
+   the fewest tools that let it do the job, and the model works out the rest.
+   Delete instructions for what the model already does by default; keep the
+   ones that encode a decision, a gate or a past failure. Every tool in
+   `tools:` must be used by the body. `python sdlc-suite/tools/context_budget.py`
+   reports the size of every agent (budget 1,500 words) and skill (1,000
+   words); shrinking an over-budget one is improvement-loop work, done one
+   agent at a time with its evals kept green.
+
 ## Stage map
 
 | Stage | Agent | Tier | Effort | Artifact |
