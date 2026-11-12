@@ -40,6 +40,24 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 - Found while testing: FFmpeg 9.0.2 has no `-filter_complex_script`; the form is
   `-/filter_complex <file>`. `motion-graphics`'s reference still names the old option.
 
+### Changed
+
+- **`qa-engineer` 2.0.0 — shrunk from 7,437 to 2,814 words** (context budget,
+  MODEL-ROUTING.md principle 7). It drops what its own skills (`qa-techniques`,
+  `qa-quality-attributes`, `qa-triage`) already hold, along with the Definition of Done,
+  the failure-mode appendix and the fixed 12-part response format. Every directive that
+  records a past failure stays. Sections are renumbered: §10 is still Triage, §12 is now
+  Quality attributes and testability, and §15 is Reporting (formerly §17). The reporting
+  contract changes: the report lists what the Tier 3 report must contain rather than a
+  numbered format. It also names the `Claimed-not-verified` label the release-readiness
+  brief already used, and keeps Must fix / Should fix / Nit. The cross-references in
+  `release-manager` 1.0.2, `ui-engineer` 1.1.2 and `ux-designer` 2.0.2 now point at the
+  new sections. `product-archaeologist` 1.0.2 no longer cites `technical-writer`'s
+  nonexistent §4.7.
+- **`sdlc-suite/tools/test_agent_contracts.py`** (in `scripts/test-agent`): every workflow
+  `your §N` and every `§N of that agent` must resolve to a heading that exists and
+  means the same thing, and the phrases briefs hand qa-engineer must stay in its body.
+
 ### Fixed
 
 - **Workflow briefs (`_brief.js`) stay within budget when the file list is long.** When

@@ -1,6 +1,6 @@
 ---
 name: ux-designer
-version: 2.0.1
+version: 2.0.2
 description: Owns user experience design — research inputs, user flows, interaction models, wireframes, accessibility requirements, and design-system alignment. Use before implementation for user-facing experiences, to define how users accomplish goals before code is written. Not for product prioritization, technical architecture, building UI code, or a clickable learning prototype (prototyper). Loads the engineering-integrity and project-memory skills. INVOKE WHEN: a user-facing interaction model is being decided, before it is implemented. If its decisions rest on unvalidated assumptions, say so — they are assumptions with stated risk, not evidence.
 tools: read_file, write_file, grep, glob
 skills: [engineering-integrity, project-memory]
@@ -104,7 +104,7 @@ Reuse established components and interaction conventions; maintain visual and be
 
 **`sdlc-suite:product-manager`** — product goals and constraints inform design decisions; this agent doesn't decide business priority or scope.
 
-**`sdlc-suite:qa-engineer`** — its Usability quality-attribute check (§12.4 of that agent) traces against *this agent's actual specification* where one exists, not a generic usability impression. Provide a spec explicit enough that "does the implementation match the intended states" is a checkable question, not a judgment call qa-engineer has to invent on its own.
+**`sdlc-suite:qa-engineer`** — its Usability quality-attribute check (§12 of that agent) traces against *this agent's actual specification* where one exists, not a generic usability impression. Provide a spec explicit enough that "does the implementation match the intended states" is a checkable question, not a judgment call qa-engineer has to invent on its own.
 
 **`sdlc-suite:solution-architect`** — bidirectional: UX decisions that affect system boundaries, APIs, or architecture (a flow requiring a new endpoint shape, a state requiring new backend support) get flagged to that agent; architectural constraints that limit feasible UX flow back here rather than being discovered mid-implementation.
 

@@ -168,6 +168,13 @@ CHECKS: list[Check] = [
     _suite("scripts/test_test_agent.py",
            "This runner: a failure must name the check, file:line and rerun command, an unlisted "
            "test file must fail, every check must get a fresh HOME."),
+    _suite("sdlc-suite/tools/test_agent_contracts.py",
+           "Every workflow 'your §N' and every '§N of that agent' resolves to a heading that "
+           "exists, and the phrases briefs hand an agent stay in its body. Seen red by "
+           "qa-engineer lacking the Claimed-not-verified label release-readiness's brief uses, "
+           "by its triage moving off §10, and by release-manager/ui-engineer/ux-designer still "
+           "citing its old §17.4/§12.4 (and product-archaeologist citing technical-writer's "
+           "nonexistent §4.7)."),
     _suite("sdlc-suite/tools/test_autonomy_mirror.py",
            "validate-autonomy.py and _policy.js validate() give the same errors for 600 seeded "
            "mutated policies. Seen red (5+ policies) by _policy.js's old near-miss rule, which "

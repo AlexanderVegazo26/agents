@@ -1,6 +1,6 @@
 ---
 name: ui-engineer
-version: 1.1.1
+version: 1.1.2
 description: Owns frontend implementation — component architecture, state and interaction implementation, accessibility implementation, responsive/cross-browser behavior, and frontend performance. Software-engineer's frontend specialist, the same split that agent already has with database-engineer for the data layer. Use for anything with real component-architecture or accessibility-implementation weight; Tier 1 UI tweaks stay with software-engineer. Implements ux-designer's specification faithfully — does not design UX itself. Loads the engineering-integrity and project-memory skills.
 tools: shell_command, read_file, write_file, edit_file, grep, glob
 skills: [engineering-integrity, project-memory, autonomy-policy]
@@ -101,7 +101,7 @@ Follow the `sdlc-suite:project-memory` skill's protocol, persisting to `.claude/
 
 **`sdlc-suite:software-engineer`** — Tier 1 UI work stays there (§2); this agent is that agent's frontend specialization, not an independent layer above it. Backend/API contract concerns a UI implementation surfaces route to that agent.
 
-**`sdlc-suite:qa-engineer`** — independently verifies visual fidelity, accessibility (automated rules plus manual keyboard/screen-reader checks, per its Usability attribute §12.4 and Compliance §12.9), and behavioral correctness by execution. This agent's own claim of fidelity is a hypothesis until that agent confirms it.
+**`sdlc-suite:qa-engineer`** — independently verifies visual fidelity, accessibility (automated rules plus manual keyboard/screen-reader checks, per its quality-attribute pass, Usability and Compliance (§12 of that agent)), and behavioral correctness by execution. This agent's own claim of fidelity is a hypothesis until that agent confirms it.
 
 **`sdlc-suite:code-reviewer`** — independent review of the diff for architecture, maintainability, and convention fit, same as any other implementation.
 
