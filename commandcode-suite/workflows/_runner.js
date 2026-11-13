@@ -280,44 +280,125 @@ function runGit(args, cwd) {
 
 // ---------------------------------------------------------------------------
 // Git worktree isolation for build phases (mirrors the original 'worktree'
-// isolation).
+// isolation, which keeps a worktree that has changes and hands back its
+// branch).
 //
-// Contract: `fn(dir, { isolated })`. The second argument tells the caller
-// whether isolation was real, so a phase artifact can record it rather than
-// asserting it. Outside a git repository the helper degrades to the shared
-// tree and says so; inside one, a failed `worktree add` THROWS rather than
-// degrading, because concurrent builders sharing one tree is exactly the
+// Contract: `fn(dir, { isolated })`, and withWorktree resolves to
+//   { value, isolated, branch, commit, base, changed, note }
+// where `value` is whatever `fn` returned. The second argument tells the
+// caller whether isolation was real, so a phase artifact can record it rather
+// than asserting it. Outside a git repository the helper degrades to the
+// shared tree and says so; inside one, a failed `worktree add` THROWS rather
+// than degrading, because concurrent builders sharing one tree is exactly the
 // failure this helper exists to prevent.
+//
+// The worktree is checked out on a NEW BRANCH, and before it is removed every
+// file the callback left behind is committed onto that branch, so the work
+// outlives the temporary directory. Before 2026-11-13 the worktree was
+// detached and force-removed with nothing preserved: a builder's edits were
+// deleted the moment it returned, and the verification phase then reviewed an
+// unchanged tree against the builder's self-report. If the work cannot be
+// committed (or `fn` throws) the worktree is left in place and its path is
+// logged — work is never destroyed unpreserved. A branch with no change is
+// deleted again.
 // ---------------------------------------------------------------------------
-async function withWorktree(fn, { cwd = process.cwd(), label = 'build' } = {}) {
+function gitOrThrow(args, cwd, what) {
+  const r = runGit(args, cwd)
+  if (r.status !== 0) {
+    const why = String(r.stderr || '').trim() || (r.error && r.error.message) || `git exited ${r.status}`
+    throw new Error(`${what} failed: ${why}`)
+  }
+  return String(r.stdout || '').trim()
+}
+
+// Commits made on the caller's behalf. The caller's own identity is used
+// when git has one; a fresh machine without user.email would otherwise fail
+// the commit and lose the work. Signing is off: a pinentry prompt cannot be
+// answered from an unattended run. Hooks are skipped for the same reason —
+// these commits only carry work across the worktree's removal; the
+// verification phase is what checks it.
+function commitArgs(cwd) {
+  const args = ['-c', 'commit.gpgsign=false']
+  if (runGit(['config', 'user.email'], cwd).status !== 0) {
+    args.push('-c', 'user.name=commandcode-suite', '-c', 'user.email=commandcode-suite@localhost')
+  }
+  return args
+}
+
+/** Commit everything the worktree holds onto its branch; returns HEAD. */
+function preserveWork(dir, label) {
+  gitOrThrow(['add', '-A'], dir, `git add in ${label} worktree`)
+  const staged = runGit(['diff', '--cached', '--quiet'], dir)
+  if (staged.status === 1) {
+    gitOrThrow([...commitArgs(dir), 'commit', '--no-verify', '-q', '-m', `${label}: work left in the worktree, preserved by commandcode-suite`], dir, `commit in ${label} worktree`)
+  } else if (staged.status !== 0) {
+    throw new Error(`git diff --cached in ${label} worktree exited ${staged.status}`)
+  }
+  return gitOrThrow(['rev-parse', 'HEAD'], dir, `rev-parse in ${label} worktree`)
+}
+
+function branchSlug(label) {
+  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'build'
+}
+
+let branchCounter = 0
+
+async function withWorktree(fn, { cwd = process.cwd(), label = 'build', base = 'HEAD' } = {}) {
   const probe = runGit(['rev-parse', '--is-inside-work-tree'], cwd)
   const isGit = probe.status === 0 && String(probe.stdout || '').trim() === 'true'
   if (!isGit) {
     log(`worktree isolation unavailable for ${label}: not a git repository (${cwd})`)
-    const result = await fn(cwd, { isolated: false })
-    return { ...result, worktreeDir: null, isolated: false, note: 'not a git repo — build ran in the current working tree; review the diff before merging' }
+    const value = await fn(cwd, { isolated: false })
+    return { value, isolated: false, branch: null, commit: null, base: null, changed: null, note: 'not a git repo — build ran in the current working tree; review the diff before merging' }
   }
+
+  const baseCommit = gitOrThrow(['rev-parse', '--verify', `${base}^{commit}`], cwd, `resolving ${base} for ${label}`)
+  const branch = `cmdcode-suite/${branchSlug(label)}-${Date.now().toString(36)}-${process.pid}-${++branchCounter}`
 
   // Created only once isolation is actually going to be attempted, so neither
   // the degraded path nor the throw path leaks a temp directory.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cmdcode-suite-'))
   const worktreeDir = path.join(tmp, 'wt')
-  const add = runGit(['worktree', 'add', '--detach', worktreeDir, 'HEAD'], cwd)
+  const add = runGit(['worktree', 'add', '-q', '-b', branch, worktreeDir, baseCommit], cwd)
   if (add.status !== 0) {
     fs.rmSync(tmp, { recursive: true, force: true })
     const why = String(add.stderr || '').trim() || (add.error && add.error.message) || `git exited ${add.status}`
     throw new Error(`worktree add failed for ${label}: ${why}`)
   }
 
+  let preserved = false
   try {
-    const result = await fn(worktreeDir, { isolated: true })
-    return { ...result, worktreeDir, isolated: true }
+    const value = await fn(worktreeDir, { isolated: true })
+    const commit = preserveWork(worktreeDir, label)
+    preserved = true
+    const changed = commit !== baseCommit
+    return { value, isolated: true, branch: changed ? branch : null, commit, base: baseCommit, changed }
   } finally {
-    // NOTE: this destroys the worktree, so anything the callback WROTE to disk
-    // is gone once withWorktree returns — only its return value survives.
-    runGit(['worktree', 'remove', '--force', worktreeDir], cwd)
-    fs.rmSync(tmp, { recursive: true, force: true })
+    if (preserved) {
+      runGit(['worktree', 'remove', '--force', worktreeDir], cwd)
+      fs.rmSync(tmp, { recursive: true, force: true })
+      const head = runGit(['rev-parse', '--verify', `refs/heads/${branch}`], cwd)
+      if (head.status === 0 && String(head.stdout || '').trim() === baseCommit) runGit(['branch', '-D', branch], cwd)
+    } else {
+      log(`${label}: its work could not be preserved as a commit, so the worktree is LEFT IN PLACE at ${worktreeDir} (branch ${branch}) — inspect it, then \`git worktree remove\` it`)
+    }
   }
+}
+
+/**
+ * Merge `branches` (in order) into the current HEAD of `dir`. Returns
+ * { ok: true } or { ok: false, branch, error } after aborting the failed
+ * merge, so the tree is left at the last clean merge.
+ */
+function mergeBranches(dir, branches) {
+  for (const branch of branches) {
+    const r = runGit([...commitArgs(dir), 'merge', '--no-ff', '--no-edit', '-q', branch], dir)
+    if (r.status !== 0) {
+      runGit(['merge', '--abort'], dir)
+      return { ok: false, branch, error: String(r.stderr || r.stdout || '').trim() || `git merge exited ${r.status}` }
+    }
+  }
+  return { ok: true }
 }
 
 module.exports = {
@@ -332,5 +413,6 @@ module.exports = {
   parallel,
   pipeline,
   withWorktree,
+  mergeBranches,
   extractJson,
 }

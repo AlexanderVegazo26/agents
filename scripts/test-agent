@@ -110,6 +110,10 @@ CHECKS: list[Check] = [
     _suite("sdlc-suite/workflows/_learnings.test.js", "Learnings loader module."),
     _suite("sdlc-suite/workflows/_policy.test.js", "Autonomy policy bridge module."),
     _suite("sdlc-suite/workflows/_state.test.js", "Run state module."),
+    _suite("commandcode-suite/workflows/_runner.test.js",
+           "commandcode-suite worktree isolation and sdlc-feature end to end against a fake cmdc. "
+           "Before 2026-11-13 the build worktree was force-removed with nothing preserved and the "
+           "verifiers ran in the caller's unchanged tree; this suite went red on that code."),
     _suite("sdlc-suite/workflows/_wiring.test.js", "Runtime wiring, default tree."),
     _suite("sdlc-suite/evals/replay.test.js",
            "Replay evals (cases.v1.json): model/CLI output through the code that turns it into run "
