@@ -21,34 +21,6 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   with `allow:` lines in the lock, `unlock`, or `SDLC_ALLOW_TEST_EDITS=1`. Replay
   evals in `evals/hook-cases.v1.json` (36 recorded tool calls) are graded through
   the real hook by `tools/test_guard_test_edits.py`, seen red by 30 mutants.
-- **`public-link` skill 1.0.0** — puts something running locally (a prototype, dev
-  server, rendered preview, video or static folder) on a public HTTPS link through a
-  Cloudflare tunnel, only after the user says yes. It asks once, after the thing works
-  (or acts on an answer already in the request), refuses to expose real credentials,
-  unapproved real data, raw services or media with open publication approvals, serves on
-  127.0.0.1, defaults to a temporary `trycloudflare.com` quick tunnel (a stable hostname
-  only through the user's existing named tunnel), never touches `~/.cloudflared`
-  credentials, and reports a `Public link:` line with the stop command. Unattended runs
-  treat it as a publish gate (`autonomy.json`).
-- **Wired into the agents that build something viewable:** `prototyper` 1.3.0 (§12.1, at
-  handover), `ui-engineer` 1.1.0, `software-engineer` 1.1.0, `motion-designer` 1.2.0 and
-  `video-editor` 1.1.0 (not while a consent or rights review is open). Each one's
-  "never publish" rule names this one exception. `orchestrator` 3.1.0 relays the
-  question to the user verbatim and sends the answer back.
-- **`video-editor` agent 1.0.0 and `video-editing` skill 1.1.0** for recorded
-  footage: talking-head cleanup (silence, filler and retake cuts, denoise,
-  two-pass EBU R128 loudness, captions retimed through the cuts), ad cutdowns,
-  reframing, and a self-recording playbook (outline plus a capture command the
-  user runs; the agent never starts a capture). An edit decision list is the
-  source of truth, and `scripts/edl_tools.py` derives the filter graph and the
-  caption timing from it. Re-authored from the capabilities listed at
-  kimi.ai/resources/multimedia-skills-for-agents; no upstream code is vendored
-  (licences unspecified), and remote-API or likeness entries (TTS, avatars,
-  deepfake detection) are deliberately not implemented. `motion-designer`,
-  `prototyper`, `qa-runner` and `orchestrator` name it; `project-memory` adds a
-  `video/` directory.
-- Found while testing: FFmpeg 9.0.2 has no `-filter_complex_script`; the form is
-  `-/filter_complex <file>`. `motion-graphics`'s reference still names the old option.
 
 ### Changed
 
@@ -68,6 +40,56 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   `your §N` and every `§N of that agent` must resolve to a heading that exists and
   means the same thing, and the phrases briefs hand qa-engineer must stay in its body.
 
+### Security
+
+- **`tools/redact.py` quarantines credential shapes and `/root` paths.** AWS key ids
+  and secret keys, lowercase Slack and Stripe tokens, hex keys, `PASSWORD=`-style
+  assignments and PEM private-key headers all passed the filter between private run
+  records and the public learnings pull request; each is now a compiled class with a
+  self-test positive.
+- Outside the plugin: the pi and Hermes `workflow` tools run only the suite's shipped
+  `sdlc-suite/workflows/*.js` (a workflow script could reach the host's `process`
+  through the `node:vm` sandbox), and the commandcode-suite `sdlc-feature` port keeps
+  the builders' work on a branch and verifies that tree instead of deleting it.
+  `SECURITY.md` gives a reporting route that works and describes the network
+  behaviour accurately.
+
+## [3.0.1] — 2026-11-12
+
+Plugin 3.0.0 → 3.0.1 in commit `cc61a56`. This section was written on
+2026-11-13 from the git history (`git log 2154012..cc61a56`); entries carried
+over from the former Unreleased section keep their wording, and anything not
+listed here is in the commit log.
+
+### Added
+
+- **`public-link` skill 1.0.0** — puts something running locally (a prototype, dev
+  server, rendered preview, video or static folder) on a public HTTPS link through a
+  Cloudflare tunnel, only after the user says yes. It asks once, after the thing works
+  (or acts on an answer already in the request), refuses to expose real credentials,
+  unapproved real data, raw services or media with open publication approvals, serves on
+  127.0.0.1, defaults to a temporary `trycloudflare.com` quick tunnel (a stable hostname
+  only through the user's existing named tunnel), never touches `~/.cloudflared`
+  credentials, and reports a `Public link:` line with the stop command. Unattended runs
+  treat it as a publish gate (`autonomy.json`).
+- **Wired into the agents that build something viewable:** `prototyper` 1.3.0 (§12.1, at
+  handover), `ui-engineer` 1.1.0, `software-engineer` 1.1.0, `motion-designer` 1.2.0 and
+  `video-editor` 1.1.0 (not while a consent or rights review is open). Each one's
+  "never publish" rule names this one exception. `orchestrator` 3.1.0 relays the
+  question to the user verbatim and sends the answer back.
+- **`/video` command** dispatching the `video-editor` agent (`637544b`), and
+  `video-editing` 1.1.0: fixes from a re-review (`12684d0`), an `stt-transcribe`
+  probe and `/video` platform presets (`33c4442`). See the commit log for detail.
+
+### Changed
+
+- **Model routing: every agent pins a model tier and an effort level** in its
+  frontmatter, chosen by the lifecycle stage it serves. The policy and the stage
+  map are in `MODEL-ROUTING.md`, linked from `ROUTING.md` §7.
+  `generate_trees.py` accepts only tier aliases and valid effort levels; Command
+  Code drops both keys and Hermes maps the top tier to its deep tier. Every agent
+  took a patch bump (`cc61a56`).
+
 ### Fixed
 
 - **Workflow briefs (`_brief.js`) stay within budget when the file list is long.** When
@@ -77,6 +99,60 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   builder summary clamped away and only the paths left. The marker now caps the list
   like the first one does (`Omitted files (N): …and K more`), so the summaries survive
   and `overBudget` stays false.
+- **`collectBlockedGates` keeps CRLF fields and indented entries** (`7885535`).
+
+Outside the plugin in the same range, see the commit log: the
+`hermes-proactive/` source for the triggerd/watch/goals services and its tests,
+`hermes-meetings` skills deployed by symlink, CI consolidated into
+`scripts/test-agent` on Node 26 and Python 3.15, gitleaks 8.30.1 with a test that
+each rule fires, replay evals and seeded property tests for the workflow runtime,
+and Hermes `/idea` publishing-boundary tests.
+
+## [3.0.0] — 2026-10-07
+
+Plugin 2.0.0 → 3.0.0 in commit `2154012`, a major release because
+`orchestrator` moved to 3.0.0 in it (a major on any agent is a major on the
+plugin). Written on 2026-11-13 from the git history (`git log 1227f5f..2154012`);
+anything not listed here is in the commit log.
+
+### Added
+
+- **`video-editor` agent 1.0.0 and `video-editing` skill 1.0.0** for recorded
+  footage: talking-head cleanup (silence, filler and retake cuts, denoise,
+  two-pass EBU R128 loudness, captions retimed through the cuts), ad cutdowns,
+  reframing, and a self-recording playbook (outline plus a capture command the
+  user runs; the agent never starts a capture). An edit decision list is the
+  source of truth, and `scripts/edl_tools.py` derives the filter graph and the
+  caption timing from it. Re-authored from the capabilities listed at
+  kimi.ai/resources/multimedia-skills-for-agents; no upstream code is vendored
+  (licences unspecified), and remote-API or likeness entries (TTS, avatars,
+  deepfake detection) are deliberately not implemented. `motion-designer`,
+  `prototyper`, `qa-runner` and `orchestrator` name it; `project-memory` adds a
+  `video/` directory.
+- **`go-to-market` skill**, owned by `product-manager` (`2bf533e`).
+- **`prototyper` Fast mode**, the default for transcript prototypes (`75b0bc6`).
+- **pi harness port**: the generated `.pi/prompts/` and root `AGENTS.md`
+  (`9b5c597`), and the hand-maintained `.pi/extensions/sdlc/` extension with the
+  `agent` and `workflow` tools and a `.pi` validator (`c1bfecb`, `7dc2da5`,
+  `a3142f9`).
+- **Hermes port**: generated skills, `.hermes.md`, and the `.hermes/plugins/sdlc/`
+  plugin (`0a5d6c6`); the `/idea` pipeline from a Telegram idea to a running
+  prototype link (`1d75604`, `cee2ef2`), `/idea-cloud` on the Command Code tier
+  (`1a96434`, `56f9d3b`), and model routing for the plugin (`f4bc7bf`).
+- **`hermes-meetings/`**: a self-hosted meeting-bot stack wired into Hermes
+  (`c23c162`).
+- `USAGE.md`: running the suite on a local HALO endpoint (`bf4925f`).
+
+### Changed
+
+- `orchestrator` 3.0.0 routes recorded-footage work to `video-editor`;
+  `motion-designer`, `prototyper`, `qa-runner` and `project-memory` name it.
+- `motion-graphics` 1.1.0: found while testing, FFmpeg 9.0.2 has no
+  `-filter_complex_script`; its reference now uses `-/filter_complex <file>`.
+
+### Removed
+
+- The superseded `sync-all.py` (`1d33e41`).
 
 ## [2.0.0] — 2026-09-29
 
