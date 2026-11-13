@@ -15,13 +15,17 @@
  *  - the verifiers (code-reviewer, qa-engineer, security, performance) and the
  *    readiness agents run in a tree that CONTAINS the change;
  *  - the caller's working tree is never modified, and no worktree is leaked.
+ *
+ * And runAgent's fail-closed contract: a session that exits non-zero or is
+ * killed at its timeout yields null even when it printed something (before
+ * 2026-11-13 any stdout was returned as a schema-less agent's answer).
  */
 const { spawnSync } = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { withWorktree, mergeBranches } = require('./_runner')
+const { withWorktree, mergeBranches, runAgent } = require('./_runner')
 
 const failures = []
 function check(name, cond, detail = '') {
@@ -141,6 +145,9 @@ const fs = require('fs'), path = require('path')
 const prompt = process.argv[process.argv.indexOf('-p') + 1] || ''
 const task = prompt.slice(prompt.indexOf('===== TASK ====='))
 const cwd = process.cwd()
+if (process.env.FAKE_MODE === 'fail-with-output') { process.stdout.write('partial output before the crash'); process.exit(3) }
+if (process.env.FAKE_MODE === 'hang') { process.stdout.write('partial'); setInterval(() => {}, 1000); return }
+if (process.env.FAKE_MODE === 'ok') { process.stdout.write('a real answer'); process.exit(0) }
 const record = (role) => fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ role, cwd, seen: fs.existsSync(path.join(cwd, 'feature.txt')) }) + '\\n')
 if (task.includes('Convert this initiative into implementation-ready requirements')) {
   // Fenced: extractJson() takes the LAST '{' of unfenced output, which for
@@ -199,8 +206,27 @@ function endToEnd() {
   fs.rmSync(stubDir, { recursive: true, force: true })
 }
 
+async function failClosedTests() {
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmdcode-fake-cmdc-'))
+  const stub = path.join(stubDir, 'cmdc')
+  fs.writeFileSync(stub, FAKE_CMDC, { mode: 0o755 })
+  // resolveCmdc() caches its first answer, so this must be set before the
+  // first runAgent call in this process; FAKE_MODE is read per spawn.
+  process.env.CMDC_BIN = stub
+  const ask = mode => {
+    process.env.FAKE_MODE = mode
+    return runAgent({ name: 'general', task: 'say something', timeoutMs: 1500, retries: 1 })
+  }
+  check('a clean exit returns the output', (await ask('ok')) === 'a real answer')
+  check('a non-zero exit with output is null', (await ask('fail-with-output')) === null)
+  check('a timeout with partial output is null', (await ask('hang')) === null)
+  delete process.env.FAKE_MODE
+  fs.rmSync(stubDir, { recursive: true, force: true })
+}
+
 async function main() {
   await unitTests()
+  await failClosedTests()
   endToEnd()
   fs.rmSync(bareHome, { recursive: true, force: true })
   if (failures.length) {

@@ -5,7 +5,8 @@
  * Drives the Command Code CLI headlessly (cmdc -p) one phase at a time:
  *  - resolves the real cmdc entry point (npm package bin via node, native exe, or CMDC_BIN)
  *  - inlines an agent definition from ../agents/<name>.md into the prompt
- *  - enforces a JSON output contract per phase (fail-closed: unparseable -> null)
+ *  - enforces a JSON output contract per phase (fail-closed: unparseable,
+ *    non-zero exit or timeout -> null)
  *  - provides parallel / pipeline / phase / log helpers mirroring the original suite
  *
  * The prompt is passed as a single argv element to a real executable (node/cli.js),
@@ -89,7 +90,9 @@ function runCmdc(args, { timeoutMs = DEFAULT_TIMEOUT_MS, cwd } = {}) {
     })
     let out = ''
     let err = ''
+    let timedOut = false
     const timer = setTimeout(() => {
+      timedOut = true
       try {
         child.kill('SIGKILL')
       } catch {
@@ -104,11 +107,11 @@ function runCmdc(args, { timeoutMs = DEFAULT_TIMEOUT_MS, cwd } = {}) {
     })
     child.on('error', e => {
       clearTimeout(timer)
-      resolve({ code: -1, out, err: `spawn failed: ${e.message}` })
+      resolve({ code: -1, out, err: `spawn failed: ${e.message}`, timedOut })
     })
-    child.on('close', code => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer)
-      resolve({ code, out, err })
+      resolve({ code, signal, out, err, timedOut })
     })
   })
 }
@@ -205,8 +208,13 @@ async function runAgent({ name, task, schema, effort, timeoutMs, cwd, extra, ret
   for (let attempt = 1; attempt <= retries; attempt++) {
     args[1] = buildPrompt(attempt > 1 ? `Note: a previous attempt produced output that did not conform to the output contract (${lastReason}). Re-read the schema carefully and return the TOP-LEVEL envelope exactly as specified.` : null)
     const res = await runCmdc(args, { timeoutMs, cwd })
-    if (res.code !== 0 && !res.out) {
-      log(`agent '${name}' exited ${res.code} with no output${res.err ? ` — ${res.err.slice(0, 300)}` : ''}`)
+    // Fail-closed on the process, not only on the output: a session that was
+    // killed at the timeout, or exited non-zero, can still have printed
+    // something, and before 2026-11-13 any stdout at all was returned as the
+    // agent's answer for a schema-less agent. Partial output is not a result.
+    if (res.timedOut || res.code !== 0) {
+      const how = res.timedOut ? `timed out after ${timeoutMs ?? DEFAULT_TIMEOUT_MS} ms` : `exited ${res.code ?? res.signal}`
+      log(`agent '${name}' ${how}${res.out ? ` after ${res.out.length} chars of output` : ' with no output'} — treated as null (fail-closed)${res.err ? ` — ${res.err.slice(0, 300)}` : ''}`)
       return null
     }
     if (!schema) return res.out.trim() || null
