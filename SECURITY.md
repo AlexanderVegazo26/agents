@@ -2,16 +2,52 @@
 
 ## Reporting
 
-Report suspected vulnerabilities through GitHub's private vulnerability reporting
-on this repository. Do not open a public issue.
+Private vulnerability reporting is **not enabled** on this repository, so do
+not look for the "Report a vulnerability" button, and do not put details in
+anything public.
+
+To report a suspected vulnerability today, open a GitHub issue on this
+repository whose title is "Security report: please contact me" and whose body
+says nothing else: no description, no affected file, no proof of concept. The
+maintainer will reply on the issue to arrange a private channel, and the
+details travel only there. If private vulnerability reporting is enabled later,
+use it instead, and this section will say so.
 
 ## Scope
 
-This repository ships agent definitions, skills and orchestration scripts. It
-requests no credentials and contacts no network service. The realistic risk
-classes are: a prompt that causes an agent to exfiltrate repository contents,
-an orchestration script that executes untrusted input, and a learning artifact
-that carries data from one adopter's repository into a published file.
+This repository ships agent definitions, skills, orchestration scripts, and
+optional integrations for several agent harnesses. What touches the network,
+stated per part rather than in one sentence (checked against the tree on
+2026-11-13):
+
+- **The agent definitions, skills and workflow scripts** contain no network
+  code and request no credentials. They run inside whichever harness you use
+  (Claude Code, pi, Hermes, Command Code, Kimi Code, Codex, Copilot), which
+  sends their prompts to the model provider you configured, and an agent can
+  use whatever network-capable tools that harness grants it.
+- **The Hermes plugin** (`.hermes/plugins/sdlc/`) does contact network
+  services. `/idea` and `/idea-cloud` (`prototype_pipeline.py`) send Telegram
+  messages through `api.telegram.org` using `TELEGRAM_BOT_TOKEN` from
+  `~/.hermes/.env`, start a public Cloudflare quick tunnel with `cloudflared`
+  so the prototype is reachable at a public URL, and request that URL to check
+  it is up; `/idea-cloud` also routes every role to the cloud model tier.
+  `hermes sdlc models` (`__init__.py`) requests each model-catalog `probe` URL,
+  sending a key from the environment variable a choice names only to a
+  loopback probe.
+- **`hermes-proactive/`** fetches the URLs and RSS/Atom feeds you configure,
+  and delivers through Hermes (Telegram, for example). **`hermes-meetings/`**
+  drives a self-hosted meeting bot that joins the calls you send it to.
+  **`.codex/run-qwen-local.sh`** queries a local Ollama server.
+- **The GitHub workflows**: `ci.yml` downloads a pinned, checksum-verified
+  gitleaks release; `distil.yml` and `decay.yml` push a branch and open a pull
+  request with the automatic `GITHUB_TOKEN`.
+
+The realistic risk classes are: a prompt that causes an agent to exfiltrate
+repository contents, an orchestration script that executes untrusted input
+(the pi and Hermes `workflow` tools run only the suite's own shipped scripts,
+because `node:vm` is not a security boundary), a credential or private content
+leaving through one of the integrations above, and a learning artifact that
+carries data from one adopter's repository into a published file.
 
 ### Learning artifacts specifically
 
@@ -29,9 +65,11 @@ from a private tree to a public one, so it is gated:
   **dropped** and nothing is written, not even to quarantine. Tier 1 is checked
   before tier 2 and wins outright: a string the adopter has declared private
   must not sit in a holding pen waiting to be rewritten.
-- A candidate matching a compiled regex class (absolute home paths, email
-  addresses, private IPs, internal hostnames, ticket identifiers, high-entropy
-  tokens) goes to `learnings/quarantine/`, which is gitignored and never
+- A candidate matching a compiled regex class (absolute home paths including
+  `/root`, email addresses, private IPs, internal hostnames, ticket
+  identifiers, high-entropy tokens, and credential shapes: AWS key ids and
+  secret keys, Slack and Stripe tokens, hex keys, `PASSWORD=`-style
+  assignments, PEM private-key headers) goes to `learnings/quarantine/`, which is gitignored and never
   committed, and the job then **fails**. Uncertain is not published, and it is
   not silently discarded either.
 - Both outcomes exit non-zero and stop the job before a branch exists:

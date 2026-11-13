@@ -163,5 +163,5 @@ These directories are independent of the generated trees. Each needs software th
 ## Contributing, security, license
 
 - **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) covers which tree to edit, the checks to run before a pull request, line endings, the registry invariants (seven that `/registry-audit` checks, plus two further rules), and versioning. Issue templates for bugs and feature requests are in `.github/ISSUE_TEMPLATE/`.
-- **Security:** follow [`SECURITY.md`](SECURITY.md) to report a vulnerability, and do not open a public issue for one. It also states what is in scope and the response times.
+- **Security:** follow [`SECURITY.md`](SECURITY.md) to report a vulnerability, and never put its details in a public issue. It also states what in this repository touches the network, what is in scope, and the response times.
 - **License:** MIT. See [`LICENSE`](LICENSE).
