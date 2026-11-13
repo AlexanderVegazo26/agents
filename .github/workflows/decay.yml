@@ -24,8 +24,8 @@
 #
 # Two settings must also be in place, or the job fails AFTER pushing and leaves
 # an orphaned branch: "Allow GitHub Actions to create and approve pull requests"
-# must be on, and the `learnings` label must exist — `gh pr create --label` on a
-# missing label is an error, not a warning.
+# must be on. (The `learnings` label used to be a second such setting; the job
+# now creates it if it is missing, before it pushes.)
 #
 # When all three hold, uncomment the two lines below.
 #
@@ -158,8 +158,21 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read by the PR body below. Every step has its own environment, so
+          # the `DAYS` of the decay step is not set here; without this line
+          # `set -u` aborted the step after `git push` and before
+          # `gh pr create`, orphaning the branch on every real run.
+          DAYS: ${{ inputs.days }}
         run: |
           set -euo pipefail
+
+          # The label `gh pr create --label` needs. Created here, before the
+          # push, rather than assumed: on a missing label `gh pr create` is an
+          # error, and failing after the push orphans the branch. `|| true`
+          # because "already exists" is the normal case.
+          gh label create learnings \
+            --description 'Proposed by the learning loop; merging is the ratification' \
+            --color 0E8A16 >/dev/null 2>&1 || true
 
           branch="learnings/retire-$(date -u +%Y%m%d-%H%M%S)"
           git switch -c "$branch"

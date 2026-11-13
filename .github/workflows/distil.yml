@@ -71,14 +71,15 @@
 #    with `redact.py`, so a defect in the redactor does not disable both. It is
 #    worth having whichever way the exception resolves.
 #
-# Two more preconditions, each of which fails AFTER the branch is pushed and so
-# leaves an orphaned branch behind — the "red for a reason unrelated to the
-# commit" case that trains people to ignore a job:
+# One more precondition, which fails AFTER the branch is pushed and so leaves
+# an orphaned branch behind — the "red for a reason unrelated to the commit"
+# case that trains people to ignore a job:
 #
 #   * The repository setting "Allow GitHub Actions to create and approve pull
 #     requests" must be on, or `gh pr create` returns an unhelpful 403.
-#   * The `learnings` label must exist in the repository. `gh pr create
-#     --label` on a missing label is an error, not a warning.
+#
+# The `learnings` label `gh pr create --label` needs used to be a second one;
+# the job now creates it if it is missing, before it pushes.
 
 name: distil
 
@@ -255,6 +256,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
+          # The label `gh pr create --label` needs. Created here, before the
+          # push, rather than assumed: on a missing label `gh pr create` is an
+          # error, and failing after the push orphans the branch. `|| true`
+          # because "already exists" is the normal case.
+          gh label create learnings \
+            --description 'Proposed by the learning loop; merging is the ratification' \
+            --color 0E8A16 >/dev/null 2>&1 || true
 
           branch="learnings/$(date -u +%Y%m%d-%H%M%S)"
           git switch -c "$branch"
