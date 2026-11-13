@@ -31,8 +31,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / ".gitleaks.toml"
-
-EMPLOYER = "tap" + "check"
+# The untracked local layer's shipped example. The employer-name rule moved
+# there on 2026-11-13: the public config used to spell the name it guarded.
+LOCAL_EXAMPLE = ROOT / ".gitleaks.local.example.toml"
+LOCAL_PLACEHOLDER = "Example-Employer"
 PROJECT = "na" + "wi"
 VEX_ID = "FR-" + "VEX.1-14"
 HOME_REAL = "/ho" + "me/realperson/notes"
@@ -85,15 +87,16 @@ class GitleaksRules(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text + "\n", encoding="utf-8")
 
-    def scan(self) -> tuple[subprocess.CompletedProcess, list[tuple[str, str]]]:
+    def scan(self, config: Path = CONFIG) -> tuple[subprocess.CompletedProcess, list[tuple[str, str]]]:
         """Scan the fixture tree with the repo config; return (process, sorted
-        (rule, path) findings)."""
+        (rule, path) findings). Run from the repository root, which is where a
+        local layer's relative `[extend] path` resolves."""
         report = Path(self._tmp.name) / "report.json"
         proc = subprocess.run(
-            [BINARY, "dir", "--config", str(CONFIG), "--no-banner", "--redact",
+            [BINARY, "dir", "--config", str(config), "--no-banner", "--redact",
              "--verbose", "--exit-code", "1", "--report-format", "json",
              "--report-path", str(report), str(self.tree)],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=120, cwd=ROOT,
         )
         self.assertIn(proc.returncode, (0, 1),
                       f"gitleaks itself failed (exit {proc.returncode}):\n{proc.stdout}{proc.stderr}")
@@ -112,12 +115,19 @@ class GitleaksRules(unittest.TestCase):
 
     # --- repository identifier rules -----------------------------------------
 
-    def test_employer_name_is_flagged_anywhere(self):
-        self.write("README.md", f"we work at {EMPLOYER}")
-        self.write("docs/notes.md", f"{EMPLOYER.upper()} said so")
+    def test_local_layer_adds_its_names_and_keeps_every_committed_rule(self):
+        self.write("README.md", f"we work at {LOCAL_PLACEHOLDER}")
+        self.write("docs/notes.md", f"open {HOME_REAL}")
+        _, hits = self.scan(LOCAL_EXAMPLE)
+        self.assertFlagged(hits, "local-employer-name", "README.md")
+        self.assertFlagged(hits, "agents-absolute-home-path", "docs/notes.md")
+
+    def test_committed_config_has_no_employer_rule(self):
+        # The rule's home is the untracked layer; the committed config must not
+        # grow it back (its regex would have to spell the name).
+        self.write("README.md", f"we work at {LOCAL_PLACEHOLDER}")
         _, hits = self.scan()
-        self.assertFlagged(hits, "agents-employer-name", "README.md")
-        self.assertFlagged(hits, "agents-employer-name", "docs/notes.md")
+        self.assertEqual([h for h in hits if "employer" in h[0]], [], hits)
 
     def test_private_project_name_is_flagged_outside_its_excused_files(self):
         self.write("README.md", f"built against {PROJECT}")
@@ -136,10 +146,10 @@ class GitleaksRules(unittest.TestCase):
 
     def test_excused_files_still_fail_on_every_other_rule(self):
         for rel in PROJECT_EXCUSED:
-            self.write(rel, f"{PROJECT} and {EMPLOYER}")
+            self.write(rel, f"{PROJECT} and {HOME_REAL}")
         _, hits = self.scan()
         for rel in PROJECT_EXCUSED:
-            self.assertFlagged(hits, "agents-employer-name", rel)
+            self.assertFlagged(hits, "agents-absolute-home-path", rel)
 
     def test_real_home_paths_are_flagged(self):
         self.write("unix.md", f"open {HOME_REAL}")

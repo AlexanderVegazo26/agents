@@ -48,39 +48,29 @@ useDefault = true
 # Repository identifier rules
 # ---------------------------------------------------------------------------
 
-[[rules]]
-id = "agents-employer-name"
-description = "Employer name - this repository is public and unaffiliated; the author's employer does not belong in it"
-regex = '''(?i)\btapcheck\b'''
-tags = ["repo-identifier", "employer", "chg-01"]
-# A note on the obvious objection: this file names the identifier it defends
-# against, so the config itself publishes it. That is accepted here and ONLY
-# here, and the reasoning changed once the documents were redacted.
+# The employer-name rule is NOT here, on purpose. Until 2026-11-13 this file
+# carried `agents-employer-name`, whose regex spelled the author's employer, and
+# it was the only file in the tree that did: the config whose job was to keep
+# the name out of a public repository was publishing it. A literal-match rule
+# cannot detect a string without containing it, and gitleaks has no hashed or
+# external pattern, so the rule now lives where the name is allowed to be: an
+# untracked local config layered on this one.
 #
-# It used to rest on "the name is already in `docs/` anyway". It is not any
-# more - the review and its corrections were redacted, and this file is now the
-# single place in the tree that spells it out. What remains is the narrower
-# argument: a literal-match rule cannot detect a string without containing it,
-# and a rule kept out of the committed config runs in neither CI nor a fork,
-# which is the worst of the three options. One occurrence in a config whose
-# purpose is to catch the string is a smaller exposure than the rule not
-# existing - but it is a real one, so it is stated rather than assumed away.
+#   cp .gitleaks.local.example.toml .gitleaks.local.toml   # gitignored
+#   # put the real name(s) in its regex, then scan with:
+#   gitleaks dir --config .gitleaks.local.toml --no-banner --redact .
+#   # or, as a pre-commit check of what is staged:
+#   gitleaks git --pre-commit --staged --config .gitleaks.local.toml --no-banner --redact
+#   # or make the `.pre-commit-config.yaml` hook use it (gitleaks reads
+#   # GITLEAKS_CONFIG when no --config is given; checked on 8.30.1):
+#   export GITLEAKS_CONFIG=.gitleaks.local.toml
 #
-# The same reasoning is why the pre-rename product codename is NOT in the
-# project-name rule below: that name appears nowhere else in the tree, so
-# adding it to the pattern would have been the only thing publishing it.
-#
-# If you fork this for an organisation whose name is NOT otherwise in your
-# tree, do not simply substitute it here - that would introduce it. Leave this
-# rule out of the committed config and layer a private one instead:
-#
-#   .gitleaks.local.toml  ->  [extend] path = ".gitleaks.toml"  plus your rule
-#   scan with             ->  gitleaks dir --config .gitleaks.local.toml .
-#
-# and gitignore it. `.gitignore` already reserves `redaction/denylist.txt` for
-# exactly this class of adopter-specific instance data. Note `useDefault` and
-# `path` are mutually exclusive, so a layered config extends this file and
-# inherits the upstream defaults through it.
+# `.gitleaks.local.toml` extends this file (`[extend] path`), so the upstream
+# defaults and every rule below still apply through it. The cost is stated: CI
+# no longer checks for the name, so a contributor without the local config is
+# unguarded against it. `redaction/denylist.txt` (also gitignored) does the same
+# job for the learning loop's published files. The same layering is what a fork
+# should use for its own organisation's name.
 [[rules]]
 id = "agents-private-project-name"
 description = "Private project codename - a separate unreleased repository these agents build against, not a component of this one"

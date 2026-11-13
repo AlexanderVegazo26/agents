@@ -36,6 +36,11 @@ repos:
   # This hook scans STAGED CONTENT (`--staged`), not the working tree, so it
   # sees exactly what the commit would contain.
   #
+  # Names that must not appear in the public config (an employer's, for one)
+  # live in an untracked `.gitleaks.local.toml` that extends `.gitleaks.toml`;
+  # see the note in `.gitleaks.toml`. `export GITLEAKS_CONFIG=.gitleaks.local.toml`
+  # makes this hook use it, since the hook passes no `--config`.
+  #
   # `language: golang` means pre-commit builds gitleaks from source the first
   # time, which needs a Go toolchain installed. If you would rather use a
   # gitleaks binary you already have on PATH, swap `id: gitleaks` for

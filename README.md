@@ -94,7 +94,7 @@ The scripts in `sdlc-suite/workflows/` carry the run record, retry and learning 
 | `learnings/` | Files arrive by merged pull request; `candidates/` and `retired/` are written by `sdlc-suite/tools/distil.py` | Extra: cross-project learnings the workflows load |
 | `docs/` | Hand-maintained | Dated review documents: the platform review of 2026-09-01, its corrections, and the agentic-readiness review of 2026-09-24 |
 | `.github/` | Hand-maintained | Workflows `ci.yml`, `decay.yml` and `distil.yml`; issue and pull request templates |
-| `.gitattributes`, `.gitignore`, `.gitleaks.toml`, `.pre-commit-config.yaml` | Hand-maintained | Line-ending pins, ignore rules, secret-scan rules, pre-commit hooks |
+| `.gitattributes`, `.gitignore`, `.gitleaks.toml`, `.gitleaks.local.example.toml`, `.pre-commit-config.yaml` | Hand-maintained | Line-ending pins, ignore rules, secret-scan rules, the template for an untracked local layer of names the public config must not spell, pre-commit hooks |
 
 Workflow scripts are generated into `.claude/workflows/` only. `commandcode-suite/workflows/` and `.kimi-code/workflows/` target other runtimes, so a workflow change has to be ported to them by hand and no check confirms it was.
 

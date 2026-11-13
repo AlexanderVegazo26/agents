@@ -1,0 +1,24 @@
+# Local, untracked gitleaks layer for names that must never be committed and
+# must not be written into the public `.gitleaks.toml` either (a literal-match
+# rule spells what it matches).
+#
+#   cp .gitleaks.local.example.toml .gitleaks.local.toml    # gitignored
+#   gitleaks dir --config .gitleaks.local.toml --no-banner --redact .
+#   gitleaks git --pre-commit --staged --config .gitleaks.local.toml --no-banner --redact
+#
+# Replace the placeholder names in the regex with your own. Do not commit the
+# copy: `.gitleaks.local.toml` is in `.gitignore`. Run gitleaks from the
+# repository root, so the relative `path` below resolves.
+
+title = "agents - local layer (instance-specific names)"
+
+[extend]
+# Inherits every rule of the committed config, and through it the upstream
+# defaults (`useDefault` and `path` are mutually exclusive in one file).
+path = ".gitleaks.toml"
+
+[[rules]]
+id = "local-employer-name"
+description = "Employer or organisation name - instance data, kept out of the public config"
+regex = '''(?i)\b(?:example-employer|example-holdings)\b'''
+tags = ["repo-identifier", "employer", "local"]

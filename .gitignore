@@ -102,3 +102,6 @@ __pycache__/
 
 # --- scripts/test-agent report ----------------------------------------------
 .test-report/
+
+# Local gitleaks layer: carries names that must not be published (see .gitleaks.toml).
+.gitleaks.local.toml
