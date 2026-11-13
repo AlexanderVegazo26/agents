@@ -73,9 +73,9 @@ technical-writer, site-reliability, incident-commander, motion-designer, prototy
 
 > **Frontmatter discipline:** `description:` / `whenToUse:` values must be quoted
 > YAML scalars. An unquoted value containing `: ` (e.g. "INVOKE WHEN: ...") is
-> invalid YAML, and Kimi Code **silently skips the agent**. `convert-agents.py`
-> quotes automatically; `validate.py` fails the check if a hand-edited file
-> regresses.
+> invalid YAML, and Kimi Code **silently skips the agent**.
+> `sdlc-suite/tools/generate_trees.py` quotes automatically; `validate.py` fails
+> the check if a file regresses.
 
 ### 2.3 Skills (60 domain + 6 flow)
 
@@ -207,13 +207,20 @@ phase markers and warnings.
 
 ## 6. Maintenance
 
-This repo remains the source of truth. After editing the suite:
+This repo remains the source of truth, and within it `sdlc-suite/` is the
+only hand-edited copy of the agents and skills. After editing the suite:
 
 ```bash
-python .kimi-code/convert-agents.py   # regenerate .kimi-code/agents/ from .claude/agents/
-python .kimi-code/sync-skills.py      # copy new .claude/skills/ into .kimi-code/skills/
-python .kimi-code/validate.py         # structural sanity check (incl. YAML-safe frontmatter)
+python3 sdlc-suite/tools/generate_trees.py           # regenerate every tree, .kimi-code/agents/ and skills/ included
+python3 sdlc-suite/tools/generate_trees.py --check   # confirm nothing drifted
+python3 .kimi-code/validate.py                       # structural sanity check (incl. YAML-safe frontmatter)
 ```
+
+Do not run `.kimi-code/convert-agents.py` or `.kimi-code/sync-skills.py`. They
+are superseded: they read `.claude/` rather than `sdlc-suite/`, and a run strips
+the `version:` fields and leaves dead `sdlc-suite:` references (see
+[`README.md`](./README.md)). Do not hand-edit `.kimi-code/agents/` or
+`.kimi-code/skills/` either; the next generator run overwrites them.
 
 Changes are picked up globally with **no further steps** — `extra_agent_dirs` /
 `extra_skill_dirs` point directly at this repo. Running sessions keep their

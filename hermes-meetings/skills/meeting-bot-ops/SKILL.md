@@ -1,7 +1,7 @@
 ---
 name: meeting-bot-ops
 description: "Operate the self-hosted Vexa meeting bot: join meetings, check bot status, pull or search transcripts, read meeting chat, label meetings, stop bots. Use for anything involving the Hermes meeting-bot integration or a call Hermes should attend."
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 license: MIT
 platforms: [linux]
@@ -47,18 +47,29 @@ and produces speaker-attributed transcripts.
 ## Procedure: attending a call
 
 1. **Join.** Pass the full URL to `request_meeting_bot` (or parse it first).
-   Bot name `Hermes`. Set the transcription language when known (`es` for
-   Spanish calls) — auto-detect on short openings is often wrong.
+   Bot name `Hermes (transcribing)` where the platform accepts it (else
+   `Hermes`), so the participant list says what it is.
+   Set the transcription language when known (`es` for Spanish calls) —
+   auto-detect on short openings is often wrong.
 2. **Label it.** Right after joining, `annotate_meeting` with a title
    (`<counterpart/company> — <purpose>`) and metadata linking any briefing
    (`briefing: ~/.hermes/data/meeting-briefings/<slug>.md`). Notes and live
    questions use this to find context.
 3. **Confirm** with `get_bot_status` within ~60 s. A bot stuck in the lobby
    needs the host to admit it — tell the user, don't resend repeatedly.
-4. **During the call**, answer user questions ("what did they say about
+4. **Announce the recording, once, as soon as the bot is in the call** — every
+   time, without waiting to be asked. Everyone in the call is being recorded
+   and transcribed, and most of them did not invite the bot. Use
+   `speak_in_meeting` with: "Hi, I'm Hermes, an AI note-taker for <user>. I'm
+   recording and transcribing this meeting to take notes. If you'd rather I
+   didn't, say so and I'll leave." This is the one message `speak_in_meeting`
+   may send without the user dictating it. If it fails or the tool is
+   unavailable, tell the user the bot is in the call unannounced and ask
+   whether to keep it there; do not carry on silently.
+5. **During the call**, answer user questions ("what did they say about
    pricing?") from `get_meeting_transcript`; quote the speaker and timestamp.
    Check `get_meeting_chat` for links and spelled-out names.
-5. **End.** `stop_bot` when the meeting ends or the user asks, then run the
+6. **End.** `stop_bot` when the meeting ends or the user asks, then run the
    `meeting-notes` skill on the transcript.
 
 ## Answering questions about past calls
@@ -70,9 +81,12 @@ and produces speaker-attributed transcripts.
 
 ## Constraints
 
-- **`speak_in_meeting` talks out loud to everyone.** Only use it when the
-  user explicitly asks for that exact message to be spoken. Never on your own.
-- Consent: when asked, say the bot is there to transcribe and take notes.
+- **`speak_in_meeting` talks out loud to everyone.** Apart from the recording
+  announcement in step 4, only use it when the user explicitly asks for that
+  exact message to be spoken. Never on your own.
+- Consent: the bot announces the recording at the start (step 4). When asked,
+  say again that it is there to record, transcribe and take notes. If anyone
+  in the call objects, `stop_bot` at once and tell the user why it left.
 - Transcription is local faster-whisper (small, CPU): names, numbers and
   jargon are often misheard. Cross-check them with the chat or the briefing;
   flag uncertain ones as `(?)` rather than presenting them as fact. Vexa

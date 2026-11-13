@@ -143,7 +143,7 @@ Measured 2026-09-02: 0 of 709 files.
 If you check line endings, read the bytes (`b"\r\n" in path.read_bytes()`), not
 the index and not `file -b`, which reports "JSON text data" for a CRLF JSON file.
 
-## The seven registry invariants
+## The nine registry invariants
 
 `/registry-audit` checks these.
 
@@ -230,9 +230,11 @@ checks for before it writes.
 
 ## Reviewing a learning pull request
 
-> **Not yet in force.** `learnings/` and the distiller do not exist yet. The
-> checklist is recorded now because it is the gate the design depends on, and it
-> is worth agreeing before the mechanism that needs it exists.
+> **In force when the distiller is dispatched.** `learnings/`,
+> `sdlc-suite/tools/distil.py` and the `distil.yml` / `decay.yml` workflows that
+> open these pull requests all exist; the workflows run only when dispatched by
+> hand (there is no schedule yet; `SECURITY.md` names its preconditions). The
+> checklist below is the gate the design depends on.
 
 Pull requests labelled `learnings` will be opened by the distiller from run
 outcomes. **Merging is the ratification** — nothing else in the loop can reach

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/transcript_detect.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/transcript_detect.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/transcript_detect.py\"",
             "timeout": 10
           }
         ]

@@ -123,6 +123,11 @@ def hooks_json_points_at_the_script():
     cfg = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
     cmd = cfg["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
     assert "${CLAUDE_PLUGIN_ROOT}/hooks/transcript_detect.py" in cmd, cmd
+    # python3 first: many hosts (Debian/Ubuntu, macOS) have no bare `python`, and
+    # a missing interpreter is a non-blocking hook error on EVERY prompt. The
+    # `|| python` fallback covers hosts that have only `python`; the script
+    # exits 0 on every path of its own, so it only fires when python3 is absent.
+    assert cmd.startswith("python3 ") and "|| python " in cmd, cmd
 
 
 print("transcript_detect.py")

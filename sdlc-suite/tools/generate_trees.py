@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One canonical tree, seven generated. Replaces the four convert-agents.py /
+"""One canonical tree, eight generated. Replaces the four convert-agents.py /
 sync-skills.py pairs and the skip-if-exists mirror that froze them.
 
     python sdlc-suite/tools/generate_trees.py            # regenerate everything

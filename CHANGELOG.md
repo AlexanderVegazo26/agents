@@ -40,6 +40,13 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   `your §N` and every `§N of that agent` must resolve to a heading that exists and
   means the same thing, and the phrases briefs hand qa-engineer must stay in its body.
 
+### Fixed
+
+- **The transcript hook runs where there is no bare `python`.** `hooks/hooks.json` ran
+  `transcript_detect.py` with `python` on every prompt, which on hosts with only
+  `python3` (Debian, Ubuntu, macOS) was a hook error per prompt and no transcript
+  detection. It now runs `python3`, falling back to `python`, like the test-lock hook.
+
 ### Security
 
 - **`tools/redact.py` quarantines credential shapes and `/root` paths.** AWS key ids
