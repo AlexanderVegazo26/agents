@@ -117,8 +117,12 @@ DERIVED_FIELDS = ("title", "body", "check")
 # ellipsis would be read as a real username and the secret scan would fire on
 # this comment -- caught by simulating the rules over this file before commit.
 _CLASS_SOURCES: dict[str, tuple[str, int]] = {
+    # `/root` joined 2026-11-13: root's home is not under /home, and a run as
+    # root (a container, a CI image) writes /root/... into every path it logs.
+    # Bounded on both sides so `src/root/` or `/rootfs` are not read as it.
     "abs_home_path": (
-        r"(?:[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s]+|/Users/[^/\s]+|/home/[^/\s]+)",
+        r"(?:[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s]+|/Users/[^/\s]+|/home/[^/\s]+"
+        r"|(?<![\w.-])/root(?![\w.-]))",
         re.IGNORECASE,
     ),
     "email": (
@@ -154,6 +158,55 @@ _CLASS_SOURCES: dict[str, tuple[str, int]] = {
         r"\b(?=[A-Za-z0-9_-]{24,})(?=[^\s]*[A-Z])(?=[^\s]*[0-9])[A-Za-z0-9_-]{24,}\b",
         0,
     ),
+    # ----------------------------------------------------------------------
+    # Credential shapes, added 2026-11-13. Every one of these published
+    # before: `high_entropy` needs 24+ characters from [A-Za-z0-9_-] with an
+    # uppercase letter, so a 20-character AWS key id, a secret key split by
+    # `/` or `+`, an all-lowercase Slack token, a lowercase hex key, a
+    # lowercase Stripe key, a `PASSWORD=` line and a PEM header all fell
+    # through. Each is a specific shape rather than a looser `high_entropy`,
+    # so the generic class keeps its precision.
+    # ----------------------------------------------------------------------
+    "aws_access_key_id": (
+        r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ABIA|ACCA)[A-Z0-9]{16}\b",
+        0,
+    ),
+    # A 40-character base64 run with all three of upper, lower and digit:
+    # the shape of an AWS secret access key. Bounded so a longer run does not
+    # match a 40-character slice of it.
+    "aws_secret_key": (
+        r"(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]{0,39}[0-9])(?=[A-Za-z0-9/+]{0,39}[A-Z])"
+        r"(?=[A-Za-z0-9/+]{0,39}[a-z])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])",
+        0,
+    ),
+    "slack_token": (
+        r"(?:\bxox[abposre]-[A-Za-z0-9-]{10,}|hooks\.slack\.com/services/[A-Za-z0-9/_-]+)",
+        0,
+    ),
+    "stripe_key": (
+        r"\b(?:sk|rk|pk|whsec)_(?:live|test)?_?[A-Za-z0-9]{16,}\b",
+        0,
+    ),
+    # 32+ hex characters with at least one letter and one digit: API keys,
+    # HMAC secrets and tokens are routinely lowercase hex, which
+    # `high_entropy`'s uppercase requirement never sees. A full commit SHA
+    # (40) matches too; that is a quarantine, a human read, not a publish.
+    "hex_key": (
+        r"\b(?=[0-9a-fA-F]*[a-fA-F])(?=[0-9a-fA-F]*[0-9])[0-9a-fA-F]{32,}\b",
+        0,
+    ),
+    # `NAME=value` where NAME says what it holds, and the YAML/JSON
+    # `password: value` form. Case-folded: env files shout, configs do not.
+    "credential_assignment": (
+        r"(?:\b[A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api_?key|access_?key|private_?key)"
+        r"[A-Za-z0-9_]*\s*=\s*\S+"
+        r"|[\"']?\b[A-Za-z0-9_]*(?:password|passwd)[\"']?\s*:\s*[\"']?[^\s\"']{4,})",
+        re.IGNORECASE,
+    ),
+    "private_key_block": (
+        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----",
+        0,
+    ),
 }
 
 CLASSES: dict[str, re.Pattern] = {
@@ -163,6 +216,11 @@ CLASSES: dict[str, re.Pattern] = {
 # One known positive per class. `selftest()` asserts each still matches, which is
 # what `distil.py` gates on: a redactor that imports cleanly but matches nothing
 # is a worse failure than one that fails to import, because it is silent.
+#
+# The credential positives are assembled from pieces at import time. Written
+# out whole, this file would carry an AWS key id, a Slack token and a PEM
+# header in plain text, and the repository's own secret scan (gitleaks, which
+# looks at source, not at runtime values) would fire on its own filter.
 SELFTEST_POSITIVES: dict[str, str] = {
     "abs_home_path": r"seen at C:\Users\someone\project",
     "email": "seen from first.last@example.invalid",
@@ -170,6 +228,13 @@ SELFTEST_POSITIVES: dict[str, str] = {
     "internal_host": "seen at build.corp",
     "ticket_id": "seen as AB#41207",
     "high_entropy": "seen as aB3xQ7mZ2pR9tL4wS8vN6yH1kJ5cD0fG",
+    "aws_access_key_id": "seen as " + "AK" + "IA" + "QX7ZPLM2RT4VN8WB",
+    "aws_secret_key": "seen as " + "wJalrXUtnFEMI/K7MDENG" + "/bPxRfiCYq3x9Zk2Lm7",
+    "slack_token": "seen as " + "xo" + "xb-" + "1234567890-0987654321-abcdefghijklmnop",
+    "stripe_key": "seen as " + "sk" + "_live_" + "abcdefghijklmnop12345678",
+    "hex_key": "seen as " + "9f86d081884c7d659a2feaa0" + "c55ad015a3bf4f1b2b0b822c",
+    "credential_assignment": "seen as " + "DB_PASS" + "WORD=" + "correct-horse-battery",
+    "private_key_block": "seen as " + "-----BEGIN " + "RSA PRIVATE KEY-----",
 }
 
 SELFTEST_NEGATIVE = (
