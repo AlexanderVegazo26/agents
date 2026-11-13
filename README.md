@@ -1,27 +1,6 @@
 # agents
 
-A software-development-lifecycle agent suite for Claude Code — specialist agents, skills, scripted multi-agent workflows, and a routing policy that says which agent has to run when. Exact counts are in the table below, generated from the tree; this paragraph does not restate them, because a typed count is the thing that goes stale silently while sounding authoritative.
-
-The organizing idea: **the agent that does the work is never the agent that certifies it.** Implementation, code review, execution-based verification, security assessment, and release authorization are held by separate agents on purpose, and none can quietly absorb another's job.
-
-The second idea, learned the harder way: an agent definition governs behavior *once invoked* and cannot make a caller invoke it. That is what the routing policy and the `orchestrator` agent are for — `orchestrator`'s own dispatch table binds `orchestrator` and fires only once something invokes it; the routing policy binds the caller. It ships in two places: [`sdlc-suite/ROUTING.md`](sdlc-suite/ROUTING.md), the generic policy shipped with the plugin, and `CLAUDE.md`, this repository's own instance configuration, which points at `ROUTING.md` as its source.
-
----
-
-## What is in here
-
-| Path | What it is |
-|---|---|
-| `CLAUDE.md` | This repository's instance configuration. Points at `sdlc-suite/ROUTING.md`. |
-| [`sdlc-suite/ROUTING.md`](sdlc-suite/ROUTING.md) | **The routing policy.** Read this first — it's what makes the trigger table fire for a caller, not just for `orchestrator`. |
-| `.claude/agents/`, `.claude/skills/`, `.claude/workflows/` | **Live** definitions backing the bare names (`qa-engineer`) when working in this repository. Generated from `sdlc-suite/` — agents, skills and workflows all three. |
-| `sdlc-suite/` | **The canonical, hand-edited tree.** Packaged as a Claude Code plugin, backing `sdlc-suite:*` names, published through `.claude-plugin/marketplace.json`. Has its own [README](sdlc-suite/README.md) and `USAGE.md`. |
-| `commandcode-suite/`, `.kimi-code/`, `.codex/`, `.copilot/`, `.agents/` | Ports to other harnesses. Their `agents/` and `skills/` are generated from `sdlc-suite/`; their runners, commands and workflow scripts are hand-maintained, because those target different runtimes. **Not invocable from Claude Code** — stated by the maintainer; not independently exercised here. |
-| `.pi/prompts/` + root `AGENTS.md` | **Pi harness port, generated part.** Generated from `sdlc-suite/`: the commands as prompt templates (with `${CLAUDE_PLUGIN_ROOT}` rewritten to repository-relative paths) and the pi instance configuration. Pi discovers skills from `.agents/skills/` directly, so no skills are copied. |
-| `.pi/extensions/sdlc/` | **Pi harness port, hand-maintained part.** The pi extension that provides the two primitives the suite is written against: the `agent` tool (one sub-agent dispatch as a separate `pi -p` session running the named role file) and the `workflow` tool (`sdlc-suite/workflows/*.js` in a `node:vm` sandbox reproducing the Claude Code Workflow allowlist). See its [README](.pi/extensions/sdlc/README.md); `node .pi/extensions/sdlc/lib.js --selftest` is the offline gate, wired into CI by `.pi/validate.py`. |
-| `.hermes/skills/` + root `.hermes.md` | **Hermes Agent port, generated part.** The commands as Hermes skills (Hermes turns each skill into a `/<name>` slash command; `install-routing` is omitted, see the generator) and the Hermes instance configuration, which Hermes loads ahead of `AGENTS.md`. Hermes reads `.agents/skills/` as a project skill directory once the repository is trusted, so no skills are copied. |
-| `.hermes/plugins/sdlc/` | **Hermes Agent port, hand-maintained part.** A Hermes plugin providing the same two primitives as the pi extension: `agent` (one role per separate `hermes chat` process) and `workflow`. Its Node runner imports the pi extension's `lib.js`, so the sandbox is shared code, not a copy. Install and caveats: its [README](.hermes/plugins/sdlc/README.md); `python .hermes/validate.py` is the offline gate, wired into CI. |
-| `.claude/audit/` | The registry's own audit report and remediation record. Not shipped with the plugin. |
+A software-development-lifecycle (SDLC) agent suite: specialist agents, the skills they load, scripted multi-agent workflows, slash commands, and a routing policy ([`sdlc-suite/ROUTING.md`](sdlc-suite/ROUTING.md)) that names which agent must run on which condition. Everything is hand-edited in one tree, [`sdlc-suite/`](sdlc-suite/), which is also a Claude Code plugin, and is generated from there into trees for the other harnesses by `sdlc-suite/tools/generate_trees.py`. The rule the suite is built on: the agent that does the work is never the agent that certifies it, so implementation, code review, execution-based verification, security assessment and release recommendation are held by separate agents. The number of agents, skills, workflows and commands in each tree is in the table below, which is generated from the files and checked in CI rather than typed.
 
 <!-- counts:start -->
 *Generated by `sdlc-suite/tools/counts.py`. Do not edit by hand — CI fails on any diff. The table below owns these numbers; no prose elsewhere should restate them.*
@@ -45,34 +24,144 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 auto-discovered `.agents/skills/`.
 <!-- counts:end -->
 
-### Where to start
+## Supported harnesses
 
-1. **[`sdlc-suite/ROUTING.md`](sdlc-suite/ROUTING.md)** — the routing policy: a trigger table naming, per observable condition, which agent MUST be invoked; that the implementer never certifies its own work; that handoffs are debts to be discharged; and that *announcing* a skip does not authorise it. Install it into a consuming repository with `/sdlc-suite:install-routing`.
-2. **[`sdlc-suite/README.md`](sdlc-suite/README.md)** — the agents themselves, by lifecycle stage, and how the four layers (skill / agent / command / workflow) differ.
-3. **`sdlc-suite/USAGE.md`** — install, cross-repository use, unattended runs.
+| Harness | Directory | How it is installed | Setup doc |
+|---|---|---|---|
+| Claude Code, as a plugin in any repository | `sdlc-suite/` | Add this repository as a plugin marketplace and install `sdlc-suite` (commands below) | [`sdlc-suite/USAGE.md`](sdlc-suite/USAGE.md) |
+| Claude Code, inside a clone of this repository | `.claude/` | Nothing to install: Claude Code reads the project's `.claude/agents/`, `.claude/skills/` and `.claude/workflows/` | [`.claude/README.md`](.claude/README.md) |
+| Command Code | `commandcode-suite/` | Copy `agents/`, `skills/` and optionally `commands/` into a project's `.commandcode/` (with `autonomy.json`) or into `~/.commandcode/`; or run `node commandcode-suite/workflows/<name>.js` from a clone with no install. The workflows need `node` and the `cmdc` executable | [`README`](commandcode-suite/README.md), [`USAGE`](commandcode-suite/USAGE.md) |
+| Kimi Code | `.kimi-code/` | Point `extra_agent_dirs` and `extra_skill_dirs` in `~/.kimi-code/config.toml` at this checkout's `.kimi-code/agents` and `.kimi-code/skills`; put a shim for the root `kflow` script on `PATH` | [`README`](.kimi-code/README.md), [`GLOBAL-SETUP`](.kimi-code/GLOBAL-SETUP.md) |
+| Codex | `.codex/` | Documented only for a local Qwen model served by Ollama: do the one-time setup in the README, then start Codex with `.codex/run-qwen-local.sh` (or `.ps1`). Any other Codex setup: not documented yet | [`.codex/README.md`](.codex/README.md) |
+| Copilot | `.copilot/` | Not documented yet | None; the directory has no README |
+| pi | `.pi/`, root `AGENTS.md` | No install steps are documented. The docs describe running pi with this repository as the working directory; using the port from another repository is not documented yet | [`.pi/extensions/sdlc/README.md`](.pi/extensions/sdlc/README.md) |
+| Hermes Agent | `.hermes/`, root `.hermes.md` | Symlink the plugin into `~/.hermes/plugins/`, enable it, and trust the repository (commands below) | [`.hermes/plugins/sdlc/README.md`](.hermes/plugins/sdlc/README.md) |
+| Generic Agent Skills directory | `.agents/` | Nothing of its own to install. It holds skills only and is read in place by pi, Hermes (once the repository is trusted), Codex and Kimi Code | None; the directory has no README |
 
----
+Claude Code, as a plugin:
 
-## Two things worth knowing before you use this
+```
+/plugin marketplace add AlexanderVegazo26/agents
+/plugin install sdlc-suite@avega-marketplace
+```
 
-**The duplication is a hazard, not just redundancy.** The same agents exist in several trees, and editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the hand-edited source; the `agents/` and `skills/` of every other tree are generated from it, as is `.claude/workflows/`, as are `.pi/prompts/` and the root `AGENTS.md`, as are `.hermes/skills/` and the root `.hermes.md`, and a hand edit to any of those is silently overwritten. `.agents/` ships skills only, with no agents directory — deliberate, not a gap.
+To install from a local clone instead, pass its path to `/plugin marketplace add`; from the shell that is `claude plugin marketplace add ./` (the leading `./` is required). Agents, skills and commands are then namespaced, for example `sdlc-suite:qa-engineer` and `/sdlc-suite:sdlc-feature`. In each repository that will use the suite, run `/sdlc-suite:init <project>` once from the repository root, then `/sdlc-suite:install-routing`. An installed plugin is a snapshot: changes reach it only when the plugin version moves and you run `claude plugin update sdlc-suite@avega-marketplace`.
 
-The scope is worth knowing precisely, because getting it wrong has already cost something here: `commandcode-suite/workflows/`, `.kimi-code/workflows/`, the per-harness runners and every README are **not** generated. A change to a workflow script has to be made in three places by hand. See `CLAUDE.md` for the table and `CONTRIBUTING.md` for what CI checks.
+Hermes Agent, from the root of a clone, once per machine:
 
-**The examples are load-bearing, not illustrative.** This material was developed against a real application, in a separate repository, over real reviews and real failures. Where an agent says "this is how a test lies to you", that is a defect someone shipped past, not a hypothetical.
+```bash
+ln -s "$PWD/.hermes/plugins/sdlc" ~/.hermes/plugins/sdlc
+hermes plugins enable sdlc
+hermes skills trust "$PWD"
+```
 
----
+The scripts in `sdlc-suite/workflows/` carry the run record, retry and learning loop. Claude Code runs them, and pi and Hermes run the same files through their `workflow` tool. The Command Code and Kimi Code workflow ports are written by hand and have none of that, as their READMEs state. Codex and Copilot ship agents and skills but no workflows. [`.kimi-code/GLOBAL-SETUP.md`](.kimi-code/GLOBAL-SETUP.md) section 6 still lists the superseded per-tree scripts; regenerate with `generate_trees.py` instead (see below).
 
-## Status
+## Prerequisites
 
-Licensed **MIT** — see `LICENSE`.
+- **Git**, with line endings left as LF. `.gitattributes` pins them; see [Troubleshooting](#troubleshooting).
+- **Python.** CI pins 3.15 (`.github/workflows/ci.yml`, `decay.yml`, `distil.yml`). No minimum version is declared for the suite's own tools; `hermes-proactive/README.md` states 3.11 or newer for its scripts.
+- **Node.** CI pins 26. Node runs the workflow test suites, the Command Code workflows, the pi extension and the Hermes runner. On Node 26 or newer the pi extension also needs `script` from util-linux (see its README).
+- **No packages to install.** The Python scripts import only the standard library and the Node scripts only Node built-ins. There is no requirements file, and the only `package.json` (`.pi/extensions/sdlc/package.json`) declares the module type and no dependencies.
+- **`python`, not only `python3`.** `kflow`, the CI steps, the hook in `.pre-commit-config.yaml` and the commands in the docs call `python`. If your system has only `python3`, add an alias or substitute it. `scripts/test-agent` runs its Python checks under whichever interpreter started it, so `python3 scripts/test-agent` works without an alias.
+- **The harness itself** (Claude Code, Command Code, Kimi Code, Codex, pi or Hermes Agent). None is included here.
+- **gitleaks**, optional locally. CI's `secrets` job downloads 8.30.1; `scripts/test_gitleaks_rules.py` skips when no binary is found unless `GITLEAKS_REQUIRED=1` is set.
+- **pre-commit**, optional. `pip install pre-commit && pre-commit install` enables the two hooks in `.pre-commit-config.yaml` (gitleaks and the line-ending check).
 
-| | |
+## Repository layout
+
+"Generated" means written by `sdlc-suite/tools/generate_trees.py`: do not edit it by hand. Everything not marked generated is maintained by hand, including every README. [`CLAUDE.md`](CLAUDE.md) holds the authoritative table.
+
+| Path | Generated or hand-maintained | What it is |
+|---|---|---|
+| `sdlc-suite/` | Hand-maintained; the only tree to edit for agents, skills, workflows and commands | The canonical source and the Claude Code plugin: `agents/`, `skills/`, `workflows/`, `commands/`, `hooks/`, `tools/`, `evals/`, `memory-template/`, the pi and Hermes instance files under `pi/` and `hermes/`, `ROUTING.md`, `autonomy.json` and the plugin manifest |
+| `.claude-plugin/` | `marketplace.json` is written by `python sdlc-suite/tools/bump.py --marketplace` | The plugin marketplace manifest that publishes `sdlc-suite/` |
+| `.claude/` | `agents/`, `skills/`, `workflows/` generated; `README.md`, `memory/`, `audit/` hand-maintained | Definitions Claude Code uses when run inside this repository, the memory root, and the registry audit record |
+| `commandcode-suite/` | `agents/`, `skills/` generated; `workflows/` with `_runner.js`, `commands/`, validators and docs hand-maintained | Command Code port |
+| `.kimi-code/` | `agents/`, `skills/` generated, except six flow skills kept by hand; `workflows/*.py`, validators and docs hand-maintained | Kimi Code port |
+| `.codex/` | `agents/` (TOML), `skills/` generated; README, launchers and Modelfile hand-maintained | Codex port |
+| `.copilot/` | `agents/` (JSON), `skills/` generated | Copilot port |
+| `.agents/` | `skills/` generated | Skills only, in the generic Agent Skills location |
+| `.pi/` | `prompts/` generated; `extensions/sdlc/`, `validate.py`, `live-check.sh` hand-maintained | pi port: the commands as prompt templates, and the extension providing the `agent` and `workflow` tools |
+| `.hermes/` | `skills/` generated; `plugins/sdlc/`, `validate.py` hand-maintained | Hermes Agent port: the commands as Hermes skills, and the plugin providing the `agent` and `workflow` tools |
+| `AGENTS.md`, `.hermes.md` | Generated from `sdlc-suite/pi/AGENTS.md` and `sdlc-suite/hermes/HERMES.md` | Instance configuration loaded by pi and by Hermes |
+| `CLAUDE.md` | Hand-maintained | This repository's instance configuration for Claude Code: which tree to edit and the line-ending hazard |
+| `kflow` | Hand-maintained | Bash wrapper that runs a `.kimi-code/workflows/*.py` script against the current directory |
+| `scripts/` | Hand-maintained | `test-agent`, the single runner for every check; its own tests; the gitleaks rule tests |
+| `hermes-meetings/` | Hand-maintained | Extra: meeting bot integration for Hermes (see [Extras](#extras)) |
+| `hermes-proactive/` | Hand-maintained | Extra: monitors, triggers, scans and goals for Hermes |
+| `redaction/` | Hand-maintained | Extra: example denylist for the learning redactor |
+| `learnings/` | Files arrive by merged pull request; `candidates/` and `retired/` are written by `sdlc-suite/tools/distil.py` | Extra: cross-project learnings the workflows load |
+| `docs/` | Hand-maintained | Dated review documents: the platform review of 2026-09-01, its corrections, and the agentic-readiness review of 2026-09-24 |
+| `.github/` | Hand-maintained | Workflows `ci.yml`, `decay.yml` and `distil.yml`; issue and pull request templates |
+| `.gitattributes`, `.gitignore`, `.gitleaks.toml`, `.pre-commit-config.yaml` | Hand-maintained | Line-ending pins, ignore rules, secret-scan rules, pre-commit hooks |
+
+Workflow scripts are generated into `.claude/workflows/` only. `commandcode-suite/workflows/` and `.kimi-code/workflows/` target other runtimes, so a workflow change has to be ported to them by hand and no check confirms it was.
+
+## Agent roster
+
+The agents, grouped by lifecycle stage with what each owns and never does, are listed in [`sdlc-suite/README.md`](sdlc-suite/README.md#the-agents-by-lifecycle-stage). The same file describes the [workflows](sdlc-suite/README.md#workflows). The conditions that require a given agent are in [`sdlc-suite/ROUTING.md`](sdlc-suite/ROUTING.md).
+
+## Regenerating the trees and running the checks
+
+Run these from the repository root after any edit under `sdlc-suite/`:
+
+```sh
+python sdlc-suite/tools/generate_trees.py          # rewrite every generated tree from sdlc-suite/
+python sdlc-suite/tools/generate_trees.py --check  # write nothing; exit non-zero if any tree drifted (add --diff to see what)
+python sdlc-suite/tools/eol_check.py --check       # read the bytes of every file in the definition trees; exit 1 on any CRLF
+python scripts/test-agent                          # every check CI's validate job runs; exit 0 only if all pass
+```
+
+- `generate_trees.py` overwrites the generated trees, so a hand edit made there is lost. Read the diff before committing.
+- `scripts/test-agent --list` names the checks and `-k <name>` runs the ones whose name contains `<name>`. The report is `.test-report/summary.md`: for each failure, the file and line, the failing output and the command that reruns only that check.
+- `python sdlc-suite/tools/counts.py --check` verifies the counts table above; `--write` regenerates it.
+- `python sdlc-suite/tools/bump.py --check` verifies that a changed agent or skill moved its `version:`.
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has the full list to run before a pull request.
+
+CI is `.github/workflows/ci.yml`. It runs on `pull_request`, on manual `workflow_dispatch`, and on a weekly schedule (Mondays 07:00 UTC). It does not run on push. It has three jobs and uses no repository secrets:
+
+| Job | What it runs |
 |---|---|
-| Contribution policy | `CONTRIBUTING.md` — the nine registry invariants, the pre-PR checks, and the versioning rules |
-| Security reporting | `SECURITY.md` — GitHub private vulnerability reporting |
-| Release record | `CHANGELOG.md` — Keep a Changelog; agents and skills version independently of the plugin |
-| CI | `.github/workflows/ci.yml` — validators, count check, line-ending check, and `gitleaks`. Runs unmodified on a fork with no repository secret |
+| `validate` | `python scripts/test-agent`, then uploads `.test-report/` as an artifact |
+| `versioning` | `bump.py --selftest`, `bump.py --marketplace --check`, and `bump.py --check` (on a pull request, against its base branch) |
+| `secrets` | `scripts/test_gitleaks_rules.py` to prove the rules fire, then a gitleaks scan of the working tree with `.gitleaks.toml` |
 
-There is no roadmap in this repository. That absence is stated rather than
-papered over.
+`decay.yml` and `distil.yml` are the learning loop's workflows and run only on manual `workflow_dispatch`. `distil.yml` proposes learning candidates and `decay.yml` retires stale ones; each opens a pull request and neither writes to the default branch.
+
+## Extras
+
+These directories are independent of the generated trees. Each needs software that is not in this repository.
+
+- [`hermes-meetings/`](hermes-meetings/README.md): three Hermes skills and setup notes for a meeting bot that joins, transcribes and takes notes. Needs Docker, a clone of the Vexa project built as its README describes, Hermes Agent, and Telegram for delivery. Its README marks the webhook routes and the cron poller as still in progress.
+- [`hermes-proactive/`](hermes-proactive/README.md): condition monitors, webhook triggers, a suggestion scan and goal tracking for Hermes. `./install.sh` copies the scripts and links the skills into `~/.hermes`. Needs Hermes Agent, your own `~/.hermes/scripts/tg_send.py` for Telegram delivery, and systemd for the optional trigger service.
+- `redaction/`: holds `denylist.example.txt`. Copy it to `redaction/denylist.txt` (gitignored) and list the names that must never appear in a published learning. It has no README; [`learnings/README.md`](learnings/README.md) and [`SECURITY.md`](SECURITY.md) describe how the denylist is used.
+- [`learnings/`](learnings/README.md): short cross-project notes that the Claude Code workflows prefix to the agents they name. A learning gets here only when a person merges a pull request. No learning has been ratified yet: the directory holds its README, a `.gitignore` and an empty `retired/`.
+
+## Troubleshooting
+
+**An agent is missing, or dispatch fails with "agent type not found".** Check line endings first. A definition with CRLF in its frontmatter does not register, and git's `autocrlf` can introduce CRLF on checkout. Find offenders with `python sdlc-suite/tools/eol_check.py --check` and rewrite them with `python sdlc-suite/tools/eol_check.py --fix`. Definitions are read fresh on each invocation, so the fix needs no restart. [`CLAUDE.md`](CLAUDE.md) records the history and two causes already ruled out.
+
+**An edit to a generated tree was overwritten or had no effect.** The `agents/` and `skills/` directories outside `sdlc-suite/`, `.claude/workflows/`, `.pi/prompts/`, `.hermes/skills/`, and the root `AGENTS.md` and `.hermes.md` are rewritten by the generator. Generated agent files carry a `GENERATED ... do not edit` header. Make the change under `sdlc-suite/` and regenerate. `python sdlc-suite/tools/generate_trees.py --check --diff` shows where a tree differs from its source.
+
+**A regenerated tree lost its `version:` fields or gained dead `sdlc-suite:` references.** One of the old per-tree `convert-agents.py` or `sync-skills.py` scripts was run. They are superseded, as `CONTRIBUTING.md` and `.kimi-code/README.md` explain; run `generate_trees.py` instead.
+
+**A workflow change did not reach Command Code or Kimi Code.** Those workflow scripts are not generated. Port the change by hand.
+
+**`python: command not found`.** See [Prerequisites](#prerequisites).
+
+**An installed Claude Code plugin does not show a change.** The install is a snapshot of one version. See [`sdlc-suite/USAGE.md`](sdlc-suite/USAGE.md).
+
+## Versioning and releases
+
+- The plugin version lives in `sdlc-suite/.claude-plugin/plugin.json`. It is currently `3.0.1`. `.claude-plugin/marketplace.json` carries the same number and is regenerated from it with `python sdlc-suite/tools/bump.py --marketplace`; do not edit it by hand.
+- Each agent and skill also carries its own `version:`. `python sdlc-suite/tools/bump.py --versions` prints them all. The rules for when each one moves are in [`CONTRIBUTING.md`](CONTRIBUTING.md#versioning-and-compatibility).
+- [`CHANGELOG.md`](CHANGELOG.md) follows Keep a Changelog. It has entries for 1.1.0, 1.2.0 and 2.0.0 and an Unreleased section. It has no 3.x entry, so it does not yet describe the changes between 2.0.0 and the current 3.0.1.
+- Tagged releases and their source archives are published on the [GitHub Releases page](https://github.com/AlexanderVegazo26/agents/releases). If that page has no entry for the version in `plugin.json`, install from the default branch as shown above.
+
+## Contributing, security, license
+
+- **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) covers which tree to edit, the checks to run before a pull request, line endings, the registry invariants (seven that `/registry-audit` checks, plus two further rules), and versioning. Issue templates for bugs and feature requests are in `.github/ISSUE_TEMPLATE/`.
+- **Security:** follow [`SECURITY.md`](SECURITY.md) to report a vulnerability, and do not open a public issue for one. It also states what is in scope and the response times.
+- **License:** MIT. See [`LICENSE`](LICENSE).
