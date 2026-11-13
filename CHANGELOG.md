@@ -11,6 +11,16 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **Test lock hook, `hooks/guard_test_edits.py` (PreToolUse).** While a failing test
+  is being fixed, the tests are the spec: once `.sdlc/test-lock` exists
+  (`guard_test_edits.py lock "<why>"`), edits to test files, snapshots, fixtures
+  and test-runner configs are denied, through the file tools and through common
+  Bash writes (`sed -i`, redirects, `rm`/`mv`, `cp` onto them, `git checkout`/`restore`),
+  and so is any change to the lock. It turns engineering-integrity §2 ("never
+  weaken a check to make it pass") from advice into a boundary. The user lifts it
+  with `allow:` lines in the lock, `unlock`, or `SDLC_ALLOW_TEST_EDITS=1`. Replay
+  evals in `evals/hook-cases.v1.json` (36 recorded tool calls) are graded through
+  the real hook by `tools/test_guard_test_edits.py`, seen red by 30 mutants.
 - **`public-link` skill 1.0.0** — puts something running locally (a prototype, dev
   server, rendered preview, video or static folder) on a public HTTPS link through a
   Cloudflare tunnel, only after the user says yes. It asks once, after the thing works

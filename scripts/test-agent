@@ -137,6 +137,11 @@ CHECKS: list[Check] = [
     _suite("sdlc-suite/tools/test_transcript_hook.py",
            "The transcript -> prototyper hook, run as Claude Code runs it. Seen red by removing "
            "the recurring-speaker guard and the log-level exclusion."),
+    _suite("sdlc-suite/tools/test_guard_test_edits.py",
+           "The test-lock PreToolUse hook (no test edits while a failing test is being fixed), "
+           "replaying evals/hook-cases.v1.json through the real hook. Seen red by 30 mutants, one per "
+           "guard (test-file/dir patterns, lock self-protection, allow lines, redirects, in-place "
+           "flags, git global options, cd/glob, symlinked root, env override, CLI walk-up, bad input)."),
     _suite("sdlc-suite/tools/test_redact.py",
            "The leak scanner. Seen red (16 failures) by disabling its tier-2 pattern pass."),
     _suite("sdlc-suite/tools/init.test.mjs",

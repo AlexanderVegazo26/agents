@@ -43,7 +43,7 @@ Run it directly with `/prototype <transcript path or pasted notes> [target repo]
 The bare name resolves while no other command is called `prototype`;
 `/sdlc-suite:prototype` always does. With no argument it asks for the transcript.
 
-The plugin ships one hook, `hooks/hooks.json`, which runs
+The plugin ships two hooks in `hooks/hooks.json`. The first runs
 `hooks/transcript_detect.py` on every prompt. When a prompt contains a meeting
 transcript, it adds an instruction for the session. It detects WebVTT/SRT cues,
 repeated `Speaker:` turns from two or more people, or an attached `.vtt`, `.srt`
@@ -59,6 +59,31 @@ dispatch without asking unless you asked for something else, or `off`. The hook
 never blocks a prompt; on any error it exits quietly. It is a hook rather than a
 line in the agent's description because a transcript pasted with no instruction
 does not look like a job for any agent, so the model alone rarely delegates it.
+
+The second, `hooks/guard_test_edits.py`, keeps an agent that is fixing a failing
+test from weakening the test instead of fixing the code (engineering-integrity
+§2). It does nothing until you turn it on for a fix task:
+
+```sh
+python3 "${CLAUDE_PLUGIN_ROOT}/hooks/guard_test_edits.py" lock "fixing tests/test_parse.py"
+```
+
+That writes `.sdlc/test-lock` in the project. While the file exists, Edit, Write,
+MultiEdit and NotebookEdit on test files, snapshots, fixtures and test-runner
+configs (`playwright.config.*`, `pytest.ini`, ...) are denied, and so are Bash
+commands that write to them (`sed -i`, `>`, `rm`, `mv`, `git checkout`) or that
+change or remove the lock. Source files stay editable, and reading tests is never
+blocked. The deny reason tells the agent to fix the code, or stop and report why
+it thinks the test is wrong.
+
+Only you can lift it: add an `allow: <path or glob>` line to the lock (one test
+you agree is wrong, or `allow: tests/regression/` for new tests the fix needs),
+run `guard_test_edits.py unlock` yourself, or start Claude Code with
+`SDLC_ALLOW_TEST_EDITS=1`. An agent can't set that variable for the process that
+runs hooks. The Bash check matches common write commands, not every possible one
+(a script that writes the file is not caught, nor a whole-tree `git stash` or
+`git reset --hard`), so it is a guardrail, not a sandbox. The hook runs
+`python3`, falling back to `python`.
 
 ## How workflows travel
 
