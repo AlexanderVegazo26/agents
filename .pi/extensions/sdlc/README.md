@@ -17,7 +17,18 @@ setTimeout, clearTimeout, console` — no `require`, `process` or `fs`, and
 `Math.random()`, `Date.now()` and argless `new Date()` replaced with
 throwers, so resume stays deterministic. The scripts' own bridge pattern
 (a mechanical agent that writes and runs a scratch Node script) is what
-gives the pipeline its file I/O; the sandbox itself stays I/O-free.
+gives the pipeline its file I/O; the allowlist offers none.
+
+**The sandbox is not a security boundary.** `node:vm` is not one, and until
+2026-11-13 a script escaped it with `log.constructor('return process')()`.
+Two things changed. The globals are now built inside the context's own realm,
+so that cheap escape and its relatives reach a `Function` with no `process`
+(the selftest probes every global). And, the control that actually matters,
+`runWorkflow` runs only the suite's shipped scripts: a `scriptPath` must
+resolve, after symlinks, to a file directly inside this repository's
+`sdlc-suite/workflows/`, never a `_` module or a test, and relative paths
+resolve against the suite, not the session's working directory. A cloned
+repository's own `sdlc-suite/workflows/*.js` is refused.
 
 **`lib.js` has a second consumer.** `.hermes/plugins/sdlc/runner.mjs` imports
 it for role resolution, `runAgent`, and the workflow sandbox, and injects its
@@ -82,7 +93,10 @@ node .pi/extensions/sdlc/lib.js --selftest
 Plain node, no pi, no network, no LLM: imports the whole extension (load
 check), runs a synthetic workflow through the sandbox with a stubbed agent
 (meta extraction, top-level await, `parallel`, no-barrier `pipeline`, the
-determinism throwers, suite-path resolution), and exercises the spawn
+determinism throwers, suite-path resolution), probes every sandbox global
+for a route to the host's `process`, checks that scripts outside
+`sdlc-suite/workflows/` (absolute, traversal, symlink, `_` module) are
+refused, and exercises the spawn
 fallbacks with a stubbed spawner. Wired into CI alongside the generated
 tree's own gates.
 

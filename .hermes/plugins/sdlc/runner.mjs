@@ -21,7 +21,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -211,25 +211,14 @@ export function limiter(max) {
 }
 
 /**
- * Resolve a model-supplied scriptPath to a shipped workflow, or null.
- * Accepted: `sdlc-suite/workflows/<name>.js` (as the commands give it), a
- * bare `<name>.js`, or an absolute path — each only if its real path is a
- * runnable script directly inside this suite's `sdlc-suite/workflows/`
- * (no `_` shared modules, no tests). Symlinks are resolved before the check.
+ * Resolve a model-supplied scriptPath to a shipped workflow, or null. The
+ * rule lives in lib.js (sdlc.resolveWorkflowScript), which runWorkflow also
+ * enforces itself, so the two harnesses cannot drift on it: only real paths
+ * directly inside this suite's `sdlc-suite/workflows/`, after symlinks are
+ * resolved; no `_` shared modules, no tests.
  */
 export function resolveWorkflowScript(scriptPath, suiteRoot = SUITE_ROOT) {
-  const raw = String(scriptPath || '').trim();
-  if (!raw) return null;
-  let dir;
-  try { dir = realpathSync(path.join(suiteRoot, 'sdlc-suite', 'workflows')); } catch { return null; }
-  const candidate = path.isAbsolute(raw)
-    ? raw
-    : (raw.includes('/') || raw.includes('\\') ? path.resolve(suiteRoot, raw) : path.join(dir, raw));
-  let real;
-  try { real = realpathSync(candidate); } catch { return null; }
-  const base = path.basename(real);
-  if (path.dirname(real) !== dir || !base.endsWith('.js') || base.startsWith('_') || base.endsWith('.test.js')) return null;
-  return real;
+  return sdlc.resolveWorkflowScript(scriptPath, suiteRoot);
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +478,7 @@ export async function handle(mode, req, log, deps = {}) {
     }
     const out = await sdlc.runWorkflow({
       anchor: SUITE_ROOT, // relative runtimeDir/policy args are suite paths
+      suiteRoot: SUITE_ROOT,
       scriptPath: script,
       args: req.args ?? {},
       log,

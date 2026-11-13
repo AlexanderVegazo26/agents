@@ -178,11 +178,15 @@ session after enabling it. `hermes tools list` should then show
   never from the session's working directory. The nested session still
   *runs* in that directory, so `agent` and `workflow` work from any project.
   This is a security boundary, not a convenience. The `node:vm` sandbox does
-  not contain code (`agent.constructor.constructor('return process')()`
-  escapes it), so a model-chosen `scriptPath` used to mean running any `.js`
-  as you, outside Hermes's approval checks. Now only real paths directly
-  inside `sdlc-suite/workflows/` are accepted, after symlinks are resolved;
-  `_` modules and tests are refused. Likewise a cloned repo's
+  not contain code: until 2026-11-13 `agent.constructor.constructor('return
+  process')()` escaped it, and although the globals are now built in the
+  context's own realm so that route is closed, node:vm is still not a
+  boundary. A model-chosen `scriptPath` used to mean running any `.js` as
+  you, outside Hermes's approval checks. Now only real paths directly inside
+  `sdlc-suite/workflows/` are accepted, after symlinks are resolved; `_`
+  modules and tests are refused. The check lives in the shared `lib.js`
+  (`resolveWorkflowScript`), and `runWorkflow` enforces it too, so the pi
+  extension refuses the same paths. Likewise a cloned repo's
   `.claude/agents/code-reviewer.md` is never used as role instructions.
   Note the slash-command skills (`.hermes/skills/`, `.agents/skills/`) are
   project-local, so `/sdlc-feature` exists only in sessions started inside

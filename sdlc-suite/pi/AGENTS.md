@@ -34,7 +34,10 @@ in a `node:vm` sandbox whose globals are the runtime's explicit allowlist
 (`agent`, `parallel`, `pipeline`, `workflow`, `phase`, `log`, `args`, `budget`,
 `setTimeout`, `clearTimeout`, `console` — no `require`, `process` or `fs`;
 `Math.random()`, `Date.now()` and argless `new Date()` are replaced with
-throwers so a resume stays deterministic). `agent()` inside the sandbox is the
+throwers so a resume stays deterministic). Only the suite's own shipped scripts
+run: any `scriptPath` that does not resolve to a file directly inside this
+repository's `sdlc-suite/workflows/` is refused, because the `node:vm` context is
+not a security boundary. `agent()` inside the sandbox is the
 `agent` tool above, so every pipeline stage is a real separate session. The
 relative `runtimeDir` / `policy` / `policyDefault` argument values are resolved
 against this repository before the script sees them (the `${CLAUDE_PLUGIN_ROOT}`

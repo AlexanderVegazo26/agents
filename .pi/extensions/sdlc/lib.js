@@ -28,6 +28,11 @@
  *    and runs it in a `node:vm` context carrying exactly the allowlisted
  *    globals, with the same throwers. `agent()` inside the sandbox is
  *    `runAgent()`, so every pipeline stage is a real, separate pi session.
+ *    It runs ONLY the suite's shipped scripts (`resolveWorkflowScript()`:
+ *    real paths directly inside `sdlc-suite/workflows/`, no `_` modules, no
+ *    tests). The allowlist keeps the scripts deterministic; it is not a
+ *    security boundary — node:vm is not one — so that path check is what
+ *    keeps untrusted code out.
  *
  *  - `resolveSuitePaths()` reproduces the command layer's `${CLAUDE_PLUGIN_ROOT}`
  *    expansion: the suite's relative `runtimeDir` / `policy` / `policyDefault`
@@ -135,13 +140,15 @@ export function buildPtyInvocation(bin, extraArgs = []) {
   const cmd = `exec "${"$PI_SDLC_BIN"}" -p --approve --no-session ${safe.join(' ')} "${"$PI_SDLC_PROMPT"}"`;
   return { file: 'script', args: ['-qec', cmd, '/dev/null'], dropped };
 }
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** This suite's own repository: the only place workflow scripts are run from. */
+export const SUITE_ROOT = path.resolve(HERE, '../../..');
 
 // ---------------------------------------------------------------------------
 // Role files
@@ -460,17 +467,53 @@ export function resolveSuitePaths(anchor, args) {
 }
 
 /**
- * Build the sandbox context: exactly the allowlisted globals. `agent` is
- * supplied by the caller (bound to `runAgent`); `log`/`onUpdate` stream
- * progress to the parent session.
+ * Resolve a model-supplied scriptPath to a shipped workflow, or null.
+ * Accepted: `sdlc-suite/workflows/<name>.js` (as the commands give it), a
+ * bare `<name>.js`, or an absolute path — each only if its real path is a
+ * runnable script directly inside `<suiteRoot>/sdlc-suite/workflows/` (no
+ * `_` shared modules, no tests). Symlinks are resolved before the check.
+ * Relative paths resolve against the suite, never the session's working
+ * directory, so a cloned repository's own `sdlc-suite/workflows/*.js` is
+ * never run.
+ *
+ * This allowlist is the control that matters: the `node:vm` context below is
+ * NOT a security boundary, and a script that runs in it must be trusted.
  */
-export function makeSandbox({ args, log = () => {}, agent, onUpdate = null }) {
+export function resolveWorkflowScript(scriptPath, suiteRoot = SUITE_ROOT) {
+  const raw = String(scriptPath || '').trim();
+  if (!raw) return null;
+  let dir;
+  try { dir = realpathSync(path.join(suiteRoot, 'sdlc-suite', 'workflows')); } catch { return null; }
+  const candidate = path.isAbsolute(raw)
+    ? raw
+    : (raw.includes('/') || raw.includes('\\') ? path.resolve(suiteRoot, raw) : path.join(dir, raw));
+  let real;
+  try { real = realpathSync(candidate); } catch { return null; }
+  const base = path.basename(real);
+  if (path.dirname(real) !== dir || !base.endsWith('.js') || base.startsWith('_') || base.endsWith('.test.js')) return null;
+  return real;
+}
+
+/*
+ * The sandbox's globals are built INSIDE the vm context from this source, so
+ * every function and object a script can reach belongs to the context's own
+ * realm: `log.constructor` is the context's Function, which has no `process`.
+ * Host functions are reached only through `bridge`, a closure parameter the
+ * script cannot name, and only strings, numbers and null cross back
+ * (agent results and args travel as JSON). Before 2026-11-13 host functions
+ * were placed in the context directly and `log.constructor('return process')()`
+ * returned the host's process.
+ *
+ * This removes the cheap escapes; it does not make node:vm a security
+ * boundary (Node documents that it is not one). What keeps untrusted code out
+ * is resolveWorkflowScript(): only the suite's shipped scripts are run.
+ */
+const SANDBOX_BOOTSTRAP = `(function (bridge, argsJson) {
+  'use strict';
+  const fromHost = (e) => new Error(String(e && e.message ? e.message : e));
+  const call = (fn, ...a) => { try { return fn(...a); } catch (e) { throw fromHost(e); } };
   const RealDate = Date;
-  const sandboxMath = Object.create(Math);
-  sandboxMath.random = () => {
-    throw new Error('Math.random() is unavailable in the workflow sandbox — resume must stay deterministic');
-  };
-  const SandboxDate = class extends RealDate {
+  class SandboxDate extends RealDate {
     constructor(...a) {
       if (a.length === 0) {
         throw new Error('argless new Date() is unavailable in the workflow sandbox — resume must stay deterministic');
@@ -480,7 +523,55 @@ export function makeSandbox({ args, log = () => {}, agent, onUpdate = null }) {
     static now() {
       throw new Error('Date.now() is unavailable in the workflow sandbox — resume must stay deterministic');
     }
+  }
+  Math.random = () => {
+    throw new Error('Math.random() is unavailable in the workflow sandbox — resume must stay deterministic');
   };
+  const log = (msg) => { call(bridge.log, String(msg)); };
+  const g = globalThis;
+  g.agent = async (prompt, opts) => {
+    let optsJson;
+    try { optsJson = opts === undefined ? undefined : JSON.stringify(opts); }
+    catch (e) { throw new Error('agent() opts must be JSON-serialisable: ' + e.message); }
+    let out;
+    try { out = await bridge.agent(String(prompt), optsJson); } catch (e) { throw fromHost(e); }
+    return out === undefined || out === null ? null : JSON.parse(out);
+  };
+  g.parallel = async (items) => {
+    if (!Array.isArray(items)) throw new Error('parallel() expects an array of thunks or promises');
+    return Promise.all(items.map((t) => (typeof t === 'function' ? t() : t)));
+  };
+  // Streaming pipeline: each item flows through the stages on its own, no
+  // barrier between stages, so a slow item never gates a fast one.
+  g.pipeline = async (items, transform, cross) => {
+    if (!Array.isArray(items)) throw new Error('pipeline() expects an array of items');
+    return Promise.all(items.map(async (item, i) => {
+      let r = typeof transform === 'function' ? await transform(item, i) : transform;
+      if (typeof cross === 'function') r = await cross(r, item);
+      return r;
+    }));
+  };
+  g.workflow = {}; // present for allowlist parity; no shipped script uses it
+  g.phase = (title) => { call(bridge.phase, String(title)); };
+  g.log = log;
+  g.args = argsJson === undefined ? undefined : JSON.parse(argsJson);
+  g.budget = {}; // present for allowlist parity; no shipped script uses it
+  g.setTimeout = (fn, ms, ...rest) => {
+    if (typeof fn !== 'function') throw new TypeError('setTimeout() expects a function');
+    return call(bridge.setTimer, () => fn(...rest), Number(ms) || 0);
+  };
+  g.clearTimeout = (id) => { call(bridge.clearTimer, Number(id)); };
+  g.console = { log, info: log, warn: log, error: log, debug: () => {} };
+  g.Date = SandboxDate;
+})`;
+
+/**
+ * Build the sandbox context: exactly the allowlisted globals, created in the
+ * context's own realm (see SANDBOX_BOOTSTRAP). `agent` is supplied by the
+ * caller (bound to `runAgent`); `log`/`onUpdate` stream progress to the
+ * parent session.
+ */
+export function makeSandbox({ args, log = () => {}, agent, onUpdate = null }) {
   let currentPhase = null;
   const emit = (line) => {
     try { if (typeof onUpdate === 'function') onUpdate({ content: [{ type: 'text', text: line }] }); } catch { /* best effort */ }
@@ -490,33 +581,27 @@ export function makeSandbox({ args, log = () => {}, agent, onUpdate = null }) {
     log(line);
     emit(line);
   };
-  return vm.createContext({
-    agent: (prompt, opts) => agent({ prompt, opts }),
-    parallel: async (items) => {
-      if (!Array.isArray(items)) throw new Error('parallel() expects an array of thunks or promises');
-      return Promise.all(items.map((t) => (typeof t === 'function' ? t() : t)));
+  const timers = new Map();
+  let nextTimer = 1;
+  const bridge = Object.freeze({
+    log: (msg) => sandboxLog(msg),
+    phase: (title) => { currentPhase = title; sandboxLog(`phase: ${title}`); },
+    agent: async (prompt, optsJson) => {
+      const value = await agent({ prompt, opts: optsJson === undefined ? undefined : JSON.parse(optsJson) });
+      return value === undefined || value === null ? null : JSON.stringify(value);
     },
-    // Streaming pipeline: each item flows through the stages on its own, no
-    // barrier between stages, so a slow item never gates a fast one.
-    pipeline: async (items, transform, cross) => {
-      if (!Array.isArray(items)) throw new Error('pipeline() expects an array of items');
-      return Promise.all(items.map(async (item, i) => {
-        let r = typeof transform === 'function' ? await transform(item, i) : transform;
-        if (typeof cross === 'function') r = await cross(r, item);
-        return r;
-      }));
+    setTimer: (cb, ms) => {
+      const id = nextTimer++;
+      timers.set(id, setTimeout(() => { timers.delete(id); cb(); }, ms));
+      return id;
     },
-    workflow: {}, // present for allowlist parity; no shipped script uses it
-    phase: (title) => { currentPhase = String(title); sandboxLog(`phase: ${title}`); },
-    log: sandboxLog,
-    args,
-    budget: {}, // present for allowlist parity; no shipped script uses it
-    setTimeout,
-    clearTimeout,
-    console: { log: sandboxLog, info: sandboxLog, warn: sandboxLog, error: sandboxLog, debug: () => {} },
-    Date: SandboxDate,
-    Math: sandboxMath,
+    clearTimer: (id) => { clearTimeout(timers.get(id)); timers.delete(id); },
   });
+  // A null-prototype global: with a plain `{}` here, `this.constructor` would
+  // be the host's Object and its constructor the host's Function.
+  const context = vm.createContext(Object.create(null));
+  vm.runInContext(SANDBOX_BOOTSTRAP, context)(bridge, args === undefined ? undefined : JSON.stringify(args));
+  return context;
 }
 
 /**
@@ -525,9 +610,11 @@ export function makeSandbox({ args, log = () => {}, agent, onUpdate = null }) {
  * Returns { ok: true, meta, result } or { ok: false, error, meta? }.
  * `agent` is `({ prompt, opts }) => Promise<value|null>`.
  */
-export async function runWorkflow({ anchor, scriptPath, args, log = () => {}, agent, onUpdate = null }) {
-  const abs = path.isAbsolute(scriptPath) ? scriptPath : path.resolve(anchor, scriptPath);
-  if (!existsSync(abs)) return { ok: false, error: `workflow script not found: ${scriptPath}` };
+export async function runWorkflow({ anchor, scriptPath, args, log = () => {}, agent, onUpdate = null, suiteRoot = SUITE_ROOT }) {
+  const abs = resolveWorkflowScript(scriptPath, suiteRoot);
+  if (!abs) {
+    return { ok: false, error: `workflow script not found: ${scriptPath} — only the shipped scripts in ${path.join(suiteRoot, 'sdlc-suite', 'workflows')} run` };
+  }
   const source = readFileSync(abs, 'utf8');
   const metaInfo = extractMeta(source);
   if (!metaInfo) {
@@ -535,7 +622,7 @@ export async function runWorkflow({ anchor, scriptPath, args, log = () => {}, ag
   }
   let meta;
   try {
-    meta = vm.runInNewContext(`(${metaInfo.metaExpr})`, {});
+    meta = vm.runInNewContext(`(${metaInfo.metaExpr})`, Object.create(null));
   } catch (e) {
     return { ok: false, error: `could not evaluate the meta export of ${scriptPath}: ${e.message}` };
   }
@@ -608,7 +695,11 @@ async function selftest() {
   const os2 = await import('node:os');
   const fs2 = await import('node:fs');
   const dir = fs2.mkdtempSync(path.join(os2.tmpdir(), 'sdlc-selftest-'));
-  const scriptPath = path.join(dir, 'selftest-workflow.js');
+  // A synthetic suite root: runWorkflow only runs scripts directly inside
+  // <suiteRoot>/sdlc-suite/workflows/.
+  const wfDir = path.join(dir, 'sdlc-suite', 'workflows');
+  fs2.mkdirSync(wfDir, { recursive: true });
+  const scriptPath = path.join(wfDir, 'selftest-workflow.js');
   const scriptSrc = `export const meta = { name: 'selftest', description: 'd', whenToUse: 'w', phases: [{ title: 'P1', detail: 'x' }] }
 const WORKFLOW = 'selftest'
 const seq = []
@@ -637,6 +728,7 @@ return { r1, par, pip, seq, threwDate, threwRandom, args: args, workflowIsObj: t
     args: { release: 'selftest', runtimeDir: 'sdlc-suite/workflows' },
     log: (l) => logs.push(l),
     agent: stubAgent,
+    suiteRoot: dir,
   });
   check('synthetic workflow completes', out.ok, out.error || '');
   if (out.ok) {
@@ -655,14 +747,83 @@ return { r1, par, pip, seq, threwDate, threwRandom, args: args, workflowIsObj: t
   }
 
   // 5. A script that throws fails the run (proven capable of failing).
-  const badPath = path.join(dir, 'bad.js');
+  const badPath = path.join(wfDir, 'bad.js');
   fs2.writeFileSync(badPath, 'export const meta = { name: "bad" }\nthrow new Error("boom")\n');
-  const bad = await runWorkflow({ anchor: dir, scriptPath: badPath, args: {}, agent: stubAgent });
+  const bad = await runWorkflow({ anchor: dir, scriptPath: badPath, args: {}, agent: stubAgent, suiteRoot: dir });
   check('a throwing script fails the run', bad.ok === false && /boom/.test(bad.error), bad.error || '');
 
   // 6. A missing script fails the run.
-  const missing = await runWorkflow({ anchor: dir, scriptPath: 'nope.js', args: {}, agent: stubAgent });
+  const missing = await runWorkflow({ anchor: dir, scriptPath: 'nope.js', args: {}, agent: stubAgent, suiteRoot: dir });
   check('a missing script fails the run', missing.ok === false);
+
+  // 6a. Only the suite's shipped scripts run. A script anywhere else — the
+  // session's working directory, a cloned repo, a shared `_` module — is
+  // refused before it is read.
+  const outside = path.join(dir, 'outside.js');
+  fs2.writeFileSync(outside, 'export const meta = { name: "outside" }\nreturn "ran"\n');
+  const refusedOutside = await runWorkflow({ anchor: dir, scriptPath: outside, args: {}, agent: stubAgent, suiteRoot: dir });
+  check('a script outside sdlc-suite/workflows is refused', refusedOutside.ok === false && /only the shipped scripts/.test(refusedOutside.error), JSON.stringify(refusedOutside));
+  const refusedTraversal = await runWorkflow({ anchor: dir, scriptPath: 'sdlc-suite/workflows/../../outside.js', args: {}, agent: stubAgent, suiteRoot: dir });
+  check('traversal out of sdlc-suite/workflows is refused', refusedTraversal.ok === false);
+  fs2.writeFileSync(path.join(wfDir, '_shared.js'), 'export const meta = { name: "shared" }\nreturn "ran"\n');
+  const refusedShared = await runWorkflow({ anchor: dir, scriptPath: '_shared.js', args: {}, agent: stubAgent, suiteRoot: dir });
+  check('a shared _ module is refused', refusedShared.ok === false);
+  fs2.symlinkSync(outside, path.join(wfDir, 'linked.js'));
+  const refusedLink = await runWorkflow({ anchor: dir, scriptPath: 'linked.js', args: {}, agent: stubAgent, suiteRoot: dir });
+  check('a symlink out of sdlc-suite/workflows is refused', refusedLink.ok === false);
+  check('a shipped workflow resolves against this suite', Boolean(resolveWorkflowScript('sdlc-suite/workflows/release-readiness.js')) && Boolean(resolveWorkflowScript('release-readiness.js')));
+  check('the default suite root refuses a temp-dir script', resolveWorkflowScript(outside) === null);
+
+  // 6b. Every global a script can reach belongs to the context's realm, so
+  // its constructor chain ends at a Function that has no `process`. Before
+  // 2026-11-13 `log.constructor('return process')()` returned the host's.
+  const escapeSrc = `export const meta = { name: 'escape' }
+const probes = {}
+// Async functions' constructor is AsyncFunction, whose product returns a
+// promise of the value: await it, or every async global would look 'object'.
+const probe = async (name, get) => {
+  try { const F = get(); probes[name] = typeof F === 'function' ? typeof (await F('return typeof process === "undefined" ? undefined : process')()) : 'no-function' }
+  catch (e) { probes[name] = 'blocked' }
+}
+let agentError = null
+try { await agent('throw-please', {}) } catch (e) { agentError = e }
+const value = await agent('obj', { schema: { type: 'object' } })
+await probe('log', () => log.constructor)
+await probe('agent', () => agent.constructor)
+await probe('agent-promise', () => agent('x').constructor.constructor)
+await probe('agent-value', () => value.constructor.constructor)
+await probe('agent-error', () => agentError.constructor.constructor)
+await probe('parallel', () => parallel.constructor)
+await probe('pipeline', () => pipeline.constructor)
+await probe('phase', () => phase.constructor)
+await probe('args', () => args.constructor.constructor)
+await probe('args-nested', () => args.nested.constructor.constructor)
+await probe('workflow', () => workflow.constructor.constructor)
+await probe('budget', () => budget.constructor.constructor)
+await probe('console', () => console.log.constructor)
+await probe('console-object', () => console.constructor.constructor)
+await probe('setTimeout', () => setTimeout.constructor)
+await probe('timer-handle', () => setTimeout(() => {}, 0).constructor.constructor)
+await probe('clearTimeout', () => clearTimeout.constructor)
+await probe('Date', () => Date.constructor)
+await probe('Math', () => Math.constructor.constructor)
+await probe('global', () => this.constructor.constructor)
+await probe('globalThis', () => globalThis.constructor.constructor)
+await new Promise((r) => setTimeout(r, 1))
+return probes
+`;
+  fs2.writeFileSync(path.join(wfDir, 'escape.js'), escapeSrc);
+  const escapeAgent = async ({ prompt }) => {
+    if (prompt === 'throw-please') throw new Error('host failure');
+    return { ok: true };
+  };
+  const esc = await runWorkflow({ anchor: dir, scriptPath: 'escape.js', args: { nested: { a: 1 } }, agent: escapeAgent, suiteRoot: dir });
+  check('escape probe workflow completes', esc.ok, esc.error || '');
+  if (esc.ok) {
+    const reached = Object.entries(esc.result).filter(([, v]) => v !== 'undefined' && v !== 'blocked');
+    check('no sandbox global reaches the host process', reached.length === 0, JSON.stringify(reached));
+    check('the escape probe covered every global', Object.keys(esc.result).length === 21, JSON.stringify(Object.keys(esc.result)));
+  }
 
   // 7. runAgent: schema parse, empty output, transport retry, model fallback.
   const spawnCalls = [];
