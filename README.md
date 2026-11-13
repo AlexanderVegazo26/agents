@@ -120,7 +120,7 @@ python scripts/test-agent                          # every check CI's validate j
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has the full list to run before a pull request.
 
-CI is `.github/workflows/ci.yml`. It runs on `pull_request`, on manual `workflow_dispatch`, and on a weekly schedule (Mondays 07:00 UTC). It does not run on push. It has three jobs and uses no repository secrets:
+CI is `.github/workflows/ci.yml`. It runs on `pull_request`, on a push to `main`, on manual `workflow_dispatch`, and on a weekly schedule (Mondays 07:00 UTC). It has three jobs and uses no repository secrets:
 
 | Job | What it runs |
 |---|---|

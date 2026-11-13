@@ -33,9 +33,15 @@ name: ci
 
 on:
   pull_request:
+  # Direct pushes to main are checked too. Until 2026-11-13 there was no push
+  # trigger, so a commit pushed straight to main (which the repository allows:
+  # main is not protected) went unchecked until the next weekly run. The
+  # `versioning` job already handles a push (no base branch, tree-state rules).
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: '0 7 * * 1' # weekly, Monday 07:00 UTC (no run on every push to main)
+    - cron: '0 7 * * 1' # weekly, Monday 07:00 UTC
 
 # Read-only. Nothing in this workflow writes to the repository or comments on
 # a pull request; the test-report artifact is stored by the Actions service and
