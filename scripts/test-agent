@@ -166,6 +166,9 @@ CHECKS: list[Check] = [
            "scanned one source per letter of its name; add-feed stored a URL twice)."),
     _suite("hermes-proactive/tests/test_triggerd.py",
            "Seen red by accepting any webhook signature."),
+    _suite("hermes-proactive/tests/test_install.py",
+           "install.sh into an empty HOME, twice. Seen red (2 failures) before ~/.hermes/scripts "
+           "was in its mkdir: the first install into it aborted the script."),
     _suite("hermes-proactive/tests/test_notify.py",
            "hp.notify, the Telegram hand-off all three services share, with tg_send.py faked. "
            "Seen red by ignoring tg_send's exit code (2 failures) and by dropping --chat (1)."),

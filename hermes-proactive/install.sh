@@ -14,7 +14,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HS="$HOME/.hermes"
 
-mkdir -p "$HS/monitors" "$HS/goals" "$HS/state/monitors" "$HS/skills"
+mkdir -p "$HS/monitors" "$HS/goals" "$HS/state/monitors" "$HS/skills" "$HS/scripts"
 
 for s in condition_monitor.py triggerd.py proactive_scan.py goals.py; do
     install -m 0755 "$SRC/$s" "$HS/scripts/$s"
