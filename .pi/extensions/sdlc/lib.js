@@ -116,6 +116,9 @@ export function resolveSpawnRoute(nodeMajor, hasScript) {
   };
 }
 
+/** Flags runAgent passes that always take the next token as their value. */
+const VALUE_FLAGS = new Set(['--model', '--thinking']);
+
 /** Shell-token safety for values embedded in the static `script -c` command. */
 export function isSafeShellToken(token) {
   return /^[A-Za-z0-9._\-/]+$/.test(String(token));
@@ -135,8 +138,21 @@ export function cleanOutput(text) {
  * ever touches the shell.
  */
 export function buildPtyInvocation(bin, extraArgs = []) {
-  const safe = extraArgs.filter((a) => isSafeShellToken(a));
-  const dropped = extraArgs.length - safe.length;
+  // A flag and its value are kept or dropped TOGETHER. Before 2026-11-13 each
+  // token was filtered alone, so an unsafe model value left a bare `--model`
+  // in front of "$PI_SDLC_PROMPT" and pi took the prompt as the model name.
+  const safe = [];
+  let dropped = 0;
+  for (let i = 0; i < extraArgs.length; i++) {
+    const tok = String(extraArgs[i]);
+    const next = i + 1 < extraArgs.length ? String(extraArgs[i + 1]) : null;
+    const takesValue = VALUE_FLAGS.has(tok) || (tok.startsWith('-') && next !== null && !next.startsWith('-'));
+    const group = takesValue ? (next === null ? [tok] : [tok, next]) : [tok];
+    if (takesValue && next !== null) i++;
+    const complete = !takesValue || group.length === 2;
+    if (complete && group.every((a) => isSafeShellToken(a))) safe.push(...group);
+    else dropped += group.length;
+  }
   const cmd = `exec "${"$PI_SDLC_BIN"}" -p --approve --no-session ${safe.join(' ')} "${"$PI_SDLC_PROMPT"}"`;
   return { file: 'script', args: ['-qec', cmd, '/dev/null'], dropped };
 }
@@ -890,7 +906,13 @@ return probes
   check('buildPtyInvocation uses script with a static command', inv.file === 'script' && inv.args[0] === '-qec' && inv.args[2] === '/dev/null');
   check('buildPtyInvocation passes dynamic values via env', inv.args[1].includes('$PI_SDLC_BIN') && inv.args[1].includes('$PI_SDLC_PROMPT') && inv.args[1].includes('--model sonnet --thinking high'));
   const inv2 = buildPtyInvocation('/opt/pi/bin/pi', ['--model', 'a b; rm']);
-  check('buildPtyInvocation drops unsafe tokens', inv2.dropped === 1 && !inv2.args[1].includes('rm') && !inv2.args[1].includes('a b'));
+  check('buildPtyInvocation drops unsafe tokens', inv2.dropped === 2 && !inv2.args[1].includes('rm') && !inv2.args[1].includes('a b'));
+  // The flag goes with its value: a bare `--model` would take the prompt as the model.
+  check('buildPtyInvocation drops an unsafe value together with its flag', !inv2.args[1].includes('--model'), inv2.args[1]);
+  const inv3 = buildPtyInvocation('/opt/pi/bin/pi', ['--model', '$(x)', '--thinking', 'high']);
+  check('buildPtyInvocation keeps the safe pair after a dropped one', inv3.dropped === 2 && /--no-session --thinking high "\$PI_SDLC_PROMPT"$/.test(inv3.args[1]), inv3.args[1]);
+  const inv4 = buildPtyInvocation('/opt/pi/bin/pi', ['--thinking']);
+  check('buildPtyInvocation drops a value flag with no value', inv4.dropped === 1 && !inv4.args[1].includes('--thinking'), inv4.args[1]);
   check('nodeNeedsPtySpawn is a boolean', typeof nodeNeedsPtySpawn() === 'boolean');
 
   // Spawn-route decision: pure, so every branch is testable on any runtime.
