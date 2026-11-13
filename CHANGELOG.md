@@ -24,6 +24,26 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Changed
 
+- **`prototyper` 2.0.0 — shrunk from 4,887 to 3,334 words** (context budget,
+  MODEL-ROUTING.md principle 7). It drops what the model already does by default and
+  what the body already said: the workflow table becomes one line, the
+  failure-mode appendix goes, and personas, requirements and scope become one
+  paragraph. It keeps every Prime Directive, Fast mode, the classification table,
+  the ask-once rule, the mock and AI rules, the quality gate, the PROTOTYPE.md
+  template, the autonomy gates and the report contract. Section numbers that other
+  files cite stay put: §2.1 Fast mode, §5 transcript classification, §7 assumptions,
+  §13 autonomy, §17 output. These moved: §5.2–§5.4 (source of truth, authority,
+  what vs how) merge into §5.2, Contradictions moves from §5.5 to §5.3, §6.1–§6.5
+  merge into §6, and §9.1–§9.8 merge into §9. The §12 template keeps each heading
+  on its own line, because the Hermes `/idea` pipeline reads *Hypothesis* that
+  way.
+- **`test_agent_contracts.py` covers the Hermes plugin and report order.** The `/idea`
+  pipeline's PROTOTYPER_TASK and FIX_TASK cite the prototyper's §2.1, §7, §13 and
+  Directive 2 by bare number. Each citation must now be registered and must
+  resolve to a heading, list item or Prime Directive that means the same thing.
+  The labels `/prototype` relays must stay in §17, in that order. Fenced templates
+  no longer count as section boundaries. `test_prototype_pipeline.py` now feeds
+  the agent's §12 template, as written, to `_hypothesis()`.
 - **`qa-engineer` 2.0.0 — shrunk from 7,437 to 2,814 words** (context budget,
   MODEL-ROUTING.md principle 7). It drops what its own skills (`qa-techniques`,
   `qa-quality-attributes`, `qa-triage`) already hold, along with the Definition of Done,

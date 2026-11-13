@@ -20,6 +20,7 @@ import http.client
 import http.server
 import importlib.util
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -255,6 +256,22 @@ class HandlerTest(TempCase):
 
 
 class TextHelpersTest(unittest.TestCase):
+    def test_hypothesis_is_read_from_a_prototype_md_written_to_the_agents_template(self) -> None:
+        # The "Prototype ready" message quotes PROTOTYPE.md's Hypothesis, and the
+        # prototyper copies the layout of its §12 template. Seen red with the template
+        # written as '## Hypothesis   <sentence>' on one line (_hypothesis returned "").
+        agent = (Path(__file__).resolve().parents[3] / "sdlc-suite/agents/prototyper.md").read_text()
+        start = agent.index("```markdown\n# [Prototype name]")
+        template = agent[start + len("```markdown\n"):agent.index("\n```", start)]
+        sentence = "We believe dispatchers will plan routes faster by dragging stops, instead of spreadsheets."
+        placeholder = re.search(r"<[^<>\n]*hypothesis[^<>\n]*>", template)
+        self.assertIsNotNone(placeholder, "§12 template has no <...hypothesis...> placeholder")
+        filled = template.replace(placeholder.group(0), sentence)
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "PROTOTYPE.md").write_text(filled)
+            got = pp._hypothesis(Path(td))
+        self.assertEqual(got, sentence, f"_hypothesis() on the prototyper's §12 template; got {got!r}")
+
     def test_esc_escapes_html_and_drops_control_characters(self) -> None:
         self.assertEqual(pp.esc(" <b>a&b</b>\x00\x1b[31m\n "), "&lt;b&gt;a&amp;b&lt;/b&gt;[31m")
 
