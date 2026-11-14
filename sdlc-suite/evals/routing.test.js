@@ -78,6 +78,12 @@ function validateDataset(data) {
     for (const k of ['agent', 'task']) if (typeof c[k] !== 'string' || !c[k]) errs.push(`${at}: "${k}" must be a non-empty string`)
     if (!Array.isArray(c.must) || !c.must.length) errs.push(`${at}: "must" needs at least one {what, pattern}`)
     if (!Array.isArray(c.mustNot)) errs.push(`${at}: "mustNot" must be an array`)
+    for (const name of Object.keys(c.fixtures || {})) {
+      const norm = path.posix.normalize(name)
+      if (!name || norm === '.' || path.isAbsolute(name) || norm === '..' || norm.startsWith('../') || norm.includes('\\')) {
+        errs.push(`${at}: fixture "${name}" must be a relative path inside the case's temp dir`)
+      }
+    }
     if (!Array.isArray(c.counterexamples) || !c.counterexamples.length) errs.push(`${at}: "counterexamples" needs at least one wrong answer the graders must reject`)
     for (const g of [...(c.must || []), ...(c.mustNot || [])]) {
       try { new RegExp(g.pattern, g.flags ?? 'i') } catch (e) { errs.push(`${at}: grader "${g.what}" has a bad pattern: ${e.message}`) }
@@ -106,7 +112,11 @@ function gradeText(c, text) {
 function runLive(c, agent, tier, effort) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `routing-${c.id}-`))
   try {
-    for (const [name, content] of Object.entries(c.fixtures || {})) fs.writeFileSync(path.join(dir, name), content)
+    for (const [name, content] of Object.entries(c.fixtures || {})) {
+      const file = path.join(dir, name)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, content)
+    }
     const tools = agent.tools.filter(t => CLI_TOOLS.has(t)).join(',')
     const cli = ['-p', c.task, '--model', tier, '--effort', effort, '--system-prompt', agent.body,
       '--tools', tools, '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config',

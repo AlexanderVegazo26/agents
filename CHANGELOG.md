@@ -22,6 +22,13 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   `--live` / `--tier` / `--record` run the tasks through the `claude` CLI with the
   agent's body and `tools:` (opt-in); `--record` keeps the old fixture when the new
   response fails a grader.
+  Two more cases, recorded live on 2026-11-14: `persona-runner` on haiku/low stops
+  when `target_env` resolves to production in the repo's own deployment map and asks
+  which non-production host to use instead of switching on its own;
+  `product-archaeologist` on sonnet/low cites `src/orders.js`, reports a CSV export
+  the README promises but the code lacks, and flags a 50% vs 90% discount cap as a
+  possible defect without prescribing the fix. Fixture names may now include
+  subdirectories (`.claude/personas/...`) and must stay inside the case's temp dir.
 
 - **Test lock hook, `hooks/guard_test_edits.py` (PreToolUse).** While a failing test
   is being fixed, the tests are the spec: once `.sdlc/test-lock` exists
