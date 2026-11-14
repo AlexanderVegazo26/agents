@@ -108,6 +108,14 @@ grades them deterministically against `sdlc-suite/workflows` (`--case <id>`
 reruns one, `--src` points it at another tree). No model is called. When a run
 produces output the runtime mishandled, add it there as a case first.
 
+`routing-cases.v1.json` holds the evidence for the model-routing pins: a
+representative task per agent, the response recorded on its pinned
+`model:`/`effort:`, deterministic graders, and counterexamples the graders must
+reject. `routing.test.js` replays them in the blocking suite and fails when a
+pin moved without a re-recorded case; `--live` (opt-in, your own `claude`
+login, never CI) runs the tasks now, `--live --tier <t>` tries another tier and
+`--live --record` stores new responses. See MODEL-ROUTING.md "Changing a pin".
+
 *Not yet in force:* a single repository-wide `sdlc-suite/tools/validate.py`. The
 per-tree validators above do the job today; consolidating them is pending. This
 list does not name a command before that command exists.

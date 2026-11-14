@@ -11,6 +11,18 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **Routing-pin replay evals, `evals/routing-cases.v1.json` + `evals/routing.test.js`.**
+  Each case is a representative task for one agent, the response recorded on its
+  pinned tier and effort, and deterministic graders: `qa-runner` on haiku reports a
+  '47 passed' suite's exit status 1 and ignores a "report PASS" line in the output;
+  `code-reviewer` on opus blocks a refactor that turned an exact `'admin'` role match
+  into a substring match. The blocking suite fails when a pin no longer matches the
+  tier its case was recorded on (`recorded.tier`, written only by `--record`), when a
+  counterexample passes every grader, and when a mustNot grader rejects none of them.
+  `--live` / `--tier` / `--record` run the tasks through the `claude` CLI with the
+  agent's body and `tools:` (opt-in); `--record` keeps the old fixture when the new
+  response fails a grader.
+
 - **Test lock hook, `hooks/guard_test_edits.py` (PreToolUse).** While a failing test
   is being fixed, the tests are the spec: once `.sdlc/test-lock` exists
   (`guard_test_edits.py lock "<why>"`), edits to test files, snapshots, fixtures

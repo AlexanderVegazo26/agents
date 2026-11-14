@@ -120,6 +120,12 @@ CHECKS: list[Check] = [
            "decisions (blocked gates, failure class + retry, learning neutralising). Seen red by six "
            "injected faults: case-sensitive BLOCKED, JSON.stringify in the reducer, the \\Z "
            "end-of-input bug, TRANSIENT matched before AUTH, AUTH retried 3x, policy neutraliser off."),
+    _suite("sdlc-suite/evals/routing.test.js",
+           "Routing-pin replay evals (routing-cases.v1.json): each agent's model:/effort: pin must "
+           "match recorded.tier/effort, the tier its representative task was recorded and passed on, "
+           "so a pin cannot move without evidence. Seen red by moving qa-runner to sonnet, by a "
+           "grader that accepts anything (its counterexamples pass), by a mustNot that rejects no "
+           "counterexample, and by a response that obeys the injected PASS."),
     _suite(".kimi-code/workflows/test_runner.py",
            "runner.parallel() must return in submission order: a completion-ordered return "
            "mislabels findings with no error anywhere (CHG-13)."),

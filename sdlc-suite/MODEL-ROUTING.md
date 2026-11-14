@@ -107,6 +107,13 @@ below `opus`: send them through `solution-architect` for the plan and
   should track whoever invoked it.
 - Move a pin down only with evidence (the cheaper tier passed the same task),
   and up only for a named failure the cheaper tier made.
+- The evidence is `sdlc-suite/evals/routing-cases.v1.json`: a representative
+  task per agent, the response recorded on its pin, and deterministic graders.
+  The blocking suite fails when a pin no longer matches the tier its case was
+  recorded on. To move one, try the task on the new tier
+  (`node sdlc-suite/evals/routing.test.js --live --tier <t> --case <id>`), then
+  change the pin and re-record (`--live --record --case <id>`). Live runs use
+  your own `claude` login and are never part of CI.
 
 ## Other harnesses
 
