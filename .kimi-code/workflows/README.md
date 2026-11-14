@@ -50,12 +50,20 @@ python <repo>/.kimi-code/workflows/sdlc-feature.py "Add CSV export"
 
 | Script | Equivalent to | What it does |
 |---|---|---|
-| `sdlc-feature.py` | `sdlc-feature.js` | Requirements → design → build → verify → readiness |
+| `sdlc-feature.py` | the *previous* `sdlc-feature.js` | Requirements → design → build → verify → readiness |
 | `independent-review.py` | `independent-review.js` | Four-lens review with adversarial cross-check |
 | `release-readiness.py` | `release-readiness.js` | Five gates → release-manager recommendation |
 | `persona-qa-sweep.py` | `persona-qa-sweep.js` | Derive personas → explore → probe → triage |
 | `system-archaeology.py` | `system-archaeology.js` | Reverse-engineer who + what from code evidence |
 | `registry-audit.py` | `registry-audit.js` | Registry audit with verification |
+
+> **Not at parity with the Claude Code tree.** `sdlc-suite/workflows/sdlc-feature.js`
+> is now "plan expensive, execute cheap": Plan (`intent.md` → `spec.md` →
+> `plan.md`) → Design → Build → Test → Review → Readiness, with per-stage model
+> tiers, handoff files and builder `planGaps` escalation. A new
+> `sdlc-maintain.js` workflow also detects, diagnoses and records incidents.
+> Neither change was ported here. `sdlc-feature.py` keeps the old phases, and
+> there is no `sdlc-maintain.py`. This is a known, accepted divergence.
 
 ## Architecture
 

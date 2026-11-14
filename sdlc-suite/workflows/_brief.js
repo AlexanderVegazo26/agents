@@ -74,6 +74,10 @@ const BUILD_MANIFEST_SCHEMA = {
       },
       description: 'Criteria deliberately NOT addressed, and why. Making the gap explicit is what stops it being discovered as a defect later.',
     },
+    planGaps: {
+      type: 'array', items: { type: 'string' },
+      description: 'Decisions the plan left open that you needed and did NOT make yourself — an interface, a data shape, a behavior. Escalated back to planning rather than improvised at build tier.',
+    },
   },
 }
 
@@ -130,6 +134,10 @@ function renderManifest(m, { includeFiles = true, clamped = null } = {}) {
   if (Array.isArray(m.notAddressed) && m.notAddressed.length) {
     lines.push('\nDeliberately NOT addressed:')
     for (const n of m.notAddressed) lines.push(`  - ${n.id}: ${n.why}`)
+  }
+  if (Array.isArray(m.planGaps) && m.planGaps.length) {
+    lines.push('\nPlan gaps escalated (decisions the builder did NOT make):')
+    for (const g of m.planGaps) lines.push(`  - ${g}`)
   }
   return lines.join('\n')
 }

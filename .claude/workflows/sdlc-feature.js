@@ -1,16 +1,17 @@
 export const meta = {
   name: 'sdlc-feature',
-  description: 'Run a feature end-to-end through the SDLC agent suite: requirements, design, build, independent verification, release readiness',
+  description: 'Run a feature end-to-end through the SDLC agent suite — plan expensive, execute cheap: plan, design, build, test, review, release readiness, each stage handing the next a file',
   whenToUse: 'A feature or change large enough to warrant the full lifecycle. Pass the initiative description as args. Produces recommendations only — never deploys.',
   phases: [
-    { title: 'Requirements', detail: 'product-analyst converts the initiative into numbered acceptance criteria' },
-    { title: 'Design', detail: 'ux-designer and solution-architect in parallel' },
-    { title: 'Build', detail: 'software-engineer / ui-engineer / database-engineer as the change requires' },
-    { title: 'Verify', detail: 'code-reviewer, qa-engineer, security-engineer, performance-engineer independently' },
+    { title: 'Plan', detail: 'plan tier (Fable/high): product-manager writes intent.md, product-analyst spec.md, solution-architect plan.md' },
+    { title: 'Design', detail: 'design tier (Opus/xhigh): ux-designer spec + ui-engineer static mock — only when a frontend surface is touched' },
+    { title: 'Build', detail: 'build tier (Sonnet/medium): software-engineer / ui-engineer / database-engineer execute plan.md; plan gaps escalate, never improvised' },
+    { title: 'Test', detail: 'test tier (Sonnet) designs and interprets; qa-runner on the testLoop tier (Haiku) runs the loops' },
+    { title: 'Review', detail: 'review tier (Opus/high) code review and performance, security tier (Fable) security — handed the test report' },
     { title: 'Cross-check', detail: 'every finding handed to a refuter before it is reported' },
     { title: 'Repair', detail: 'the builder fixes confirmed blocking findings in its own change — at most 2 rounds' },
     { title: 'Re-verify', detail: 'only the lenses that raised a blocking finding re-check the repair, then the refuter' },
-    { title: 'Readiness', detail: 'release-manager synthesizes gates; technical-writer drafts docs' },
+    { title: 'Readiness', detail: 'release-manager recommends go/no-go for HUMAN approval; technical-writer drafts docs' },
     { title: 'Runtime', detail: 'bridge steps that reach the recorder, the policy loader and the brief builder' },
   ],
 }
@@ -164,34 +165,301 @@ function slug(s) {
  * `.claude/runs/` — a file, so `listRuns()` skips it. Two runs colliding there
  * are generating byte-identical scripts, which makes the collision harmless
  * rather than merely unlikely.
+ *
+ * `model` pins the transcriber's model. Omitted, a step runs on BRIDGE_MODEL
+ * (Haiku, unless `args.tiers` is 'inherit'); 'inherit' follows the session.
  */
-async function bridge(op, source) {
-  if (!RUNTIME_DIR) return null
-  const file = RUN
-    ? `${RUN.dir}/bridge/${op}-${++bridgeCalls}.js`
-    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${++bridgeCalls}.js`
+// RELAY SIZE. A transcriber relays a script in and its stdout out, and the
+// host's Bash tool cuts output beyond ~30,000 characters. Sealed payloads are
+// hex — two characters a byte — so every relay is bounded to RELAY_CHUNK bytes
+// (24,000 hex characters) per step: a larger script is written in parts first,
+// and a larger output is read back in chunks. One SHA-256 covers the whole
+// either way (code review round 3 M1: resuming a realistic run relayed ~122k).
+const RELAY_CHUNK = 12000
+// At most this many part or read steps per relay, each one an agent call: a
+// relay larger than that fails visibly instead of quietly running hundreds of
+// transcriber calls (code review / security round 4).
+const MAX_RELAY_STEPS = 64
+const MAX_RELAY_HEX = RELAY_CHUNK * 2 * MAX_RELAY_STEPS
+
+// Every bridge step is mechanical, so it runs on the cheapest model unless the
+// run pins nothing at all (`args.tiers: 'inherit'`). A caller may still pass a
+// model of its own.
+const BRIDGE_MODEL = args && typeof args === 'object' && args.tiers === 'inherit' ? null : 'haiku'
+
+/** One mechanical step: write `script` to `file`, run it, relay its stdout. */
+async function transcribe(label, file, script, model) {
   const out = await agent(
-    `Mechanical bridge step. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. Do exactly these three things and nothing else. Do not edit, improve, shorten or re-derive the script. Do not read the modules it requires. Do not summarise, re-key or pretty-print its output.
+    `Mechanical bridge step. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. Do exactly these three things and nothing else. Do not edit, improve, shorten, decode or re-derive the script. Do not read the modules it requires. Do not summarise, re-key or pretty-print its output.
 
 1. Write the block between the two markers below, byte for byte, to ${file} — creating parent directories if they do not exist. If that path is relative, resolve it against your working directory first; the Write tool needs an absolute path.
 2. Run it: node "${file}"
 3. Return ok=true with that process's stdout in "result", VERBATIM — it is already JSON. If the command exits non-zero, or writes nothing to stdout, return ok=false and put stderr in "error".
 
 --- BEGIN ${file} ---
-${source}
+${script}
 --- END ${file} ---`,
-    { agentType: 'general-purpose', label: `bridge:${op}`, phase: 'Runtime', effort: 'low', schema: BRIDGE_SCHEMA },
+    { agentType: 'general-purpose', label, phase: 'Runtime', effort: 'low', schema: BRIDGE_SCHEMA,
+      ...(model ? { model } : {}) },
   )
   if (!out || out.ok !== true || typeof out.result !== 'string' || !out.result.trim()) {
-    log(`bridge:${op} did not run${out && out.error ? ` — ${out.error}` : ''}`)
+    log(`${label} did not run${out && out.error ? ` — ${String(out.error).slice(0, 300)}` : ''}`)
     return null
   }
   try {
     return JSON.parse(out.result)
   } catch (e) {
+    log(`${label} returned output that is not JSON — treating the module as unreachable`)
+    return null
+  }
+}
+
+async function bridge(op, source, model) {
+  if (!RUNTIME_DIR) return null
+  const m = model === undefined ? BRIDGE_MODEL : (typeof model === 'string' && model && model !== 'inherit' ? model : null)
+  const n = ++bridgeCalls
+  const file = RUN
+    ? `${RUN.dir}/bridge/${op}-${n}.js`
+    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.js`
+  // SEALED, both directions (security review F1): the script is carried as hex
+  // the transcriber cannot read, and the loader refuses to run it unless it
+  // hashes to the value computed here; what the script prints is captured and
+  // handed back as hex with sha256(nonce ‖ output). Phase artifacts, resumed
+  // results, blocked-gate candidates and repo-authored learnings all travel
+  // through here, and some of them quote untrusted text.
+  const srcBytes = utf8Bytes(source)
+  const srcHex = hexOf(srcBytes)
+  const nonce = `${RUN && RUN.runId ? RUN.runId : `pre-${WORKFLOW}`}:${op}:${n}`
+  const PART = RELAY_CHUNK * 2
+  let srcExpr = `Buffer.from('${srcHex}', 'hex')`
+  if (srcHex.length > PART * MAX_RELAY_STEPS) {
+    log(`bridge:${op} script is ${srcHex.length / 2} bytes — over the ${MAX_RELAY_STEPS}-step relay limit; not sent`)
+    return null
+  }
+  if (srcHex.length > PART) {
+    const parts = []
+    for (let i = 0; i < srcHex.length; i += PART) parts.push(srcHex.slice(i, i + PART))
+    for (let i = 0; i < parts.length; i++) {
+      const pf = `${file}.in${i}`
+      const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.js`, `const fs = require('fs')
+const path = require('path')
+fs.mkdirSync(path.dirname(path.resolve(${JSON.stringify(pf)})), { recursive: true })
+fs.writeFileSync(${JSON.stringify(pf)}, '${parts[i]}')
+process.stdout.write('{"ok":true}')`, m)
+      if (!w || w.ok !== true) {
+        log(`bridge:${op} input part ${i + 1}/${parts.length} was not written — discarded`)
+        return null
+      }
+    }
+    srcExpr = `Buffer.from([${parts.map((_, i) => `fs.readFileSync(${JSON.stringify(`${file}.in${i}`)}, 'utf8')`).join(', ')}].join(''), 'hex')`
+  }
+  const loader = `'use strict'
+// Sealed bridge loader, generated by the workflow runtime. The script to run is
+// carried as hex and refused unless it hashes to the value below.
+const fs = require('fs')
+const crypto = require('crypto')
+const SRC = ${srcExpr}
+if (crypto.createHash('sha256').update(SRC).digest('hex') !== '${sha256Hex(srcBytes)}') {
+  process.stderr.write('bridge script was altered in transcription; refusing to run')
+  process.exit(3)
+}
+let captured = ''
+let failed = null
+const realWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = (chunk) => { captured += String(chunk); return true }
+try {
+  new Function('require', SRC.toString('utf8'))(require)
+} catch (e) {
+  failed = e
+} finally {
+  process.stdout.write = realWrite
+}
+if (failed) {
+  // An error message can quote the script's data, so it is not printed where
+  // the transcriber relays it: it goes to a file beside the script.
+  fs.writeFileSync(${JSON.stringify(`${file}.err`)}, String((failed && failed.stack) || failed))
+  process.stderr.write('bridge script failed; the error is in ' + ${JSON.stringify(`${file}.err`)})
+  process.exit(1)
+}
+const OUT = Buffer.from(captured, 'utf8')
+const HEXOUT = OUT.toString('hex')
+const SHA = crypto.createHash('sha256').update(${JSON.stringify(nonce)}, 'utf8').update(OUT).digest('hex')
+if (HEXOUT.length <= ${PART}) {
+  realWrite(JSON.stringify({ sealed: HEXOUT, sha256: SHA }))
+} else {
+  fs.writeFileSync(${JSON.stringify(`${file}.out`)}, HEXOUT)
+  realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.length, sha256: SHA }))
+}`
+  const env = await transcribe(`bridge:${op}`, file, loader, m)
+  if (!env || typeof env.sealed !== 'string' || typeof env.sha256 !== 'string' ||
+      env.sealed.length % 2 !== 0 || !/^[0-9a-f]*$/.test(env.sealed)) {
+    if (env) log(`bridge:${op} returned no sealed payload — discarded`)
+    return null
+  }
+  let hex = env.sealed
+  if (env.total !== undefined) {
+    if (!Number.isInteger(env.total) || env.total % 2 !== 0 || env.total <= hex.length || env.total > MAX_RELAY_HEX) {
+      log(`bridge:${op} announced an implausible output size — discarded`)
+      return null
+    }
+    while (hex.length < env.total) {
+      const off = hex.length
+      const c = await transcribe(`bridge:${op}:read`, `${file}.r${off}.js`,
+        `process.stdout.write(JSON.stringify({ chunk: require('fs').readFileSync(${JSON.stringify(`${file}.out`)}, 'utf8').slice(${off}, ${off + PART}) }))`, m)
+      if (!c || typeof c.chunk !== 'string' || !c.chunk.length || c.chunk.length % 2 !== 0 || !/^[0-9a-f]*$/.test(c.chunk)) {
+        log(`bridge:${op} output chunk at ${off} was not relayed — discarded`)
+        return null
+      }
+      hex += c.chunk
+    }
+    if (hex.length !== env.total) {
+      log(`bridge:${op} output reassembled to the wrong size — discarded`)
+      return null
+    }
+  }
+  const outBytes = bytesOfHex(hex)
+  const nb = utf8Bytes(nonce)
+  const both = new Uint8Array(nb.length + outBytes.length)
+  both.set(nb)
+  both.set(outBytes, nb.length)
+  if (sha256Hex(both) !== env.sha256) {
+    log(`bridge:${op} output FAILED its integrity check — discarded, never used`)
+    return null
+  }
+  try {
+    return JSON.parse(utf8Text(outBytes))
+  } catch (e) {
     log(`bridge:${op} returned output that is not JSON — treating the module as unreachable`)
     return null
   }
+}
+
+// --------------------------------------------------------------------------
+// SEALING — what `bridge()` above relies on.
+//
+// `bridge()` asks a model to copy a script and relay its stdout. When either
+// side carries externally-influenced text — CI titles, command output, log
+// lines, another agent's prose quoting them — that model could be steered by
+// it (security review F1), or could drop or paraphrase it (code review M2),
+// and nothing would notice. So every bridge carries its script and its output
+// as hex, which a transcriber cannot read as instructions.
+//
+// WHAT THE SEAL GUARANTEES, AND WHAT IT DOES NOT (code review S-D, security
+// review N4). It is TAMPER-EVIDENCE: a mis-copied script refuses to run, and an
+// output altered or replaced in transit fails sha256(nonce ‖ output). It is
+// NOT authentication: the nonce is printed in the transcriber's own prompt, and
+// with no run directory it is a constant, so a transcriber that was steered by
+// something else could compute a valid seal. The protection against steering
+// is that the transcriber never sees readable payload — the seal only makes an
+// accident, or a reply composed before the run, visible.
+//
+// This sandbox has no `crypto`, `Buffer` or `TextEncoder`, so SHA-256 and
+// UTF-8 are plain JS here (checked against node's in _seal.test.js).
+// --------------------------------------------------------------------------
+const SHA256_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]
+
+function sha256Hex(bytes) {
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n))
+  const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+  const l = bytes.length
+  const total = (((l + 9) + 63) >> 6) << 6
+  const m = new Uint8Array(total)
+  m.set(bytes)
+  m[l] = 0x80
+  const hi = Math.floor(l / 0x20000000)
+  const lo = (l * 8) >>> 0
+  m[total - 8] = hi >>> 24; m[total - 7] = (hi >>> 16) & 255; m[total - 6] = (hi >>> 8) & 255; m[total - 5] = hi & 255
+  m[total - 4] = lo >>> 24; m[total - 3] = (lo >>> 16) & 255; m[total - 2] = (lo >>> 8) & 255; m[total - 1] = lo & 255
+  const w = new Uint32Array(64)
+  for (let i = 0; i < total; i += 64) {
+    for (let t = 0; t < 16; t++) {
+      const j = i + t * 4
+      w[t] = ((m[j] << 24) | (m[j + 1] << 16) | (m[j + 2] << 8) | m[j + 3]) >>> 0
+    }
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3)
+      const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10)
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0
+    }
+    let [a, b, c, d, e, f, g, h] = H
+    for (let t = 0; t < 64; t++) {
+      const t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + SHA256_K[t] + w[t]) >>> 0
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0
+    }
+    H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0
+    H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0
+  }
+  return H.map(x => x.toString(16).padStart(8, '0')).join('')
+}
+
+function utf8Bytes(str) {
+  const out = []
+  const s = String(str)
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i)
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+      const n = s.charCodeAt(i + 1)
+      if (n >= 0xdc00 && n <= 0xdfff) { c = 0x10000 + ((c - 0xd800) << 10) + (n - 0xdc00); i++ }
+    }
+    if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd   // lone surrogate: what Buffer.from(s, 'utf8') writes
+    if (c < 0x80) out.push(c)
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63))
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+  }
+  return Uint8Array.from(out)
+}
+
+function utf8Text(bytes) {
+  let s = ''
+  for (let i = 0; i < bytes.length;) {
+    const b = bytes[i]
+    let c, n
+    if (b < 0x80) { c = b; n = 1 }
+    else if (b >= 0xf0) { c = ((b & 7) << 18) | ((bytes[i + 1] & 63) << 12) | ((bytes[i + 2] & 63) << 6) | (bytes[i + 3] & 63); n = 4 }
+    else if (b >= 0xe0) { c = ((b & 15) << 12) | ((bytes[i + 1] & 63) << 6) | (bytes[i + 2] & 63); n = 3 }
+    else { c = ((b & 31) << 6) | (bytes[i + 1] & 63); n = 2 }
+    s += String.fromCodePoint(c)
+    i += n
+  }
+  return s
+}
+
+const HEX = '0123456789abcdef'
+function hexOf(bytes) {
+  let s = ''
+  for (let i = 0; i < bytes.length; i++) s += HEX[bytes[i] >> 4] + HEX[bytes[i] & 15]
+  return s
+}
+
+function bytesOfHex(h) {
+  const out = new Uint8Array(h.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16)
+  return out
+}
+
+/**
+ * Run `body` — the inside of `function (input) { ... }`, returning a JSON-able
+ * value — out-of-process with `input`. `path`, `DIR` and `crypto` are in scope.
+ * Sealed like every bridge; returns the body's value, or null.
+ */
+async function sealedBridge(op, input, body, model) {
+  return bridge(op, `${REQUIRE_HEAD}const crypto = require('crypto')
+const input = ${JSON.stringify(input === undefined ? null : input)}
+const output = (function (input) {
+${body}
+})(input)
+process.stdout.write(JSON.stringify(output === undefined ? null : output))`, model)
 }
 
 // --------------------------------------------------------------------------
@@ -383,7 +651,7 @@ function keep(v) {
   return v
 }
 
-async function openRun(firstPhase) {
+async function openRun(firstPhase, knownPhases) {
   if (!RECORDING || !RUNTIME_DIR) {
     if (RESUME_ID) {
       return { fatal: `resume "${RESUME_ID}" was requested but the runtime modules are not reachable — args carried no usable policy or runtimeDir path. Refusing to start a fresh run in its place.` }
@@ -393,6 +661,18 @@ async function openRun(firstPhase) {
   }
   const r = await bridge('open', `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
 const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, args: ${JSON.stringify(args ?? null)}, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RESUME_ID)} })
+// A run recorded under a phase layout this workflow no longer has is refused
+// HERE, before beginAttempt() or startPhase() rewrite its record (QA round 3:
+// a refusal used to bump the attempt and wipe the old breaker trip).
+const known = ${JSON.stringify(knownPhases || null)}
+if (${JSON.stringify(RESUME_ID)} && known) {
+  const re = new RegExp(known)
+  const stale = run.manifest.phases.map(p => p.title).filter(t => !re.test(t))
+  if (stale.length) {
+    process.stdout.write(JSON.stringify({ refused: stale, runId: run.runId }))
+    return
+  }
+}
 // A genuine resume is a new attempt, so the breaker below folds only this
 // attempt's failures and a fixed-then-resumed run does not re-trip on old ones.
 if (${JSON.stringify(RESUME_ID)}) run.beginAttempt()
@@ -400,6 +680,9 @@ const resumed = {}
 for (const t of run.resumedPhases) resumed[t] = run.resumed(t)
 run.startPhase(${JSON.stringify(firstPhase)})
 process.stdout.write(JSON.stringify({ runId: run.runId, dir: run.dir, resumed: resumed }))`)
+  if (r && Array.isArray(r.refused)) {
+    return { fatal: `refusing to resume ${RESUME_ID}: it was recorded by an older ${WORKFLOW} (phases: ${r.refused.join(', ')}). Replaying part of it would mix two phase layouts — one build checked against another run's plan. Start a fresh run instead; the old record is left untouched.` }
+  }
   if (!r || !r.runId) {
     // A failed READ during resume must never degrade into a fresh run — that is
     // how three phases get lost twice, the second time unwatched. A failed OPEN
@@ -443,7 +726,7 @@ process.stdout.write(JSON.stringify({ runId: run.runId, dir: run.dir, resumed: r
  * the current attempt's failures, so a resume after the cause is fixed does not
  * re-trip on the attempt it already recovered from.
  */
-async function recordPhase(title, artifact, nextPhase, failedLabels) {
+async function recordPhase(title, artifact, nextPhase, failedLabels, carried) {
   if (!RUN) return { tripped: false, entry: null }
   const failed = (failedLabels || []).map(label => ({
     label, agentType: AGENT_TYPES[label] || null, attempts: attemptsFor(label),
@@ -468,15 +751,48 @@ const breaker = new f.Breaker()
 for (const rec of run.readFailures()) {
   if ((rec.epoch || 1) === run.attempt) breaker.record(rec.phase, rec.class || cls)
 }
+// Failures carried from an EARLIER phase count toward this phase's threshold
+// but are NOT written again: they are already on failures.jsonl under the
+// phase that produced them, and a second record would credit this phase's
+// failures to an agent that never ran in it (code review S-A).
+const carried = ${JSON.stringify(carried || null)}
+const ownTripped = breaker.isTripped(title)
+if (carried) for (const l of carried.labels) breaker.record(title, cls)
 const tripped = breaker.isTripped(title)
 if (tripped) {
   run.failPhase(title, 'breaker tripped: ' + JSON.stringify(breaker.trippedInfo(title)))
+  // A trip that NEEDED the earlier phase's failures fails that phase too, so a
+  // resume re-runs it — otherwise its dead agents are replayed as dead forever
+  // (code review S-B). Not when this phase tripped on its own (round 3, C2).
+  // Failed last, so the run resumes from the earlier phase.
+  if (!ownTripped && carried && carried.labels.length && carried.from) {
+    run.failPhase(carried.from, 'its failures counted toward the breaker trip in ' + title)
+  }
 } else {
   run.completePhase(title, ${JSON.stringify(artifact)})
   if (${JSON.stringify(nextPhase)}) run.startPhase(${JSON.stringify(nextPhase)})
 }
 process.stdout.write(JSON.stringify({ tripped: tripped, info: breaker.trippedInfo(title), entry: breaker.asBlockedEntry(title) }))`)
-  if (!r) return { tripped: false, entry: null }
+  if (!r) {
+    // The phase bridge was lost or its output discarded. The breaker must not
+    // depend on it (QA round 3: a tampered phase output let a run with every
+    // lens dead complete). Apply the threshold here, on what this script knows,
+    // and say the phase is unrecorded either way.
+    const count = failed.length + (carried && Array.isArray(carried.labels) ? carried.labels.length : 0)
+    const BREAKER_THRESHOLD_LOCAL = 3   // mirrors _failure.js BREAKER_THRESHOLD
+    const entry = {
+      gate: count >= BREAKER_THRESHOLD_LOCAL ? 'breaker.unrecorded' : 'runtime.phaseUnrecorded',
+      actionWithheld: count >= BREAKER_THRESHOLD_LOCAL
+        ? `continuing past phase "${title}" after ${count} failed agent(s)`
+        : `recording phase "${title}" (it is not resumable from the run directory)`,
+      whyGated: `the phase record could not be written or its result was discarded, so ${count} failure(s) in "${title}" were counted in the workflow itself${count >= BREAKER_THRESHOLD_LOCAL ? ', which reaches the breaker threshold' : ''}`,
+      prepared: 'the phase results are in this run\'s return value',
+      unblocks: `re-run "${title}" once the cause is fixed — a resume cannot replay an unrecorded phase`,
+      authorizeBy: 'not an authorization gate — a recording failure',
+    }
+    if (count >= BREAKER_THRESHOLD_LOCAL) log(`BREAKER TRIPPED in "${title}" (counted locally — the phase record was lost) — ${count} failure(s)`)
+    return { tripped: count >= BREAKER_THRESHOLD_LOCAL, entry }
+  }
   if (r.tripped && r.info) log(`BREAKER TRIPPED in "${title}" — ${r.info.count} x ${r.info.class}`)
   return r
 }
@@ -530,7 +846,7 @@ async function runPhase(title, next, fn, uiTitle) {
     ? artifact.failed
     : (artifact.agents || []).filter(a => a.result === null || a.result === undefined).map(a => a.label)
   const failed = [...nulls, ...declared.filter(l => !nulls.includes(l))]
-  const b = await recordPhase(title, artifact, next, failed)
+  const b = await recordPhase(title, artifact, next, failed, artifact.carried || null)
   if (b.entry) BREAKER_ENTRIES.push(b.entry)
   if (b.tripped) {
     // Stop the chain — do not merely log the trip. A breaker that records a
@@ -592,7 +908,10 @@ run._startMs = Date.parse(run.manifest.startedAt)
 // actually replayed from cache were — reporting the rest would be a false claim
 // inside the record whose whole job is to be trustworthy afterwards.
 run.resumedPhases = new Set(${JSON.stringify(REPLAYED)})
-process.stdout.write(JSON.stringify(run.close(${JSON.stringify(summary)})))`)
+// Only an acknowledgement crosses back: outcome.json is on disk, and echoing
+// the whole outcome made this the largest relay of a run (round 3, M1).
+const outcome = run.close(${JSON.stringify(summary)})
+process.stdout.write(JSON.stringify({ ok: true, status: outcome && outcome.status }))`)
 }
 
 /**
@@ -724,7 +1043,8 @@ async function finishRun(body, extras = () => ({})) {
     // run looked clean is a reporting failure.
     blockedGates: allGates,
     blockedGatesComplete: blocked.complete,
-    breakerTripped: BREAKER_ENTRIES.length ? BREAKER_ENTRIES : null,
+    // Only real trips: a phase that merely went unrecorded is a gate, not a trip.
+    breakerTripped: BREAKER_ENTRIES.some(e => /^breaker\./.test(String(e.gate))) ? BREAKER_ENTRIES.filter(e => /^breaker\./.test(String(e.gate))) : null,
     learningsLoaded: LEARNINGS_LOADED,
     // First-class, like actGranted: which agents were steered by UNRATIFIED
     // repo-local lessons no human reviewed (security review).
@@ -744,6 +1064,509 @@ async function finishRun(body, extras = () => ({})) {
 // ---------------------------------------------------------------------------
 const initiative =
   typeof args === 'string' ? args : args?.initiative ?? 'No initiative supplied — report this and stop.'
+
+// ===========================================================================
+// MODEL TIERS — "plan expensive, execute cheap".
+//
+// The most capable model is spent where a mistake is most expensive to undo:
+// the plan every later stage executes against. Build and test run a cheaper
+// tier against that plan; mechanical loops (command execution, bridge
+// transcription) run the cheapest. Review returns to a strong tier, security
+// to the strongest — the writer never reviews its own work, and a reviewer
+// weaker than the writer is not much of an independent lens.
+//
+// WHY HERE AND NOT IN AGENT FRONTMATTER. generate_trees.py refuses any agent
+// whose `model:` is not `inherit`: a pin is not portable, and Command Code
+// offers no Claude models at all. A tier is a property of the STAGE an agent
+// runs in, not of the agent — code-reviewer reviews on the review tier and
+// refutes on the refute tier. So it is set here, per agent() call. The pi /
+// Hermes runner reads the model from the agent file and ignores `opts.model`,
+// and maps only low/medium/high efforts, so under those harnesses these pins
+// fall back to the session model instead of failing.
+//
+// Override with `args.tiers`:
+//   'inherit'                    — no pins: every stage follows the session
+//   { plan: { model: 'opus' } }  — partial per-stage override (e.g. no Fable access)
+// An unrecognised stage, model or effort is logged and IGNORED — the default
+// stands. It is never passed through: an unknown model id fails the agent.
+// ===========================================================================
+const DEFAULT_TIERS = {
+  plan:       { model: 'fable',   effort: 'high' },
+  design:     { model: 'opus',    effort: 'xhigh' },
+  build:      { model: 'sonnet',  effort: 'medium' },
+  test:       { model: 'sonnet',  effort: 'medium' },
+  testLoop:   { model: 'haiku',   effort: 'low' },
+  review:     { model: 'opus',    effort: 'high' },
+  security:   { model: 'fable',   effort: 'high' },
+  refute:     { model: 'inherit', effort: 'low' },
+  readiness:  { model: 'opus',    effort: 'high' },
+  docs:       { model: 'sonnet',  effort: 'medium' },
+  transcribe: { model: 'haiku',   effort: 'low' },
+}
+const TIER_MODELS = ['fable', 'opus', 'sonnet', 'haiku', 'inherit']
+const TIER_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+
+function resolveTiers(v) {
+  const out = {}
+  for (const k of Object.keys(DEFAULT_TIERS)) out[k] = { ...DEFAULT_TIERS[k] }
+  if (v === undefined || v === null) return out
+  if (v === 'inherit') {
+    // Exactly the pre-tier behaviour: no model pins and no effort pins, except
+    // the refuter's low effort, which predates tiers.
+    for (const k of Object.keys(out)) out[k] = { model: 'inherit', effort: k === 'refute' ? 'low' : null }
+    return out
+  }
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    log(`args.tiers ignored — expected 'inherit' or an object keyed by stage, got ${JSON.stringify(v)}`)
+    return out
+  }
+  for (const [k, t] of Object.entries(v)) {
+    if (!Object.prototype.hasOwnProperty.call(out, k)) {
+      log(`args.tiers.${k} ignored — unknown stage (known: ${Object.keys(out).join(', ')})`)
+      continue
+    }
+    if (!t || typeof t !== 'object' || Array.isArray(t)) {
+      log(`args.tiers.${k} ignored — expected {model?, effort?}`)
+      continue
+    }
+    if ('model' in t) {
+      if (TIER_MODELS.includes(t.model)) out[k].model = t.model
+      else log(`args.tiers.${k}.model ${JSON.stringify(t.model)} ignored — not one of ${TIER_MODELS.join(', ')}`)
+    }
+    if ('effort' in t) {
+      if (t.effort === null || TIER_EFFORTS.includes(t.effort)) out[k].effort = t.effort
+      else log(`args.tiers.${k}.effort ${JSON.stringify(t.effort)} ignored — not one of ${TIER_EFFORTS.join(', ')}`)
+    }
+  }
+  return out
+}
+
+const TIERS = resolveTiers(typeof args === 'object' && args ? args.tiers : undefined)
+log(`model tiers: ${Object.entries(TIERS).map(([k, t]) => `${k}=${t.model}${t.effort ? `/${t.effort}` : ''}`).join(', ')}`)
+
+/** agent() opts for a stage: a pin only where one is set — 'inherit' is omitted. */
+function tier(key) {
+  const t = TIERS[key] || {}
+  return {
+    ...(t.model && t.model !== 'inherit' ? { model: t.model } : {}),
+    ...(t.effort ? { effort: t.effort } : {}),
+  }
+}
+
+// ===========================================================================
+// FILE HANDOFFS — each stage hands the next a file.
+//
+// WHERE. By default <runDir>/handoff/. With `args.specDir` — a repository-
+// relative directory such as "specs/features/HU-22" — they are durable, in the
+// repository beside the change they describe: the layout the Hay Mesa loop
+// uses, where a person (or the ClickUp ticket) writes intent.md and Plan adds
+// spec.md and plan.md next to it. `args.intentPath` names an existing intent
+// file without moving the rest.
+//
+// WHO WRITES. An agent that authors a document — intent.md, plan.md,
+// design.md, mock.html — writes it ITSELF with its Write tool; a sealed bridge
+// then confirms the file and records its SHA-256 in the phase artifact. Only
+// if the author did not write it is it written from the returned text, and
+// only when that text is short. Documents this workflow renders (spec.md,
+// test-report.md) are written by a sealed bridge after every phase, replay
+// included. Nothing long is transcribed as hex (code review S-E).
+//
+// TRUST. A path reaches a downstream prompt only for a file confirmed on disk.
+// On a RESUME an authored file must still hash to what its phase recorded: a
+// file edited or planted between attempts is not handed on (security F7, code
+// review C-2) — so an intended human edit to plan.md means re-running, not
+// resuming.
+//
+// STRICT. With `args.specDir`, or `args.strict: true`, a stage whose input
+// file is not confirmed DOES NOT START: the run stops and names the file.
+// Otherwise the stage gets the inline text instead — never a dangling path.
+// ===========================================================================
+// Directories a spec directory must never be inside: writing plan.md there
+// would create a slash command, a CI workflow input or a git hook (N7).
+const SPEC_DIR_DENY = new Set(['.git', '.claude', '.github', 'node_modules'])
+
+function repoRelPath(v, what) {
+  if (v === undefined || v === null || v === '') return { value: null }
+  const p = typeof v === 'string' ? v.replace(/\\/g, '/').replace(/\/+$/, '').replace(/^(\.\/)+/, '') : ''
+  const bad = `args.${what} ${JSON.stringify(v)} is not a plain repository-relative path — it must be relative to the repository root, with no "..", ".", drive or leading slash`
+  if (!p || /^\//.test(p) || /^[A-Za-z]:/.test(p) || p.split('/').some(seg => seg === '..' || seg === '.' || seg === '') ||
+      !/^[A-Za-z0-9._\/-]+$/.test(p)) {
+    return { error: bad }
+  }
+  // Any segment that starts with "." or is node_modules, in any case and at any
+  // depth: .Git/hooks is the real .git/hooks on a case-insensitive filesystem,
+  // and pkg/.claude/commands is still a command directory (security N7, QA D-4).
+  const hidden = p.split('/').find(seg => seg.startsWith('.') || seg.toLowerCase() === 'node_modules')
+  if (what === 'specDir' && hidden) {
+    return { error: `args.specDir ${JSON.stringify(v)} goes through ${hidden}/ — documents written there would become commands, hooks or CI inputs. Use a directory such as specs/features/<HU>.` }
+  }
+  return { value: p }
+}
+const SPEC_DIR_ARG = repoRelPath(args && typeof args === 'object' ? args.specDir : null, 'specDir')
+const INTENT_ARG = repoRelPath(args && typeof args === 'object' ? args.intentPath : null, 'intentPath')
+const SPEC_DIR = SPEC_DIR_ARG.value
+const STRICT = !!SPEC_DIR || (args && typeof args === 'object' && args.strict === true)
+// Plan approval (code review M3). In spec mode the run pauses after Plan by
+// default; approvedPlan adopts the person's committed spec.md and plan.md;
+// replan overwrites uncommitted edits on purpose.
+const APPROVED = !!(args && typeof args === 'object' && args.approvedPlan === true)
+const REPLAN = !!(args && typeof args === 'object' && args.replan === true)
+// Pausing hands the person durable files to approve, so it exists only in spec mode.
+const PAUSE = !!SPEC_DIR && (args && typeof args === 'object' && typeof args.pauseAfterPlan === 'boolean' ? args.pauseAfterPlan : true)
+// Who wrote a handed-on file, for the sentence a downstream agent reads.
+const HANDOFF_ORIGIN = {}
+const RENDER_CAP = 16 * 1024          // a rendered document is cut to this before it is written
+const FALLBACK_WRITE_MAX = 16 * 1024  // returned text longer than this is never transcribed to a file
+
+const HANDOFF_FILES = {}   // name -> absolute path, ONLY for files confirmed on disk
+const HANDOFF_NAME_RE = /^[a-z0-9-]+\.(md|html)$/
+
+/** The repository root, derived from the run directory `<root>/.claude/runs/<id>`. */
+function repoRoot() {
+  const m = RUN && RUN.dir ? /^(.*)[\\/]\.claude[\\/]runs[\\/][^\\/]+$/.exec(String(RUN.dir)) : null
+  return m ? m[1] : null
+}
+
+function handoffDir() {
+  if (!RUN || !RUN.dir) return null
+  if (!SPEC_DIR) return `${RUN.dir}/handoff`
+  const root = repoRoot()
+  return root ? `${root}/${SPEC_DIR}` : null
+}
+
+function handoffPath(name) {
+  const d = handoffDir()
+  return d && HANDOFF_NAME_RE.test(name) ? `${d}/${name}` : null
+}
+
+/** Where intent.md is read from when a person wrote it; null when product-manager writes it. */
+function externalIntentPath() {
+  const root = repoRoot()
+  if (INTENT_ARG.value) return root ? `${root}/${INTENT_ARG.value}` : null
+  if (SPEC_DIR) return handoffPath('intent.md')
+  return null
+}
+
+function asText(v) {
+  if (v === null || v === undefined) return null
+  if (typeof v === 'string') return v
+  return '```json\n' + JSON.stringify(v, null, 2) + '\n```\n'
+}
+
+function capText(s, n) {
+  return s.length <= n ? s : `${s.slice(0, n)}\n\n…[truncated at ${n} characters — the full content is in the run's return value]\n`
+}
+
+/** The sentence an authoring agent is given: write the file yourself. */
+function writeInstruction(name) {
+  const p = handoffPath(name)
+  return p
+    ? `\n\nHANDOFF FILE: write the complete document to ${p} with your Write tool (create the directory if needed) — the next stage reads that file, not your reply. Then return the same document as your result.`
+    : ''
+}
+
+/**
+ * Confirm files on disk and return {name: sha256|null}. `fallback` maps a name
+ * to text to write first when the file is absent — only when short.
+ */
+/**
+ * Confirm authored files on disk and return {name: sha256|null}.
+ *
+ * A file is THIS run's only if it changed during the phase (its hash differs
+ * from `before`, taken in the preflight) or it equals the text its author
+ * returned. Anything else is what an earlier run — or someone — left at that
+ * path (security N5, code review M2): it is replaced from the returned text
+ * when that is short enough, and otherwise not handed on at all.
+ */
+async function confirmFiles(paths, fallback = {}, before = {}) {
+  const entries = Object.entries(paths).filter(([n, p]) => p && HANDOFF_NAME_RE.test(n))
+  if (!entries.length) return {}
+  const write = {}
+  const expect = {}
+  const prior = {}
+  for (const [n] of entries) {
+    const t = fallback[n]
+    if (typeof t === 'string' && t.trim()) {
+      expect[n] = sha256Hex(utf8Bytes(t))
+      if (t.length <= FALLBACK_WRITE_MAX) write[n] = t
+    }
+    if (typeof before[n] === 'string') prior[n] = before[n]
+  }
+  const r = await sealedBridge('handoff', { files: Object.fromEntries(entries), write, expect, prior, root: SPEC_DIR ? repoRoot() : null }, `const fs = require('fs')
+const confinedForWrite = (root, p) => {
+  if (!root) return true
+  const R = path.resolve(root)
+  const rel = path.relative(R, path.resolve(p))
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false
+  let cur = R
+  for (const seg of path.dirname(rel).split(path.sep).filter(x => x && x !== '.')) {
+    cur = path.join(cur, seg)
+    try { if (fs.lstatSync(cur).isSymbolicLink()) return false } catch (e) { break }
+  }
+  try {
+    const realRoot = fs.realpathSync(R)
+    const realDir = fs.realpathSync(path.dirname(path.resolve(p)))
+    return realDir === realRoot || realDir.startsWith(realRoot + path.sep)
+  } catch (e) { return true }
+}
+const out = {}
+const shaOf = p => { try { const b = fs.readFileSync(p); return b.length ? crypto.createHash('sha256').update(b).digest('hex') : null } catch (e) { return null } }
+for (const n of Object.keys(input.files)) {
+  const p = input.files[n]
+  let sha = shaOf(p)
+  const ours = sha && (input.prior[n] === undefined || sha !== input.prior[n] || sha === input.expect[n])
+  if (!ours) {
+    if (typeof input.write[n] === 'string') {
+      fs.mkdirSync(path.dirname(p), { recursive: true })
+      // Re-checked at the moment of writing: a link swapped in after the
+      // preflight must not carry the write out of the repository (N6).
+      if (!confinedForWrite(input.root, p)) { out[n] = { sha: null, stale: false, escaped: true }; continue }
+      fs.writeFileSync(p, input.write[n], 'utf8')
+      sha = shaOf(p)
+      out[n] = { sha, stale: false }
+    } else {
+      out[n] = { sha: null, stale: !!sha }
+    }
+  } else {
+    out[n] = { sha, stale: false }
+  }
+}
+return out`, TIERS.transcribe.model)
+  const shas = {}
+  for (const [n, p] of entries) {
+    const x = r && r[n]
+    const sha = x && typeof x.sha === 'string' && /^[0-9a-f]{64}$/.test(x.sha) ? x.sha : null
+    shas[n] = sha
+    // The path is OURS, never the bridge's: the sealed result decides only
+    // whether the file exists and what it hashes to.
+    if (sha) HANDOFF_FILES[n] = p
+    else {
+      delete HANDOFF_FILES[n]
+      log(`handoff ${n} ${x && x.stale ? 'is the one an earlier run left there, and this run wrote no new one' : 'not on disk'} — ${STRICT ? 'a stage that needs it will not start' : 'downstream stages get the inline text'}`)
+    }
+  }
+  return shas
+}
+
+/**
+ * Spec-directory preflight. Confines the spec directory and the intent path
+ * by REALPATH, refusing any link on the way (security N6); records each
+ * document's hash and git state (committed / modified / untracked / absent);
+ * and, for approvedPlan, reads the committed spec.md back.
+ */
+async function specPreflight(approvedCheck) {
+  return sealedBridge('spec-preflight', {
+    root: repoRoot(), specDir: SPEC_DIR, intentRel: INTENT_ARG.value,
+    names: ['spec.md', 'plan.md', 'design.md', 'mock.html'], approved: approvedCheck,
+  }, `const fs = require('fs')
+const { execFileSync } = require('child_process')
+const errors = []
+let root
+try { root = fs.realpathSync(input.root) } catch (e) { return { errors: ['the repository root could not be resolved'], files: {}, intent: null, specText: null } }
+const inside = p => p === root || p.startsWith(root + path.sep)
+function confine(rel, what) {
+  let cur = root
+  for (const seg of rel.split('/')) {
+    cur = path.join(cur, seg)
+    let st = null
+    try { st = fs.lstatSync(cur) } catch (e) { st = null }
+    if (!st) break
+    if (st.isSymbolicLink()) { errors.push(what + ' "' + rel + '" passes through a link (' + seg + ') — refused: its files must stay inside the repository.'); return null }
+    let real = cur
+    try { real = fs.realpathSync(cur) } catch (e) { real = cur }
+    if (!inside(real)) { errors.push(what + ' "' + rel + '" resolves outside the repository — refused.'); return null }
+  }
+  return path.join(root, ...rel.split('/'))
+}
+const dir = input.specDir ? confine(input.specDir, 'specDir') : null
+const intentAbs = input.intentRel ? confine(input.intentRel, 'intentPath') : (dir ? path.join(dir, 'intent.md') : null)
+const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+function state(abs) {
+  let buf = null
+  try { buf = fs.readFileSync(abs) } catch (e) { buf = null }
+  if (!buf || !buf.length) return { state: 'absent', sha: null }
+  const sha = crypto.createHash('sha256').update(buf).digest('hex')
+  const rel = path.relative(root, abs).split(path.sep).join('/')
+  let st = 'unknown'
+  try {
+    let atHead = null
+    try { atHead = git('rev-parse', '--verify', '--quiet', 'HEAD:./' + rel) } catch (e) { atHead = null }
+    if (atHead === null) st = 'untracked'
+    else {
+      // The blob id computed HERE from the bytes on disk — not by git
+      // hash-object, whose clean/ident filters can map edited bytes back onto
+      // the committed blob (security R4-1). CRLF-on-disk of an LF blob still
+      // counts as committed (an autocrlf checkout).
+      const algo = atHead.length === 64 ? 'sha256' : 'sha1'
+      const blob = b => crypto.createHash(algo).update('blob ' + b.length + '\\0').update(b).digest('hex')
+      const lf = Buffer.from(buf.toString('latin1').replace(/\\r\\n/g, '\\n'), 'latin1')
+      st = (blob(buf) === atHead || blob(lf) === atHead) ? 'committed' : 'modified'
+    }
+  } catch (e) { st = 'unknown' }
+  return { state: st, sha }
+}
+const files = {}
+if (dir && !errors.length) for (const n of input.names) files[n] = state(path.join(dir, n))
+const intent = intentAbs && !errors.length ? state(intentAbs) : null
+let specText = null
+if (input.approved && dir && !errors.length) {
+  for (const n of ['spec.md', 'plan.md']) {
+    if (!files[n] || files[n].state !== 'committed') errors.push('approvedPlan: ' + n + ' in ' + input.specDir + ' must be committed and unchanged since (it is ' + (files[n] ? files[n].state : 'absent') + ').')
+  }
+  if (!errors.length) specText = fs.readFileSync(path.join(dir, 'spec.md'), 'utf8').slice(0, 200000)
+}
+return { errors, files, intent, specText }`, TIERS.transcribe.model)
+}
+
+/** Criteria, surfaces, assumptions and questions back out of a spec.md in renderSpec's layout. */
+function parseSpec(text) {
+  const errors = []
+  const raw = String(text)
+  if (/…\[truncated at \d+ characters/.test(raw)) {
+    errors.push('spec.md still carries the "[truncated at N characters]" marker — it was cut when written; restore the missing criteria before approving it')
+  }
+  const sec = {}
+  let cur = null
+  let fenced = false
+  for (const l of raw.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(l)) fenced = !fenced
+    if (!fenced && l.startsWith('#')) {
+      // A heading: "## Acceptance criteria", "### Acceptance criteria (v2)" …
+      const title = l.replace(/^#+/, '').trim().toLowerCase()
+      cur = /^acceptance criteria\b/.test(title) ? 'acceptance criteria'
+        : /^surfaces\b/.test(title) ? 'surfaces'
+          : /^assumptions\b/.test(title) ? 'assumptions'
+            : /^open questions\b/.test(title) ? 'open questions' : title
+      sec[cur] = sec[cur] || []
+      continue
+    }
+    if (cur) sec[cur].push(l)
+  }
+  const items = name => (sec[name] || [])
+    .map(l => /^\s*(?:[-*+]|\d+[.)])\s+(.+)$/.exec(l)).filter(Boolean).map(m => m[1].trim()).filter(x => x && x !== '(none)')
+  // One criterion per line: a bullet or number, an optional checkbox, a bold
+  // id ("**AC-1**" or "**AC-1:**"), then a dash, en/em dash or colon and text.
+  // An indented line continues the criterion above it. Anything else under the
+  // heading is an error QUOTED back — never dropped (code review / QA round 4).
+  const CRIT = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?\*\*\s*([A-Za-z][\w.-]*)\s*:?\s*\*\*\s*(?:[—–:-]\s*)?(.+)$/
+  const criteria = []
+  for (const l of sec['acceptance criteria'] || []) {
+    if (!l.trim()) continue
+    const m = CRIT.exec(l)
+    if (m) { criteria.push({ id: m[1].trim(), text: m[2].trim() }); continue }
+    if (/^\s{2,}\S/.test(l) && criteria.length) { criteria[criteria.length - 1].text += ` ${l.trim()}`; continue }
+    errors.push(`spec.md: this line under "Acceptance criteria" is not a criterion: ${JSON.stringify(l.trim().slice(0, 160))} — write it as "- **AC-n** — text"`)
+  }
+  const seen = new Set()
+  for (const c of criteria) {
+    if (seen.has(c.id)) errors.push(`spec.md: criterion id ${c.id} appears more than once`)
+    seen.add(c.id)
+  }
+  const surfaces = ((sec['surfaces'] || []).join(' ').toLowerCase().match(/\b(backend|frontend|data)\b/g) || [])
+    .filter((v, i, a) => a.indexOf(v) === i)
+  return { criteria, assumptions: items('assumptions'), openQuestions: items('open questions'), surfaces, errors }
+}
+/**
+ * Adopt a phase's authored files. Fresh: the in-phase confirmation already
+ * registered them. Replayed from a resume: each must still hash to what the
+ * phase recorded, or it is not handed on.
+ */
+async function adoptFiles(title, recorded, always = false) {
+  if (!recorded || (!always && !REPLAYED.includes(title))) return
+  const paths = {}
+  for (const n of Object.keys(recorded)) {
+    const p = n === 'intent.md' && externalIntentPath() ? externalIntentPath() : handoffPath(n)
+    if (p && recorded[n]) paths[n] = p
+  }
+  const now = await confirmFiles(paths)
+  for (const n of Object.keys(paths)) {
+    if (now[n] !== recorded[n]) {
+      delete HANDOFF_FILES[n]
+      log(`handoff ${n} CHANGED since phase "${title}" recorded it — not handed on. To build from an edited file, start a new run rather than resuming.`)
+    }
+  }
+}
+
+/** Write a document this workflow renders itself (spec.md, test-report.md). */
+async function writeRendered(name, text) {
+  const p = handoffPath(name)
+  if (!p || typeof text !== 'string') return
+  const body = capText(text, RENDER_CAP)
+  const r = await sealedBridge('handoff', { p, body, root: SPEC_DIR ? repoRoot() : null }, `const fs = require('fs')
+const confinedForWrite = (root, p) => {
+  if (!root) return true
+  const R = path.resolve(root)
+  const rel = path.relative(R, path.resolve(p))
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false
+  let cur = R
+  for (const seg of path.dirname(rel).split(path.sep).filter(x => x && x !== '.')) {
+    cur = path.join(cur, seg)
+    try { if (fs.lstatSync(cur).isSymbolicLink()) return false } catch (e) { break }
+  }
+  try {
+    const realRoot = fs.realpathSync(R)
+    const realDir = fs.realpathSync(path.dirname(path.resolve(p)))
+    return realDir === realRoot || realDir.startsWith(realRoot + path.sep)
+  } catch (e) { return true }
+}
+fs.mkdirSync(path.dirname(input.p), { recursive: true })
+if (!confinedForWrite(input.root, input.p)) return { sha256: null, escaped: true }
+fs.writeFileSync(input.p, input.body, 'utf8')
+return { sha256: crypto.createHash('sha256').update(fs.readFileSync(input.p)).digest('hex') }`, TIERS.transcribe.model)
+  if (r && r.sha256 === sha256Hex(utf8Bytes(body))) HANDOFF_FILES[name] = p
+  else { delete HANDOFF_FILES[name]; log(`handoff ${name} not confirmed on disk — downstream stages get the inline text`) }
+}
+
+/** A downstream prompt section: the file when one is confirmed, the inline text otherwise. */
+function handoffRef(name, title, inline) {
+  const p = HANDOFF_FILES[name]
+  if (p && HANDOFF_ORIGIN[name] === 'person') return `${title}: read ${p} — written or approved by a person and committed to the repository; it is the authoritative copy. Read it before you start.`
+  if (p) return `${title}: read ${p} — the stage before you wrote it, and it is the authoritative copy. Read it before you start.`
+  return `${title}:\n${inline ?? '(none produced)'}`
+}
+
+/** STRICT: the stop result for a stage whose input file is not confirmed, else null. */
+function missingInputs(stage, names) {
+  if (!STRICT) return null
+  const miss = names.filter(n => !HANDOFF_FILES[n])
+  if (!miss.length) return null
+  status = 'stopped'
+  return {
+    status: 'stopped',
+    reason: `${stage} has no input file: ${miss.join(', ')} is not confirmed in ${handoffDir() || '(no handoff directory — a run directory is required)'}. In strict mode${SPEC_DIR ? ' (args.specDir)' : ''} a stage without its input file does not start.`,
+  }
+}
+
+function criteriaTextOf(reqs) {
+  return reqs.criteria.map(c => `${c.id}: ${c.text}`).join('\n')
+}
+
+function renderSpec(reqs) {
+  const list = (xs) => (xs && xs.length ? xs.map(x => `- ${x}`) : ['(none)'])
+  return [
+    '# spec.md', '',
+    `Initiative: ${initiative}`, '',
+    '## Acceptance criteria', '',
+    ...reqs.criteria.map(c => `- **${c.id}** — ${c.text}`), '',
+    '## Surfaces', '',
+    reqs.surfaces.join(', ') || '(none classified)', '',
+    '## Assumptions', '', ...list(reqs.assumptions), '',
+    '## Open questions', '', ...list(reqs.openQuestions), '',
+  ].join('\n')
+}
+
+function renderTestReport(raw, findings) {
+  const lines = ['# test-report.md', '']
+  lines.push(`Verdict (qa-engineer): ${raw && raw.verdict ? raw.verdict : '(qa-engineer returned no verdict — the test stage produced no evidence)'}`, '')
+  lines.push('## Findings, after independent cross-check', '')
+  if (!findings.length) lines.push('(none)')
+  for (const f of findings) {
+    const state = f.refuted ? 'REFUTED' : f.unverified ? 'UNVERIFIED' : 'confirmed'
+    lines.push(`- [${state}] (${f.severity}) ${f.summary}${f.file ? ` — ${f.file}${f.line ? `:${f.line}` : ''}` : ''}`)
+    lines.push(`  evidence: ${f.evidence}`)
+  }
+  return lines.join('\n') + '\n'
+}
 
 const CRITERIA_SCHEMA = {
   type: 'object',
@@ -806,6 +1629,10 @@ const BUILD_MANIFEST_SCHEMA = {
       },
       description: 'Criteria deliberately NOT addressed, and why. Making the gap explicit is what stops it being discovered as a defect later.',
     },
+    planGaps: {
+      type: 'array', items: { type: 'string' },
+      description: 'Decisions the plan left open that you needed and did NOT make yourself — an interface, a data shape, a behavior. Escalated back to planning rather than improvised at build tier.',
+    },
   },
 }
 
@@ -839,21 +1666,29 @@ const LENSES = [
   {
     key: 'review',
     agentType: 'code-reviewer',
+    tier: 'review',
+    stage: 'Review',
     brief: 'Review by reading. Form your independent expectation from the criteria BEFORE reading the diff (your §4 contamination guard), then state if it changed. Never inherit the implementer\'s self-report.',
   },
   {
     key: 'qa',
     agentType: 'qa-engineer',
+    tier: 'test',
+    stage: 'Test',
     brief: 'Verify by executing. Re-run any claimed verification yourself — a "tests pass" report is a hypothesis until you run it this session. Label every claim Verified / Falsified / Unverified / Untestable, and include the "what was NOT tested" section.',
   },
   {
     key: 'security',
     agentType: 'security-engineer',
+    tier: 'security',
+    stage: 'Review',
     brief: 'Review mode — findings and direction, no rewrites. Classify Critical/High/Medium/Low/Informational. No finding without a plausible attack path; no security theater.',
   },
   {
     key: 'performance',
     agentType: 'performance-engineer',
+    tier: 'review',
+    stage: 'Review',
     brief: 'Trace the target BEFORE measuring current behavior (your §3). If no target exists, say so and propose one labeled proposed-not-confirmed. No claim without a number.',
   },
 ]
@@ -930,7 +1765,7 @@ Criteria for context:\n${criteriaText}`),
           agentType: 'code-reviewer',
           label: `refute:${lensKey}`,
           phase: phaseLabel,
-          effort: 'low',
+          ...tier('refute'),
           schema: {
             type: 'object',
             required: ['refuted', 'reasoning'],
@@ -989,79 +1824,346 @@ let status = 'crashed'
 let findingCounts = { confirmed: 0, refuted: 0, byLens: {} }
 let refutations = []
 let repairRounds = null
+let planGaps = []
 
 async function runWorkflow() {
-  const opened = await openRun('Requirements')
+  // A run recorded under the older layout (Requirements, Verify) is refused by
+  // openRun itself, before its record is touched (code review S-C, QA D2).
+  const opened = await openRun('Plan', '^(Plan|Design|Build|Test|Review|Readiness|Repair \\d+|Re-verify \\d+)$')
   if (opened && opened.fatal) {
     status = 'stopped'
     return { status: 'stopped', reason: opened.fatal }
   }
+  for (const a of [SPEC_DIR_ARG, INTENT_ARG]) {
+    if (a.error) {
+      status = 'stopped'
+      return { status: 'stopped', reason: a.error }
+    }
+  }
+  if (APPROVED && !SPEC_DIR) {
+    status = 'stopped'
+    return { status: 'stopped', reason: 'args.approvedPlan needs args.specDir — the approved spec.md and plan.md are read from it.' }
+  }
+  // On a resume, the RECORDED Plan decides the mode — never the flags of the
+  // new invocation (code review round 4 M1/M3, QA D-1). A paused run's Plan was
+  // written by the planners; approving it means a fresh run that adopts the
+  // committed files, so resuming it "as approved" is refused rather than
+  // building the person's spec while tracing the planners' criteria.
+  const planReplays = !!(RUN && RUN.resumed && Object.prototype.hasOwnProperty.call(RUN.resumed, 'Plan'))
+  const recordedApproved = planReplays && !!(RUN.resumed.Plan && RUN.resumed.Plan.approved === true)
+  if (planReplays && APPROVED && !recordedApproved) {
+    status = 'stopped'
+    return { status: 'stopped', reason: `run ${RUN.runId} recorded a Plan written by the planners, not an approved one. To build from the committed spec.md and plan.md, start a FRESH run with approvedPlan: true (no resume).` }
+  }
+  const MODE_APPROVED = planReplays ? recordedApproved : APPROVED
+  if (SPEC_DIR || INTENT_ARG.value || STRICT) {
+    if (!RUN || !repoRoot()) {
+      status = 'stopped'
+      return { status: 'stopped', reason: 'args.specDir, args.intentPath and args.strict need a run directory to place and confirm files — run recording is off or unreachable.' }
+    }
+  }
 
   // -------------------------------------------------------------------------
-  // Phase 1 — Requirements. Everything downstream traces to these IDs.
+  // Spec-directory preflight, BEFORE anything is recorded: the directory and
+  // the intent must resolve inside the repository with no link on the way
+  // (security N6), the intent must exist (S3 — checked here, so a missing one
+  // does not leave a "completed" Plan behind that a resume replays), and the
+  // state of each document is taken so this run can tell its own output from a
+  // file an earlier run left behind (N5/M2) and never silently overwrites a
+  // person's uncommitted edit (M3).
   // -------------------------------------------------------------------------
-  const reqArtifact = await runPhase('Requirements', 'Design', async () => {
+  let pre = null
+  if (SPEC_DIR || INTENT_ARG.value) {
+    pre = await specPreflight(APPROVED && !planReplays)
+    if (!pre) {
+      status = 'stopped'
+      return { status: 'stopped', reason: 'the spec-directory preflight did not run, so the spec directory could not be confirmed safe to write. Nothing was planned.' }
+    }
+    if (pre.errors.length) {
+      status = 'stopped'
+      return { status: 'stopped', reason: pre.errors.join(' ') }
+    }
+    if (!pre.intent || !pre.intent.sha) {
+      status = 'stopped'
+      return {
+        status: 'stopped',
+        reason: `no intent.md at ${externalIntentPath()}. In this mode a person writes the intent (or it comes from the ticket) — Plan does not start without it.`,
+      }
+    }
+    // A resume replays Plan and never re-plans, so this guard is for fresh
+    // runs; on a resume the recorded hashes guard the files instead. With
+    // approvedPlan, spec.md and plan.md are the approval itself, but design.md
+    // and mock.html are still overwritten by Design.
+    if (!planReplays && !REPLAN) {
+      const guarded = APPROVED ? ['design.md', 'mock.html'] : ['spec.md', 'plan.md', 'design.md', 'mock.html']
+      const edited = guarded.filter(n => pre.files[n] && /^(modified|untracked)$/.test(pre.files[n].state))
+      if (edited.length) {
+        status = 'stopped'
+        return {
+          status: 'stopped',
+          reason: `${edited.join(', ')} in ${handoffDir()} ${edited.length > 1 ? 'have' : 'has'} changes that are not committed, and this run would overwrite ${edited.length > 1 ? 'them' : 'it'}. ${APPROVED ? 'Commit or discard them first.' : 'To build from them: commit them and run with approvedPlan: true.'} To discard them on purpose: run with replan: true.`,
+        }
+      }
+    }
+  }
+  // The approved spec is parsed BEFORE anything is recorded, so a line the
+  // parser cannot read stops the run instead of silently losing a criterion.
+  let approvedReqs = null
+  if (APPROVED && !planReplays) {
+    approvedReqs = parseSpec(pre.specText || '')
+    if (approvedReqs.errors.length) {
+      status = 'stopped'
+      return { status: 'stopped', reason: `the approved spec.md cannot be read exactly: ${approvedReqs.errors.slice(0, 3).join(' | ')}${approvedReqs.errors.length > 3 ? ` (and ${approvedReqs.errors.length - 3} more)` : ''}` }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 1 — Plan, on the plan tier. intent.md -> spec.md -> plan.md, in that
+  // order, because each is the next one's input. This is where the expensive
+  // tokens go: everything downstream executes against these files, and a cheap
+  // build tier is only safe when the plan leaves it nothing to design. When a
+  // person wrote intent.md (args.specDir / args.intentPath), product-manager
+  // does not run: the intent is theirs. With args.approvedPlan the plan is
+  // ALSO theirs — the committed spec.md and plan.md are adopted, no planner runs.
+  // -------------------------------------------------------------------------
+  const humanIntent = externalIntentPath()
+  if (humanIntent && pre && pre.intent && pre.intent.sha) { HANDOFF_FILES['intent.md'] = humanIntent; HANDOFF_ORIGIN['intent.md'] = 'person' }
+  if (MODE_APPROVED) for (const n of ['spec.md', 'plan.md']) HANDOFF_ORIGIN[n] = 'person'
+  if (APPROVED && !planReplays) {
+    for (const n of ['spec.md', 'plan.md']) if (pre.files[n] && pre.files[n].sha) HANDOFF_FILES[n] = handoffPath(n)
+  }
+  const before = {}
+  if (pre) for (const [n, f] of Object.entries(pre.files)) before[n] = f.sha || null
+  const planArtifact = await runPhase('Plan', 'Design', async () => {
+    const files = {}
+    if (humanIntent) files['intent.md'] = pre.intent.sha
+    if (APPROVED) {
+      const { errors: _ignored, ...parsed } = approvedReqs
+      files['spec.md'] = pre.files['spec.md'] ? pre.files['spec.md'].sha : null
+      files['plan.md'] = pre.files['plan.md'] ? pre.files['plan.md'].sha : null
+      return {
+        agents: [
+          { label: 'requirements', result: parsed },
+          { label: 'architecture', result: `(approved plan — ${handoffPath('plan.md')}, committed at ${pre.files['plan.md'] ? pre.files['plan.md'].sha.slice(0, 12) : '?'})` },
+        ],
+        files,
+        approved: true,
+      }
+    }
+    let intent = null
+    if (!humanIntent) {
+      intent = await dispatch(
+        withPolicy(`Frame this initiative as an INTENT — the one-page "why" that every later stage traces back to: ${initiative}
+
+Write: the problem and who has it; the outcome that would mean this worked (a measurable signal if one was given — if none was, propose one and label it proposed-not-confirmed); what is explicitly out of scope; and the constraints and risks a planner must respect. Do not write requirements or a design — product-analyst and solution-architect follow you and own those. Return intent.md as markdown.${writeInstruction('intent.md')}`),
+        { agentType: 'product-manager', label: 'intent', phase: 'Plan', ...tier('plan') },
+      )
+    }
+    const intentSection = humanIntent
+      ? `INTENT — written by a person: read ${humanIntent}. It is the source of truth for WHY; trace to it, and put anything in it you cannot turn into a testable criterion in openQuestions.`
+      : `INTENT (from product-manager — trace to it, and put anything in it you cannot turn into a testable criterion in openQuestions):
+${typeof intent === 'string' && intent.trim() ? intent : asText(intent) || '(product-manager produced no intent — work from the initiative alone and say so in openQuestions)'}`
     const reqs = await dispatch(
       withPolicy(`Convert this initiative into implementation-ready requirements: ${initiative}
+
+${intentSection}
 
 Produce numbered, stable acceptance-criterion IDs — every downstream agent in this workflow traces against them, so an unstable ID breaks the whole run. Record assumptions as numbered/traceable/risk-rated per your §4. Do not invent a success metric that wasn't given; label any proposal as proposed-not-confirmed.
 
 Also classify which implementation surfaces this genuinely touches (backend / frontend / data) so the build phase only spawns the specialists actually needed.`),
-      { agentType: 'product-analyst', label: 'requirements', phase: 'Requirements', schema: CRITERIA_SCHEMA },
+      { agentType: 'product-analyst', label: 'requirements', phase: 'Plan', schema: CRITERIA_SCHEMA, ...tier('plan') },
     )
-    return { agents: [{ label: 'requirements', result: reqs }] }
-  })
+    const agents = [
+      ...(humanIntent ? [] : [{ label: 'intent', result: intent }]),
+      { label: 'requirements', result: reqs },
+    ]
+    // No criteria -> nothing for an architect to plan against. Not dispatched,
+    // so not recorded as a failure either; the stop below says why.
+    if (!reqs || !reqs.criteria?.length) return { agents, files }
+    const architecture = await dispatch(
+      withPolicy(`Write the implementation PLAN for these requirements — plan.md, the document a cheaper build tier executes WITHOUT redesigning anything.
 
-  const reqs = agentResult(reqArtifact, 'requirements')
+${humanIntent ? `INTENT: ${humanIntent}\n\n` : ''}ACCEPTANCE CRITERIA:\n${criteriaTextOf(reqs)}
+
+SURFACES: ${reqs.surfaces.join(', ') || '(none classified)'}
+
+Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufactured ADR. Then state, concretely enough that a builder never has to make a design decision: the files to create or change and what changes in each; interfaces, data shapes and error behaviour; the order of the steps; which test proves each criterion; and NFRs as measurable numbers, never "scalable" or "fast". Anything you cannot decide yet goes in an explicit "Open decisions" section — builders are told to escalate those back, not to guess. Flag anything that constrains the UX, so design reconciles it rather than the build. Return plan.md as markdown.${writeInstruction('plan.md')}`),
+      { agentType: 'solution-architect', label: 'architecture', phase: 'Plan', ...tier('plan') },
+    )
+    agents.push({ label: 'architecture', result: architecture })
+    Object.assign(files, await confirmFiles(
+      { ...(humanIntent ? {} : { 'intent.md': handoffPath('intent.md') }), 'plan.md': handoffPath('plan.md') },
+      { 'intent.md': asText(intent), 'plan.md': asText(architecture) },
+      before,
+    ))
+    return { agents, files }
+  })
+  await adoptFiles('Plan', planArtifact.files)
+  if (MODE_APPROVED && planReplays) {
+    // A resumed approved run builds only from the files it approved.
+    const changed = ['spec.md', 'plan.md'].filter(n => planArtifact.files && planArtifact.files[n] && !HANDOFF_FILES[n])
+    if (changed.length) {
+      status = 'stopped'
+      return { status: 'stopped', reason: `${changed.join(' and ')} changed since run ${RUN.runId} approved ${changed.length > 1 ? 'them' : 'it'}. A resume builds only what was approved — to build the new version, start a fresh run with approvedPlan: true.` }
+    }
+  }
+
+  const intent = humanIntent ? null : agentResult(planArtifact, 'intent')
+  const reqs = agentResult(planArtifact, 'requirements')
+
+  // When the plan tier is pinned and the planners return nothing at all, the
+  // likeliest cause is model access, not the initiative — say so, rather than
+  // pointing the user at their requirements (code review S4).
+  const tierHint = () => (!MODE_APPROVED && TIERS.plan.model !== 'inherit' && !intent && !reqs
+    ? ` The planners returned nothing on the plan tier (${TIERS.plan.model}). If this account cannot use that model, re-run with args.tiers: { plan: { model: 'opus' } } or args.tiers: 'inherit'.`
+    : '')
 
   if (!reqs || !reqs.criteria?.length) {
     status = 'stopped'
     return {
       status: 'stopped',
-      reason: 'product-analyst produced no acceptance criteria. Nothing downstream can trace against anything — this is a stop condition, not a reason to proceed on inference.',
+      reason: MODE_APPROVED
+        ? `the approved spec.md in ${handoffDir()} has no acceptance criteria in the expected form — each criterion is a line "- **AC-1** — text" under "## Acceptance criteria".`
+        : `product-analyst produced no acceptance criteria. Nothing downstream can trace against anything — this is a stop condition, not a reason to proceed on inference.${tierHint()}`,
       openQuestions: reqs?.openQuestions ?? [],
     }
   }
 
-  const criteriaText = reqs.criteria.map(c => `${c.id}: ${c.text}`).join('\n')
+  const criteriaText = criteriaTextOf(reqs)
+  const architecture = agentResult(planArtifact, 'architecture')
+  // No plan -> stop. The build tier is cheap BECAUSE the plan leaves it nothing
+  // to design; without one it would design everything, unreviewed (S3).
+  if (architecture === null || architecture === undefined || (typeof architecture === 'string' && !architecture.trim()) ||
+      (MODE_APPROVED && !HANDOFF_FILES['plan.md'])) {
+    status = 'stopped'
+    return {
+      status: 'stopped',
+      reason: MODE_APPROVED
+        ? `the approved plan.md is not confirmed in ${handoffDir()} — commit it there and start a fresh run with approvedPlan: true.`
+        : `solution-architect produced no plan. The build tier executes plan.md and is not allowed to design — running it without a plan would move every design decision to the cheapest tier, unreviewed.${TIERS.plan.model !== 'inherit' ? ` If this account cannot use ${TIERS.plan.model}, re-run with args.tiers: { plan: { model: 'opus' } }.` : ''}`,
+      requirements: reqs,
+    }
+  }
   log(`${reqs.criteria.length} acceptance criteria; surfaces: ${reqs.surfaces.join(', ') || 'none classified'}`)
+  if (MODE_APPROVED) {
+    // The person's spec.md IS the spec: adopted, never re-rendered over. It was
+    // registered from the preflight (fresh) or re-verified by adoptFiles (resume).
+  } else {
+    // Rendered by this workflow, so rewritten on every pass, replay included.
+    await writeRendered('spec.md', renderSpec(reqs))
+  }
 
   // -------------------------------------------------------------------------
-  // Phase 2 — Design. UX and architecture are genuinely independent inputs, and
-  // both must land before build starts, so this is a legitimate barrier.
+  // Plan approval (M3). In spec mode the run stops here by default, so a
+  // person reviews spec.md and plan.md, edits them if needed, commits them, and
+  // runs again with approvedPlan: true — which starts at Design from exactly
+  // what they committed. pauseAfterPlan: false runs straight through.
+  // -------------------------------------------------------------------------
+  // A resume of a run whose Plan still awaits approval must neither build the
+  // unapproved plan nor pause a second time unnoticed: it is refused, and the
+  // way forward is the approval itself (round-5 mutation check).
+  if (PAUSE && !MODE_APPROVED && planReplays) {
+    status = 'stopped'
+    return {
+      status: 'stopped',
+      reason: `run ${RUN.runId} is waiting for its plan to be approved — resuming would build a plan nobody approved. Review and commit spec.md and plan.md in ${handoffDir()}, then start a FRESH run with approvedPlan: true.`,
+    }
+  }
+  if (PAUSE && !MODE_APPROVED && !planReplays) {
+    // Never ask a person to approve files that are not this run's (security R4-2).
+    const stop = missingInputs('Plan approval', ['spec.md', 'plan.md'])
+    if (stop) return stop
+    // The next invocation repeats THIS one's args, adding only approvedPlan —
+    // intentPath, tiers and strict carry over (code review round 4).
+    const nextArgs = {}
+    for (const [k, v] of Object.entries(args && typeof args === 'object' ? args : {})) {
+      if (!['resume', 'approvedPlan', 'pauseAfterPlan', 'replan', 'runtimeDir', 'policy', 'policyDefault'].includes(k)) nextArgs[k] = v
+    }
+    nextArgs.approvedPlan = true
+    status = 'awaiting-plan-approval'
+    return {
+      status: 'awaiting-plan-approval',
+      initiative,
+      requirements: reqs,
+      plan: architecture,
+      handoff: { dir: handoffDir(), files: { ...HANDOFF_FILES }, specDir: SPEC_DIR, strict: STRICT },
+      next: `Review spec.md and plan.md in ${handoffDir()}. Edit them if needed (criteria stay one per line: "- **AC-n** — text"), commit them, then start a FRESH run with ${JSON.stringify(nextArgs)} — it starts at Design from exactly the committed files.`,
+      humanDecisionRequired: [
+        `Approve the plan: review and commit spec.md and plan.md in ${handoffDir()}, then run with approvedPlan: true.`,
+        ...reqs.openQuestions,
+      ],
+      tiers: TIERS,
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 2 — Design, on the design tier. UX spec, then a static mock built
+  // from it — sequential, because the mock is the spec made clickable. Only
+  // when a frontend surface is touched; otherwise the phase is recorded empty,
+  // so a resume sees the same phase sequence either way.
   // -------------------------------------------------------------------------
   const needsUx = reqs.surfaces.includes('frontend')
+  if (!needsUx) log('no frontend surface — Design has nothing to do and is recorded empty')
+  const mockPath = handoffPath('mock.html')
+  if (needsUx) {
+    const stop = missingInputs('Design', ['spec.md', 'plan.md'])
+    if (stop) return stop
+  }
   const designArtifact = await runPhase('Design', 'Build', async () => {
-    const designs = await parallel(
-      [
-        needsUx &&
-          (() =>
-            dispatch(
-              withPolicy(`Produce the UX specification for these requirements:\n${criteriaText}\n\nSpecify every interactive state — initial, loading, empty, success, error, permission-denied, degraded. State accessibility requirements as checkable targets (a WCAG level, a contrast ratio, a touch-target size), not aspirations; ui-engineer owns turning them into measured values. Flag any gap back rather than inventing behavior.`),
-              { agentType: 'ux-designer', label: 'ux-spec', phase: 'Design' },
-            )),
-        () =>
-          dispatch(
-            withPolicy(`Assess the architecture for these requirements:\n${criteriaText}\n\nDecide the tier per your §2 — if this is Tier 1, say so and keep it short rather than manufacturing an ADR. Define NFRs as measurable numbers, never "scalable" or "fast". Flag anything that constrains the UX so it can be reconciled before build rather than mid-implementation.`),
-            { agentType: 'solution-architect', label: 'architecture', phase: 'Design' },
-          ),
-      ].filter(Boolean),
+    if (!needsUx) return { agents: [] }
+    const ux = await dispatch(
+      withPolicy(`Produce the UX specification for these requirements:\n${criteriaText}
+
+${handoffRef('plan.md', 'IMPLEMENTATION PLAN (solution-architect)', asText(architecture))}
+
+Specify every interactive state — initial, loading, empty, success, error, permission-denied, degraded. State accessibility requirements as checkable targets (a WCAG level, a contrast ratio, a touch-target size), not aspirations; ui-engineer owns turning them into measured values. Flag any gap back rather than inventing behavior, and reconcile anything the plan constrains. Return the spec as markdown.${writeInstruction('design.md')}`),
+      { agentType: 'ux-designer', label: 'ux-spec', phase: 'Design', ...tier('design') },
     )
-    return {
-      agents: [
-        ...(needsUx ? [{ label: 'ux-spec', result: designs[0] }] : []),
-        { label: 'architecture', result: needsUx ? designs[1] : designs[0] },
-      ],
+    const agents = [{ label: 'ux-spec', result: ux }]
+    if (!mockPath) {
+      log('no run directory — the static mock has nowhere to live and is skipped; builders get the UX spec only')
+    } else if (ux) {
+      const mock = await dispatch(
+        withPolicy(`Build a static, self-contained HTML MOCK of the UX specification below and write it to ${mockPath} (create the parent directory if needed).
+
+This is a design artifact, not production code: one file, inline CSS and JS, no build step, no package install, no network request. Every state the spec names must be reachable in the mock — a visible state switcher is fine. Do not invent a state the spec omits; list each gap. Return a short note: the path you wrote, which states the mock covers, and the spec gaps you found.
+
+${handoffRef('design.md', 'UX SPEC', asText(ux))}`),
+        // A worktree: ui-engineer has Write/Edit/Bash, and the prompt alone is
+        // what limits it to one file. The mock's ABSOLUTE path still lands in
+        // the main checkout; anything else it touches does not.
+        { agentType: 'ui-engineer', label: 'mock', phase: 'Design', isolation: 'worktree', ...tier('design') },
+      )
+      agents.push({ label: 'mock', result: mock })
     }
+    // design.md falls back to the returned text; mock.html is confirm-only —
+    // it is a file by nature, and its hash pins it for a resume.
+    const files = await confirmFiles(
+      { 'design.md': handoffPath('design.md'), ...(mockPath && ux ? { 'mock.html': mockPath } : {}) },
+      { 'design.md': asText(ux) },
+      before,
+    )
+    return { agents, files }
   })
+  await adoptFiles('Design', designArtifact.files)
 
   const uxSpec = needsUx ? agentResult(designArtifact, 'ux-spec') : null
-  const architecture = agentResult(designArtifact, 'architecture')
+  const mockNote = needsUx ? agentResult(designArtifact, 'mock') : null
 
   // -------------------------------------------------------------------------
-  // Phase 3 — Build. One specialist per surface actually touched. Each returns
-  // a MANIFEST (CHG-20), so the verify phase can hand off by reference.
+  // Phase 3 — Build, on the build tier. One specialist per surface actually
+  // touched, executing plan.md. Each returns a MANIFEST (CHG-20), so the verify
+  // stages can hand off by reference. A decision the plan left open is
+  // ESCALATED in planGaps, never improvised: a design choice made at the build
+  // tier is exactly what the expensive plan tier exists to prevent.
   // -------------------------------------------------------------------------
+  // Design-stage agents have Write: re-verify what Build will read against the
+  // hashes recorded when each file was confirmed (security R4-3).
+  await adoptFiles('Build', { ...(planArtifact.files || {}), ...(designArtifact.files || {}) }, true)
+  {
+    const stop = missingInputs('Build', ['plan.md', ...(needsUx ? ['design.md'] : [])])
+    if (stop) return stop
+  }
   const BUILDERS = {
     backend: {
       agentType: 'software-engineer',
@@ -1069,7 +2171,9 @@ Also classify which implementation surfaces this genuinely touches (backend / fr
     },
     frontend: {
       agentType: 'ui-engineer',
-      brief: `Implement the frontend against the UX specification, state-for-state. Do not invent a state the spec omitted — flag the gap.\n\nUX SPEC:\n${uxSpec ?? '(none produced)'}`,
+      brief: `Implement the frontend against the UX specification, state-for-state. Do not invent a state the spec omitted — flag the gap.
+
+${handoffRef('design.md', 'UX SPEC', asText(uxSpec))}${HANDOFF_FILES['mock.html'] ? `\n\nSTATIC MOCK: ${HANDOFF_FILES['mock.html']} — the agreed look of each state. Match it; where it and the spec disagree, the spec wins and you say so.` : ''}`,
     },
     data: {
       agentType: 'database-engineer',
@@ -1078,7 +2182,7 @@ Also classify which implementation surfaces this genuinely touches (backend / fr
   }
 
   const surfaces = reqs.surfaces.filter(s => BUILDERS[s])
-  const buildArtifact = await runPhase('Build', 'Verify', async () => {
+  const buildArtifact = await runPhase('Build', 'Test', async () => {
     const built = await parallel(
       surfaces.map(surface => () =>
         dispatch(
@@ -1086,11 +2190,13 @@ Also classify which implementation surfaces this genuinely touches (backend / fr
 
 ACCEPTANCE CRITERIA (trace to these IDs):\n${criteriaText}
 
-ARCHITECTURE CONTEXT:\n${architecture ?? '(none)'}
+${handoffRef('plan.md', 'IMPLEMENTATION PLAN — execute it; do not redesign it', asText(architecture))}
+
+When the plan does not settle something you need — an interface, a data shape, an error behaviour, anything listed under "Open decisions" — do NOT make the design decision yourself. Implement what the plan does settle and put each open decision in planGaps, worded so a planner can answer it. An escalated gap costs one planning round; an improvised design choice at build tier costs a review cycle and usually a rewrite.
 
 Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code themselves — your summary is at most 2000 characters and exists to tell them what to look at and why, never to reproduce the diff. List every file you changed with its role, give a diffRef a reader can reach the change through (a git range, or the worktree path you were given), and name the criteria you addressed. Any criterion you did not address goes in notAddressed with the reason — an omission that is written down is a decision; one that is not is a defect found later.`),
           // retry: false — a builder mutates a worktree; see dispatch().
-          { agentType: BUILDERS[surface].agentType, label: `build:${surface}`, phase: 'Build', isolation: 'worktree', schema: BUILD_MANIFEST_SCHEMA, retry: false },
+          { agentType: BUILDERS[surface].agentType, label: `build:${surface}`, phase: 'Build', isolation: 'worktree', schema: BUILD_MANIFEST_SCHEMA, retry: false, ...tier('build') },
         ),
       ),
     )
@@ -1109,67 +2215,146 @@ Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code 
     return { status: 'stopped', reason: 'No build surface produced an implementation manifest.', requirements: reqs }
   }
 
+  // Whitespace collapsed: a gap is one line of a BLOCKED entry, and a newline
+  // inside it would end the entry early in the reducer (code review C1).
+  const gapsOf = ms => ms.flatMap(m => (Array.isArray(m.planGaps) ? m.planGaps : [])
+    .map(gap => ({ builder: m.label, gap: String(gap).replace(/\s+/g, ' ').trim() }))
+    .filter(g => g.gap))
+  planGaps = gapsOf(manifests)
+  if (planGaps.length) log(`${planGaps.length} plan gap(s) escalated by the build tier — recorded as a blocked gate for re-planning`)
+
   // -------------------------------------------------------------------------
-  // Phase 4 — Verify. Four independent evidentiary bases on the same change,
-  // each handed a BUDGETED BRIEF built from the manifests rather than the
-  // concatenated output of every builder.
+  // Phases 4 and 5 — Test, then Review. Independent evidentiary bases on the
+  // same change, each handed a BUDGETED BRIEF built from the manifests rather
+  // than the concatenated output of every builder. Sequential, because Review
+  // is handed Test's report as evidence (each stage hands the next a file).
   // -------------------------------------------------------------------------
   const briefs = await buildBriefs(manifests, criteriaText, LENSES.map(l => l.key))
   const handoffs = []
-  // A lens that produced nothing is invisible in the pipeline's OUTPUT — its
-  // refute stage turns a null lens result into an empty findings array. The
-  // breaker would then never see the failure that it exists to count.
-  const lensFailures = []
 
-  const verifyArtifact = await runPhase('Verify', 'Readiness', async () => {
-    const verified = await pipeline(
-      LENSES,
-      lens => {
-        const b = briefs[lens.key]
-        const text = b.text
-        // briefChars is measured on the text this script actually interpolated,
-        // never on the bridge's self-report. A mismatch means the value changed
-        // in transit, and that is worth knowing about explicitly.
-        handoffs.push({
-          label: `verify:${lens.key}`,
-          briefChars: text.length,
-          truncated: b.truncated === true,
-          omittedFiles: b.omittedFiles || [],
-          briefSource: b.briefSource,
-          bridgeIntegrity: b.chars === text.length,
-        })
-        if (b.chars !== text.length) {
-          log(`verify:${lens.key} brief size disagrees with the builder (${b.chars} vs ${text.length}) — the brief may have been altered in transit`)
-        }
-        if (b.truncated) {
-          log(`verify:${lens.key} brief was TRUNCATED to its budget — the lens is told so in the brief`)
-        }
-        return dispatch(
-          withPolicy(`${lens.brief}
+  /**
+   * `carried` — failures from an EARLIER verification stage. The breaker counts
+   * per phase; before Verify was split into Test and Review, qa + review +
+   * security dying was three failures in one phase and stopped the run. Split
+   * 1 + 2 it tripped nothing, and readiness ran on one lens of four (code
+   * review M1, reproduced by QA). Carried failures count toward this phase's
+   * threshold without being written again (S-A), and a trip that counted them
+   * also fails their phase so a resume re-runs it (S-B) — see recordPhase().
+   */
+  async function lensPhase(title, next, lenses, extra, carried = [], carriedFrom = null) {
+    // A lens that produced nothing is invisible in the pipeline's OUTPUT — its
+    // refute stage turns a null lens result into an empty findings array. The
+    // breaker would then never see the failure that it exists to count.
+    const lensFailures = []
+    const raw = {}
+    return runPhase(title, next, async () => {
+      // Refuters that returned nothing are failures of this stage too (C-1):
+      // they land in NULL_RESULTS, which runPhase merges for its own record —
+      // so they are put on the artifact here, where a later stage can carry them.
+      const nl0 = NULL_RESULTS.length
+      const verified = await pipeline(
+        lenses,
+        lens => {
+          const b = briefs[lens.key]
+          const text = b.text
+          // briefChars is measured on the text this script actually interpolated,
+          // never on the bridge's self-report. A mismatch means the value changed
+          // in transit, and that is worth knowing about explicitly.
+          handoffs.push({
+            label: `verify:${lens.key}`,
+            briefChars: text.length,
+            truncated: b.truncated === true,
+            omittedFiles: b.omittedFiles || [],
+            briefSource: b.briefSource,
+            bridgeIntegrity: b.chars === text.length,
+          })
+          if (b.chars !== text.length) {
+            log(`verify:${lens.key} brief size disagrees with the builder (${b.chars} vs ${text.length}) — the brief may have been altered in transit`)
+          }
+          if (b.truncated) {
+            log(`verify:${lens.key} brief was TRUNCATED to its budget — the lens is told so in the brief`)
+          }
+          return dispatch(
+            withPolicy(`${lens.brief}
 
 ${text}
 
-The section above is a BRIEF, by reference. It is not the diff. Read the changed files yourself with Read / Grep / Glob before concluding, and if the brief says it was truncated, say so in your verdict.`),
-          { agentType: lens.agentType, label: `verify:${lens.key}`, phase: 'Verify', schema: FINDINGS_SCHEMA },
-        ).then(r => {
-          if (r === null || r === undefined) lensFailures.push(`verify:${lens.key}`)
-          return r
-        })
-      },
-      // Adversarially verify each finding from a different lens than produced it.
-      (result, lens) => refuteFindings(result, lens.key, criteriaText),
-    )
-    return {
-      agents: LENSES.map((l, i) => ({ label: `verify:${l.key}`, result: verified[i] })),
-      handoff: handoffs,
-      failed: lensFailures,
-    }
-  })
+The section above is a BRIEF, by reference. It is not the diff. Read the changed files yourself with Read / Grep / Glob before concluding, and if the brief says it was truncated, say so in your verdict.${extra ? `\n\n${extra(lens)}` : ''}`),
+            { agentType: lens.agentType, label: `verify:${lens.key}`, phase: title, schema: FINDINGS_SCHEMA, ...tier(lens.tier) },
+          ).then(r => {
+            if (r === null || r === undefined) lensFailures.push(`verify:${lens.key}`)
+            else raw[lens.key] = { verdict: r.verdict }
+            return r
+          })
+        },
+        // Adversarially verify each finding from a different lens than produced it.
+        (result, lens) => refuteFindings(result, lens.key, criteriaText),
+      )
+      return {
+        agents: lenses.map((l, i) => ({ label: `verify:${l.key}`, result: verified[i] })),
+        raw,
+        handoff: handoffs.filter(h => lenses.some(l => h.label === `verify:${l.key}`)),
+        failed: [...lensFailures, ...NULL_RESULTS.slice(nl0).filter(l => !lensFailures.includes(l))],
+        carried: carried.length && carriedFrom ? { from: carriedFrom, labels: carried } : null,
+      }
+    })
+  }
 
-  const allFindings = (verifyArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
+  const loop = TIERS.testLoop
+  const loopPin = [
+    loop.model && loop.model !== 'inherit' ? `model "${loop.model}"` : null,
+    loop.effort ? `effort "${loop.effort}"` : null,
+  ].filter(Boolean).join(' and ')
+  const testArtifact = await lensPhase('Test', 'Review', LENSES.filter(l => l.stage === 'Test'), () =>
+    `Execution loops are mechanical: delegate running suites, scripts and re-runs to qa-runner${loopPin ? `, and when your Agent tool accepts these parameters, dispatch it with ${loopPin}` : ''}. You design the cases and interpret the evidence; the runner only runs them and reports raw results.`)
+
+  const testFindings = (testArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
+  const testRaw = (testArtifact.raw || {}).qa || null
+  const testDead = (testArtifact.failed || []).filter(l => /^verify:/.test(l))
+  if (testDead.length) {
+    keep([
+      'BLOCKED — test.noEvidence',
+      '  Action withheld: treating the change as tested',
+      `  Why gated: the test stage produced no result (${testDead.join(', ')}), so no criterion was exercised at runtime`,
+      '  Prepared: the review lenses ran, and their test report says the test stage produced nothing',
+      '  Unblocks: re-running the workflow, or testing the change by hand',
+      '  Authorize by: not an authorization gate — missing verification',
+    ].join('\n'))
+  }
+  const testReport = renderTestReport(testRaw, testFindings)
+  await writeRendered('test-report.md', testReport)
+  {
+    const stop = missingInputs('Review', ['test-report.md'])
+    if (stop) return stop
+  }
+
+  const reviewArtifact = await lensPhase('Review', 'Readiness', LENSES.filter(l => l.stage === 'Review'), () =>
+    `${handoffRef('test-report.md', 'TEST STAGE RESULT (qa-engineer, after cross-check) — evidence to weigh, not a verdict to adopt', testReport)}`,
+    // Every Test failure, refuters included — a dead refuter means qa's
+    // findings were never cross-checked (code review C-1).
+    (testArtifact.failed || []).slice(), 'Test')
+
+  // Lenses that died in Review below the breaker threshold leave a review
+  // that LOOKS complete. Say which ones did not run (QA, round 2).
+  const reviewDead = (reviewArtifact.failed || []).filter(l => /^verify:/.test(l))
+  if (reviewDead.length) {
+    keep([
+      'BLOCKED — review.incomplete',
+      '  Action withheld: treating the change as reviewed by every lens',
+      `  Why gated: ${reviewDead.join(', ')} produced no result, so that lens never looked at the change`,
+      '  Prepared: the lenses that did run, and their cross-checked findings',
+      '  Unblocks: re-running the workflow, or that review done by hand',
+      '  Authorize by: not an authorization gate — missing verification',
+    ].join('\n'))
+  }
+
+  const allFindings = [testArtifact, reviewArtifact]
+    .flatMap(art => (art.agents || []).flatMap(a => a.result || []))
+    .filter(Boolean)
   let confirmed = allFindings.filter(f => !f.refuted)
   const refuted = allFindings.filter(f => f.refuted)
   log(`${confirmed.length} findings survived cross-check, ${refuted.length} refuted`)
+  const verifyHandoff = [...(testArtifact.handoff || []), ...(reviewArtifact.handoff || [])]
 
   // CHG-22 — the refutation reasoning is the most informative thing the run
   // produces, and it is what used to be unrecoverable an hour later. Set before
@@ -1231,13 +2416,17 @@ ${criteriaText}
 Report a BUILD MANIFEST of the repair, with the same rules as the build: every file you changed, a diffRef, and criteriaAddressed.`),
           // retry: false — a repair MUTATES the change. A null after a partial
           // edit is not something a second attempt on top of it can cleanly fix.
-          { agentType: BUILDERS[surfaceOf(m)].agentType, label: `repair:${surfaceOf(m)}`, phase: 'Repair', schema: BUILD_MANIFEST_SCHEMA, retry: false },
+          { agentType: BUILDERS[surfaceOf(m)].agentType, label: `repair:${surfaceOf(m)}`, phase: 'Repair', schema: BUILD_MANIFEST_SCHEMA, retry: false, ...tier('build') },
         ),
       ))
       return { agents: fixers.map((m, i) => ({ label: `repair:${surfaceOf(m)}`, result: fixed[i] })) }
     }, 'Repair')
 
     const repairManifests = (repairArtifact.agents || []).filter(a => a.result).map(a => ({ label: a.label, ...a.result }))
+    // A repair can hit a decision the plan left open just as the build can.
+    for (const g of gapsOf(repairManifests)) {
+      if (!planGaps.some(x => x.gap === g.gap)) planGaps.push(g)
+    }
     if (!repairManifests.length) {
       repairRounds.rounds.push({ round: k, lenses: lensKeys, fixers: fixers.map(m => m.label), targeted: target.length, remaining: target.length, note: 'no builder produced a repair manifest' })
       break
@@ -1264,7 +2453,7 @@ ${JSON.stringify(manifests, null, 2)}
 
 ACCEPTANCE CRITERIA:
 ${criteriaText}`),
-          { agentType: lens.agentType, label: `reverify:${lens.key}`, phase: 'Re-verify', schema: FINDINGS_SCHEMA },
+          { agentType: lens.agentType, label: `reverify:${lens.key}`, phase: 'Re-verify', schema: FINDINGS_SCHEMA, ...tier(lens.tier) },
         ).then(r => {
           if (r === null || r === undefined) reverifyFailed.push(`reverify:${lens.key}`)
           return r
@@ -1330,6 +2519,20 @@ ${criteriaText}`),
     ].join('\n'))
   }
 
+  // Recorded here, after repair, so gaps a repair escalated are included. Through
+  // the same reducer as every autonomy gate, so it cannot vanish from a run
+  // whose verification otherwise looks clean.
+  if (planGaps.length) {
+    keep([
+      'BLOCKED — plan.insufficient',
+      `  Action withheld: deciding ${planGaps.length} design question(s) the plan left open, at build tier`,
+      `  Why gated: ${planGaps.map(g => `[${g.builder}] ${g.gap}`).join('; ').slice(0, 600)}`,
+      '  Prepared: the build implemented everything the plan did settle; the gaps are in every lens brief',
+      '  Unblocks: answering the gaps in plan.md and re-running, or a human deciding them',
+      '  Authorize by: not an authorization gate — the plan tier owns these decisions',
+    ].join('\n'))
+  }
+
   // After repair, and every count from the same final state: `confirmed` is
   // what survived the last re-verification; `refuted` and `byLens` include each
   // re-verification's findings, so the three numbers agree with one another.
@@ -1346,7 +2549,8 @@ ${criteriaText}`),
   }
 
   // -------------------------------------------------------------------------
-  // Phase 5 — Readiness. Recommendation only. No deploy authority here.
+  // Phase 6 — Readiness, on the readiness tier. Recommendation only, for a
+  // HUMAN to approve. No deploy authority here.
   // -------------------------------------------------------------------------
   const readinessArtifact = await runPhase('Readiness', null, async () => {
     const [readiness, docs] = await parallel([
@@ -1364,8 +2568,14 @@ UNVERIFIED FINDINGS — raised by a lens, but the refuter returned NOTHING, so n
 
 REPAIR LOOP RECORD — blocking findings the builder repaired and an independent lens re-verified:\n${JSON.stringify(repairRounds, null, 2)}
 
-OPEN ASSUMPTIONS / QUESTIONS FROM REQUIREMENTS:\n${[...reqs.assumptions, ...reqs.openQuestions].join('\n') || '(none)'}`),
-          { agentType: 'release-manager', label: 'readiness', phase: 'Readiness' },
+OPEN ASSUMPTIONS / QUESTIONS FROM REQUIREMENTS:\n${[...reqs.assumptions, ...reqs.openQuestions].join('\n') || '(none)'}
+
+TEST STAGE: ${testDead.length ? `produced NO result (${testDead.join(', ')}) — nothing was exercised at runtime; no criterion may be classified Confirmed on test evidence.` : 'ran; its findings are among those above.'}
+
+REVIEW LENSES THAT DID NOT RUN: ${reviewDead.length ? reviewDead.join(', ') : '(none)'}
+
+PLAN GAPS — design decisions the build tier escalated instead of making. Each stays open until the plan answers it; a criterion a plan gap touches is not Confirmed:\n${planGaps.length ? planGaps.map(g => `[${g.builder}] ${g.gap}`).join('\n') : '(none)'}`),
+          { agentType: 'release-manager', label: 'readiness', phase: 'Readiness', ...tier('readiness') },
         ),
       () =>
         dispatch(
@@ -1374,7 +2584,7 @@ OPEN ASSUMPTIONS / QUESTIONS FROM REQUIREMENTS:\n${[...reqs.assumptions, ...reqs
 CRITERIA:\n${criteriaText}
 
 IMPLEMENTATION (build manifest — read the listed files rather than assuming their contents):\n${JSON.stringify(manifests, null, 2)}`),
-          { agentType: 'technical-writer', label: 'docs', phase: 'Readiness' },
+          { agentType: 'technical-writer', label: 'docs', phase: 'Readiness', ...tier('docs') },
         ),
     ])
     return { agents: [{ label: 'readiness', result: readiness }, { label: 'docs', result: docs }] }
@@ -1383,11 +2593,20 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
   status = 'completed'
   return {
     initiative,
+    intent,
     requirements: reqs,
-    design: { ux: uxSpec, architecture },
+    plan: architecture,
+    design: { ux: uxSpec, mock: HANDOFF_FILES['mock.html'] || null, mockNote, architecture },
     surfacesBuilt: surfaces,
     buildManifests: manifests,
-    verifyHandoff: (verifyArtifact.handoff && verifyArtifact.handoff.length) ? verifyArtifact.handoff : handoffs,
+    planGaps,
+    verifyHandoff,
+    // Which model and effort each stage ran on, as resolved — so a reader can
+    // tell a Fable-planned run from one where args.tiers pinned nothing.
+    tiers: TIERS,
+    // The files each stage handed the next. Only files confirmed on disk are
+    // listed; a stage whose file is absent was handed the inline text instead.
+    handoff: { dir: handoffDir(), files: { ...HANDOFF_FILES }, specDir: SPEC_DIR, strict: STRICT, approvedPlan: MODE_APPROVED },
     // `confirmed` keeps every surviving finding, unverified ones flagged, so a
     // consumer that reads only this list still sees them; `unverified` names
     // the subset no refuter checked.
@@ -1396,6 +2615,7 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
     documentation: agentResult(readinessArtifact, 'docs'),
     humanDecisionRequired: [
       'Release go/no-go — release-manager recommends, it never commits.',
+      ...planGaps.map(g => `Plan gap escalated by ${g.builder}: ${g.gap}`),
       ...reqs.openQuestions,
     ],
   }

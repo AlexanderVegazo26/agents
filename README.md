@@ -28,15 +28,15 @@ The second idea, learned the harder way: an agent definition governs behavior *o
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 25 | 64 | 6 | — |
-| `sdlc-suite/` | 25 | 64 | 6 | 10 |
+| `.claude/` | 25 | 64 | 7 | — |
+| `sdlc-suite/` | 25 | 64 | 7 | 11 |
 | `commandcode-suite/` | 25 | 64 | 6 | 6 |
 | `.kimi-code/` | 25 | 70 | 6 | — |
 | `.copilot/` | 25 | 64 | — | — |
 | `.codex/` | 25 | 64 | — | — |
 | `.agents/` | — | 64 | — | — |
-| `.pi/` | — | — | — | 10 |
-| `.hermes/` | — | — | — | 9 |
+| `.pi/` | — | — | — | 11 |
+| `.hermes/` | — | — | — | 10 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
@@ -58,6 +58,8 @@ auto-discovered `.agents/skills/`.
 **The duplication is a hazard, not just redundancy.** The same agents exist in several trees, and editing the wrong one raises no error and changes nothing. `sdlc-suite/` is the hand-edited source; the `agents/` and `skills/` of every other tree are generated from it, as is `.claude/workflows/`, as are `.pi/prompts/` and the root `AGENTS.md`, as are `.hermes/skills/` and the root `.hermes.md`, and a hand edit to any of those is silently overwritten. `.agents/` ships skills only, with no agents directory — deliberate, not a gap.
 
 The scope is worth knowing precisely, because getting it wrong has already cost something here: `commandcode-suite/workflows/`, `.kimi-code/workflows/`, the per-harness runners and every README are **not** generated. A change to a workflow script has to be made in three places by hand. See `CLAUDE.md` for the table and `CONTRIBUTING.md` for what CI checks.
+
+**Those three places currently disagree, on purpose.** `/sdlc-feature` was rebuilt as "plan expensive, execute cheap": Plan → Design → Build → Test → Review → Readiness, with per-stage model tiers and handoff files. `/sdlc-maintain`, the stage-6 detector → diagnosis → incident record, was added. Both changes landed only in `sdlc-suite/` and therefore in `.claude/`, pi and Hermes. `commandcode-suite/` and `.kimi-code/` keep their hand-ported copy of the *previous* `sdlc-feature` (Requirements → Design → Build → Verify → Readiness) and have no `sdlc-maintain`. This divergence is known and accepted. Don't read the two trees' shared workflow names as parity. Details are in [`sdlc-suite/README.md`](sdlc-suite/README.md#workflows).
 
 **The examples are load-bearing, not illustrative.** This material was developed against a real application, in a separate repository, over real reviews and real failures. Where an agent says "this is how a test lies to you", that is a defect someone shipped past, not a hypothetical.
 

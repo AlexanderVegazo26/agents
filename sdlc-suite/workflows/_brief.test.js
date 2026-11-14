@@ -51,6 +51,21 @@ test('notAddressed survives into the brief — the gap must be visible to the le
   assert.ok(r.text.includes('needs the schema change'))
 })
 
+test('planGaps survive into the brief — an escalated decision must be visible to the lens', () => {
+  const m = { ...manifest('backend', 1), planGaps: ['plan.md does not say whether export is sync or async'] }
+  const r = b.buildBrief({ manifests: [m], lens: 'review' })
+  assert.ok(r.text.includes('Plan gaps escalated'))
+  assert.ok(r.text.includes('sync or async'))
+  const none = b.buildBrief({ manifests: [manifest('backend', 1)], lens: 'review' })
+  assert.ok(!none.text.includes('Plan gaps escalated'), 'no gap section when the builder raised none')
+})
+
+test('the manifest schema admits planGaps as an optional string array', () => {
+  const s = b.BUILD_MANIFEST_SCHEMA
+  assert.deepStrictEqual(s.properties.planGaps.items, { type: 'string' })
+  assert.ok(!s.required.includes('planGaps'))
+})
+
 test('each lens gets its own budget', () => {
   assert.strictEqual(b.LENS_BUDGETS.qa, 32_000)
   assert.strictEqual(b.LENS_BUDGETS.performance, 16_000)

@@ -126,6 +126,13 @@ FLOW_SKILLS = {
     "system-archaeology",
 }
 
+# Every command that launches a `workflows/*.js` script, and so needs the
+# pi / Hermes note telling it to call their `workflow` tool. A superset of
+# FLOW_SKILLS: `sdlc-maintain` runs under pi and Hermes (they execute
+# `sdlc-suite/workflows/` directly) but has no Kimi flow-skill port, so it must
+# not join FLOW_SKILLS, which also governs what the Kimi tree skips and keeps.
+WORKFLOW_COMMANDS = FLOW_SKILLS | {"sdlc-maintain"}
+
 
 # --------------------------------------------------------------------------- #
 # Frontmatter
@@ -499,7 +506,7 @@ def render_pi_prompt(md: Path) -> str:
     lines = ["---"]
     lines += [f"{k}: {v}" for k, v in front.items()]
     lines += ["---", ""]
-    if md.stem in FLOW_SKILLS:
+    if md.stem in WORKFLOW_COMMANDS:
         lines.append(PI_WORKFLOW_NOTE)
     lines.append(denamespace(body).replace(PLUGIN_ROOT, "sdlc-suite").strip())
     lines.append("")
@@ -545,7 +552,7 @@ def render_hermes_skill(md: Path) -> str:
             "shown as the `User instruction:` line of this message. If there is "
             "none, ask for it rather than guessing.\n"
         )
-    if md.stem in FLOW_SKILLS:
+    if md.stem in WORKFLOW_COMMANDS:
         lines.append(HERMES_WORKFLOW_NOTE)
     text = denamespace(body).replace(PLUGIN_ROOT, "sdlc-suite")
     lines.append(text.replace("$ARGUMENTS", HERMES_ARGUMENTS).strip())

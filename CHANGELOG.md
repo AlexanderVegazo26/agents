@@ -9,8 +9,224 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Action required without Fable access: `/sdlc-feature` now pins a model and
+  an effort per stage.** By default the `plan` and `security` stages pin
+  `fable`. An account without Fable has to pass `"tiers": "inherit"` (pin
+  nothing) or a per-stage override such as
+  `"tiers": { "plan": { "model": "opus" }, "security": { "model": "opus" } }`
+  in the `args` object. An unknown stage, model or effort is logged and
+  ignored, never passed through. The return value's `tiers` shows what a run
+  resolved. Under the pi and Hermes runners, `opts.model` is ignored and only
+  low/medium/high efforts are mapped, so those pins fall back to the session
+  model.
+- **Action required for in-flight runs: `/sdlc-feature` refuses to resume a run
+  recorded by the older phase layout** (one with a `Requirements` or `Verify`
+  phase). Replaying part of it against a new plan would check one build against
+  another run's criteria, so the run stops with `status: "stopped"` and no
+  agent runs. Start a fresh run instead. The refusal happens before the old
+  record is written to, so its attempt count and any breaker trip are left as
+  they were.
+- **Every bridge step in every workflow is now sealed** — all seven, not only
+  `/sdlc-feature`'s handoff writes. The script crosses as hex with its SHA-256,
+  and the loader refuses to run it if the hash differs; its output comes back
+  as hex with `sha256(nonce ‖ output)`, and output that fails the check is
+  discarded. This is tamper-evidence, not authentication: the nonce is in the
+  transcriber's own prompt, so a steered transcriber could compute a valid
+  seal. The protection against steering is that the transcriber never sees the
+  payload in readable form.
+  - **Every bridge runs on Haiku** at low effort, unless `"tiers": "inherit"`
+    is passed. The policy, learnings and run-recording bridges used to run on
+    the session model.
+  - **Relays are chunked.** The host's Bash tool cuts output at about 30,000
+    characters, so no relay carries more than 12,000 bytes (24,000 hex
+    characters). A larger script is written in parts, and a larger output is
+    read back in chunks under one SHA-256. A relay is capped at 64 part or
+    read steps (768,000 bytes each way), each one a transcriber call; a larger
+    script is not sent and a larger output is discarded, both logged, so it
+    fails visibly instead of running hundreds of calls. The step that closes a
+    run relays only an acknowledgement, not the whole outcome.
+  - **A lost phase record no longer disables the breaker.** When the bridge
+    that records a phase doesn't run, or its output fails the seal, the
+    workflow counts that phase's failed agents itself. Three or more trip the
+    breaker and stop the run with a `breaker.unrecorded` gate; fewer leave a
+    `runtime.phaseUnrecorded` gate, since a resume can't replay that phase.
+- **`/sdlc-feature` is rebuilt as "plan expensive, execute cheap".** The
+  recorded phases are now Plan → Design → Build → Test → Review → Readiness,
+  and Cross-check, Repair and Re-verify are unchanged. *Requirements* and
+  *Verify* are gone.
+  - **Plan** (Fable / high): `product-manager` writes `intent.md`,
+    `product-analyst` writes `spec.md`, and `solution-architect` writes
+    `plan.md`.
+  - **Design** (Opus / xhigh): a `ux-designer` spec plus a `ui-engineer`
+    static HTML mock. Runs only when a frontend surface is touched.
+  - **Build** (Sonnet / medium): the builders execute `plan.md`.
+  - **Test**: `qa-engineer` on Sonnet, asked to run its loops through
+    `qa-runner` on Haiku. That is a request in the prompt, not a pin.
+  - **Review**: `code-reviewer` and `performance-engineer` on Opus / high, and
+    `security-engineer` on Fable. All are handed `test-report.md`.
+
+  Each stage's file lands in `<runDir>/handoff/` (or the spec directory, below).
+  An agent that authors a document — `intent.md`, `plan.md`, `design.md`,
+  `mock.html` — writes it itself with its Write tool; a sealed bridge then
+  confirms the file and records its SHA-256 in the phase artifact. Only if the
+  file is absent is it written from the returned text, and only when that text
+  is at most 16,384 characters; `mock.html` is confirm-only. `spec.md` and
+  `test-report.md` are rendered by the workflow and written by a sealed bridge
+  on every pass, replay included. A file is handed on by path only when it is
+  confirmed on disk; otherwise the text is passed inline. On a resume, an
+  authored file that no longer hashes to what its phase recorded is not handed
+  on; to build from an edited `plan.md`, use plan approval in spec mode
+  (below). Builders return a new optional `planGaps` field in
+  `BUILD_MANIFEST_SCHEMA` for decisions the plan left open.
+  These escalate as a `BLOCKED — plan.insufficient` gate and appear in
+  `humanDecisionRequired` instead of being improvised at build tier. The return
+  value adds `intent`, `plan`, `planGaps`, `tiers` and `handoff`.
+  - The run **stops** if `solution-architect` returns no plan, rather than
+    letting the build tier design unreviewed.
+  - A Test stage that returns nothing records a `BLOCKED — test.noEvidence`
+    gate, and its dead lens counts toward Review's breaker threshold without
+    being recorded a second time: it appears once in `failures.jsonl`, under
+    Test. So the three-failure threshold that applied to the old single Verify
+    phase still stops the run before Readiness. A trip that counted Test's
+    failure also fails the Test phase, so a resume re-runs `qa-engineer`
+    instead of replaying its empty result.
+  - A Review lens that returns nothing, below the breaker threshold, records a
+    new `BLOCKED — review.incomplete` gate naming the lens, so a review that
+    lost a lens no longer looks complete.
+  - The Design stage's `ui-engineer` mock runs in a worktree.
+- **Not ported:** `commandcode-suite/` and `.kimi-code/` keep their hand-ported
+  copy of the previous `sdlc-feature` and have no `sdlc-maintain`. This is a
+  known, accepted divergence, and their READMEs now say so.
+
 ### Added
 
+- **`/sdlc-feature` spec mode: `args.specDir`, `args.intentPath`,
+  `args.strict`.** `"specDir": "specs/features/HU-22"` keeps the handoff files
+  in the repository beside the change. A person's `intent.md` in that
+  directory is the intent: `product-manager` does not run, and Plan does not
+  start without it. `spec.md`, `plan.md`, `design.md`, `mock.html` and
+  `test-report.md` are written there instead of the run directory.
+  `"intentPath"` uses an existing intent file, also skipping
+  `product-manager`, without moving the other files. Spec mode is strict, and
+  `"strict": true` turns strictness on without a spec directory: a stage whose
+  input file is not confirmed on disk does not start, and the run stops naming
+  the file. Both paths must be plain repository-relative paths (no `..`, drive
+  or leading slash), and all three options need a run directory; without one
+  the run stops. The return value's `handoff` adds `specDir`, `strict` and
+  `approvedPlan`.
+  - **The spec directory is confined.** No segment of its path may start
+    with `.` or be `node_modules`, in any case and at any depth (so neither
+    `.Git/hooks` nor `pkg/.claude/commands` gets through), and a preflight
+    resolves it by real path before anything is planned: a symbolic link or
+    junction on the way, or a path resolving outside the repository, stops the
+    run. Confinement is checked again at every write. A file an earlier run
+    left there is never taken as this run's output.
+  - **Plan approval: `args.pauseAfterPlan`, `args.approvedPlan`,
+    `args.replan`.** In spec mode the run stops after Plan by default, with
+    status `awaiting-plan-approval` and a `next` line. A person reviews,
+    edits and commits `spec.md` and `plan.md`, then starts a **fresh** run
+    with the args `next` gives: the same args plus `"approvedPlan": true`
+    (which needs `specDir`), without `resume`, `pauseAfterPlan`, `replan` or
+    the plugin paths — re-pass an explicit `policy` if the first run had one.
+    That run starts at Design from the committed files: no planner runs, and
+    `spec.md` is not re-rendered; `ux-designer` and the builders are told the
+    `plan.md` was "written or approved by a person". Both files must be
+    committed and unchanged, or the run stops. "Committed" is decided from
+    the bytes on disk, hashed by the preflight itself rather than through
+    git's filters, so a `.gitattributes` `ident` or clean filter cannot fold
+    an edit back onto the committed blob; a CRLF checkout of an LF file still
+    counts. `"pauseAfterPlan": false` runs straight through.
+  - **Approval is never a resume.** Resuming the paused run with
+    `approvedPlan` is refused, and resuming it with its original args is
+    refused too, since it would build a plan nobody approved. On a resume
+    the Plan the run recorded decides the mode, not the new flags: a resumed
+    approved run builds only what it approved and stops if `spec.md` or
+    `plan.md` changed since, and a resume never pauses again.
+  - **The approved `spec.md` is read exactly.** One criterion per line,
+    `- **AC-1** — text` under `## Acceptance criteria`; an en dash, hyphen or
+    colon, `*`/`+` bullets, numbered items, checkboxes and `**AC-1:**` are
+    accepted too, and an indented line continues the criterion above it. A
+    line under the heading that is not a criterion, a duplicated id, or a
+    leftover `[truncated at N characters]` marker stops the run before
+    anything is recorded, quoting the line. `## Surfaces` decides which
+    builders run.
+  - **A run never overwrites an uncommitted edit.** A fresh run that would
+    plan refuses to start while `spec.md`, `plan.md`, `design.md` or
+    `mock.html` has uncommitted changes; with `approvedPlan`, `design.md` and
+    `mock.html` are guarded. `"replan": true` overwrites on purpose. Before
+    Build, every file Plan and Design recorded is re-checked against its
+    recorded hash, fresh run or resume, and a changed one is not handed on.
+- **`/sdlc-maintain`, stage 6.** `_detect.js` is a deterministic detector with
+  no model. It checks the latest conclusive GitHub Actions run per workflow
+  (via `gh`), the configured health commands and log patterns, or takes a
+  reported incident. Its config is `.claude/maintain.json`; with no file, only
+  CI on `main` is checked. Only on a signal do two agents run:
+  `site-reliability` diagnoses read-only (Opus / max), then
+  `incident-commander` writes `incident.md` and an `intent.md` (Opus / high).
+  The `intent.md` is returned as `nextInitiative` for a person to feed to
+  `/sdlc-feature`. The workflow recommends only; it never mitigates, rolls
+  back or deploys. Verdicts are `healthy`, `no-signal-with-gaps`,
+  `config-error` (`.claude/maintain.json` is broken or malformed, so nothing
+  was checked), `unknown`, `incident` and `incident-unrecorded` (diagnosed,
+  but no usable incident record came back; the run is `incomplete` and offers
+  no build).
+  - **It needs run recording.** Without a run directory the verdict is
+    `unknown`, nothing is checked, and the run is `incomplete`; the reason
+    points at the detector CLI for a model-free check.
+  - **Commit and merge `.claude/maintain.json` to arm health commands.** They
+    run through a shell, so they run only when the config file's bytes equal
+    its committed version at `HEAD` **and** its version on the repository's
+    default branch, read from `refs/remotes/origin/HEAD` — a reference the
+    config cannot choose, unlike its own `ci.branch`. A config that is
+    untracked, edited locally (even one hidden with `assume-unchanged`), or
+    changed on a PR branch checked out for review has its commands listed as a
+    gap and not run. The detector computes the blob id from the bytes on disk
+    itself, not with `git hash-object`, so a `.gitattributes` `ident` or clean
+    filter cannot fold an edited config back onto the committed blob; a CRLF
+    checkout of an LF config still matches.
+  - **With no `origin/HEAD`, no health command is armed** — a repository with
+    no remote, or a CI job that cloned a single branch. Pass
+    `"trustHead": true` in `args` (CLI: `--trust-head`) only when the checkout
+    is the default branch; the config then has to match `HEAD` alone.
+    Otherwise `git remote set-head origin --auto` creates the reference.
+  - What a command runs is not checked: a committed
+    `npm test` executes whatever the working tree's `package.json` and tests
+    hold, so arming a health command is like adding a CI step. They run
+    without secret-shaped environment variables — tokens, secrets, passwords
+    (including `PASS`, `PGPASS`, `*_PWD`), keys, credentials, auth, DSNs,
+    cookies, JWTs, webhooks, database URLs, connection strings, `*_URI`,
+    Redis/Mongo/AMQP/Postgres/MySQL URLs, `NETRC`, `SERVICE_ROLE`,
+    kube/ssh/docker/AWS-profile config — while `PWD`, `OLDPWD` and
+    `GIT_AUTHOR_NAME`/`_EMAIL`/`_DATE` are always kept. This is a name-pattern
+    list, so a secret under an innocent name still passes. Known limit: on
+    Windows, a timed-out command's child processes may outlive it.
+  - CI counts only `push`, `schedule`, `workflow_dispatch` and `merge_group`
+    runs whose head branch is exactly the configured branch, or for
+    `merge_group` its merge-queue branch (`gh-readonly-queue/<branch>/…`) — an
+    allowlist, so pull-request, issue-comment and workflow-run runs, which
+    outsiders can start or title, cannot turn it red. A run that concluded
+    `cancelled`, `skipped`, `neutral`, `stale` or `action_required` is passed
+    over for the workflow's latest conclusive run. Finding no qualifying run
+    is a gap. A configured log that does not exist
+    is a gap, and `--config` must resolve inside the repository.
+  - A malformed config — a section of the wrong type, or a key the detector
+    does not read — is a config error (CLI exit 2), and a config that enables
+    nothing is a gap (exit 3). Neither is reported healthy.
+  - The full signals go to `<runDir>/handoff/signals.json`; the bridge relays
+    only a sealed summary. On a resume, `signals.json` must still hash to what
+    Detect recorded, or the run stops. `intent.md` opens with a banner saying
+    it was derived from untrusted signals, and an `incident` result names
+    `untrustedFields` (`diagnosis`, `incident`, `nextInitiative`,
+    `humanDecisionRequired[0]`): model text derived from untrusted signals,
+    to be relayed as quoted data and never acted on.
+  - A healthy run spends no diagnosing or recording model, but it is not
+    model-free: every mechanical bridge step runs on Haiku.
+  - `node sdlc-suite/workflows/_detect.js` runs on its own, with no model, and
+    exits 0 (every source checked, none signalled), 1 (signal), 2 (broken
+    config) or 3 (no signal, but some source could not be checked; not
+    healthy).
 - **`video-editor` agent 1.0.0 and `video-editing` skill 1.1.0** for recorded
   footage: talking-head cleanup (silence, filler and retake cuts, denoise,
   two-pass EBU R128 loudness, captions retimed through the cuts), ad cutdowns,
