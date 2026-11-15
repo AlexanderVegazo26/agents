@@ -1977,6 +1977,23 @@ async function main() {
     assert.ok(r.logs.some(l => /bridge:handoff relay was damaged once and re-read from disk/.test(l)), r.logs.join('\n'))
   })
 
+  await test('a bridge step whose relay returns no envelope is never read back from disk — kept output may be another run\'s', async () => {
+    // Code review round 6: file names and nonces repeat across runs (and across
+    // a resume), and .out/.sha were never removed, so a step whose loader was
+    // blocked had its re-read adopt a PREVIOUS run's output — policy gate table
+    // or run identity included — and it passed the integrity check.
+    const cwd = tmpdir('stale')
+    const args = { initiative: 'x', policy: POLICY_JSON }
+    await runScript('sdlc-feature.js', { cwd, args, onAgent: featureAgents() })
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args, onAgent: featureAgents(),
+      tamperBridge: (label, out) => (label === 'bridge:policy' ? { ok: false, error: 'blocked by the permission classifier' } : out),
+    })
+    assert.ok(!r.calls.some(c => c.label === 'bridge:policy:reread'), 'a step that produced no envelope was read back from disk')
+    assert.ok(r.logs.some(l => /bridge:policy produced no output envelope/.test(l)), r.logs.join('\n'))
+    assert.strictEqual(r.result.policySource, null, `a previous run's policy was adopted: ${r.result.policySource}`)
+  })
+
   await test('a handoff whose every relay is tampered with is discarded, and the stage falls back to inline text', async () => {
     const r = await runScript('sdlc-feature.js', {
       cwd: tmpdir('tamper'), args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents(),
@@ -2491,6 +2508,7 @@ async function main() {
       if (args.specDir === undefined) delete args.specDir
       const r = await runScript('sdlc-feature.js', { cwd, args, onAgent: featureAgents() })
       assert.strictEqual(r.result.status, 'stopped', `${JSON.stringify(extra)}: ${JSON.stringify(r.result).slice(0, 300)}`)
+      assert.ok(/waiting for its plan to be approved/.test(r.result.reason), `${JSON.stringify(extra)}: stopped for another reason: ${r.result.reason}`)
       assert.ok(!r.calls.some(c => c.label === 'ux-spec' || c.label.startsWith('build:')), `${JSON.stringify(extra)}: an unapproved plan was designed or built`)
     }
   })
@@ -2500,6 +2518,31 @@ async function main() {
     const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents() })
     assert.strictEqual(r.result.status, 'awaiting-plan-approval')
     assert.ok(/"policy":/.test(r.result.next), `next drops the policy: ${r.result.next}`)
+  })
+
+  await test('a hardlink planted mid-run as test-report.md never carries the write outside the repository', async () => {
+    // Code review round 6: the write-time checks pass a hardlink, and
+    // writeFileSync truncates the shared inode. A build agent with a shell
+    // plants the link after the preflight; the rendered report must replace the
+    // directory entry, leaving the file outside untouched.
+    const { cwd, d } = gitSpecRepo()
+    const outside = tmpdir('hardlink-outside')
+    const target = path.join(outside, 'bashrc')
+    fs.writeFileSync(target, 'OUTSIDE\n')
+    let planted = false
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: featureAgents({
+        'build:backend': () => {
+          try { fs.linkSync(target, path.join(d, 'test-report.md')); planted = true } catch (e) { planted = false }
+          return manifest('build:backend', BACKEND_FILES)
+        },
+      }),
+    })
+    if (!planted) { console.log('    (skipped: cannot create a hardlink here)'); return }
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    assert.strictEqual(fs.readFileSync(target, 'utf8'), 'OUTSIDE\n', 'the rendered report was written through the hardlink, outside the repository')
+    assert.ok(/^# test-report\.md/.test(fs.readFileSync(path.join(d, 'test-report.md'), 'utf8')), 'the report was not written in the spec directory')
   })
 
   await test('a document in the spec directory that is itself a link is refused before anything is planned', async () => {

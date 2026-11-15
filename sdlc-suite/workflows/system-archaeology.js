@@ -216,9 +216,13 @@ async function bridge(op, source, model, data) {
   if (!RUNTIME_DIR) return null
   const m = model === undefined ? BRIDGE_MODEL : (typeof model === 'string' && model && model !== 'inherit' ? model : null)
   const n = ++bridgeCalls
+  // Before the run directory exists, the file name and nonce carry a hash of
+  // this invocation's args, so a concurrent run with other args never shares
+  // them (code review round 6).
+  const preTag = sha256Hex(utf8Bytes(JSON.stringify(args === undefined ? null : args))).slice(0, 12)
   const file = RUN
     ? `${RUN.dir}/bridge/${op}-${n}.cjs`
-    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.cjs`
+    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${preTag}-${op}-${n}.cjs`
   // CODE IN THE CLEAR, DATA SEALED (security review F1; live smoke test).
   // The step's code is written plainly, so the transcriber, a permission
   // classifier and any person can read exactly what will run — no eval, no
@@ -230,7 +234,7 @@ async function bridge(op, source, model, data) {
   // and hex-encoded: parsed as JSON, never executed, and inspectable with
   // BRIDGE_PRINT_INPUT=1. Scrambled data also copies reliably: Haiku copied
   // random hex exactly but autocompleted hex that encoded English.
-  const nonce = `${RUN && RUN.runId ? RUN.runId : `pre-${WORKFLOW}`}:${op}:${n}`
+  const nonce = `${RUN && RUN.runId ? RUN.runId : `pre-${WORKFLOW}-${preTag}`}:${op}:${n}`
   const PART = RELAY_CHUNK * 2
   let dataBlock = 'const input = null'
   if (data !== undefined) {
@@ -289,6 +293,9 @@ const xs = (buf, tag) => {
 }
 const realWrite = process.stdout.write.bind(process.stdout)
 const realErr = process.stderr.write.bind(process.stderr)
+// Output an earlier run (or an earlier attempt of a resumed run) left at this
+// path is removed first: only what THIS run of the step writes can be read back.
+for (const f of ${JSON.stringify([`${file}.out`, `${file}.sha`, `${file}.err`, `${file}.log`])}) { try { fs.unlinkSync(f) } catch (e) { /* absent */ } }
 ${dataBlock}
 let captured = ''
 let errlog = ''
@@ -357,6 +364,14 @@ realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.lengt
     if (hex !== null) value = decode(hex, env.sha256)
   } else if (env) {
     log(`bridge:${op} returned no sealed payload`)
+  }
+  // Re-read only when the first relay returned an envelope — proof that THIS
+  // invocation's loader ran and wrote its output. Without one, the loader may
+  // never have run, and a kept file would be another run's (code review round 6).
+  const ranHere = !!(env && typeof env === 'object' && ('sealed' in env || 'sha256' in env || 'total' in env))
+  if (value === undefined && !ranHere) {
+    log(`bridge:${op} produced no output envelope — the step did not run or did not finish; nothing is read back`)
+    return null
   }
   if (value === undefined) {
     // One re-read of the kept output, from disk. Not a re-run.
