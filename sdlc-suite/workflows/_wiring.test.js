@@ -1280,6 +1280,20 @@ async function main() {
       `the close script is not inside the run directory:\n${(c.prompt.match(/BEGIN [^\n]+/) || [''])[0]}`)
   })
 
+  await test('every bridge script is .cjs, so a repository with "type": "module" still runs it', () => {
+    // Live pilot on a real repository (2026-11-14): its package.json declared
+    // "type": "module", node loaded each `.js` bridge as ESM, `require` was
+    // undefined and the run stopped at its first step. `.cjs` is CommonJS
+    // whatever the nearest package.json says.
+    const scripts = resumed.calls.filter(x => /^bridge:/.test(x.label || ''))
+    assert.ok(scripts.length > 0, 'no bridge step ran')
+    for (const c of scripts) {
+      const m = c.prompt.match(/--- BEGIN ([^\n]+?) ---/)
+      assert.ok(m, `${c.label}: no BEGIN marker in the prompt`)
+      assert.ok(m[1].endsWith('.cjs'), `${c.label}: bridge script ${m[1]} is not .cjs`)
+    }
+  })
+
   await test('resume that cannot reach the recorder REFUSES rather than starting fresh', () => {
     // The dangerous degradation is the quiet one: a resume that silently
     // becomes a new run loses the phases a second time, unwatched.
@@ -1598,12 +1612,12 @@ async function main() {
 
   await test('each stage runs on its default tier', () => {
     const expect = {
-      intent: ['fable', 'high'], requirements: ['fable', 'high'], architecture: ['fable', 'high'],
-      'ux-spec': ['opus', 'xhigh'], mock: ['opus', 'xhigh'],
+      intent: ['opus', 'high'], requirements: ['opus', 'high'], architecture: ['opus', 'high'],
+      'ux-spec': ['opus', 'high'], mock: ['opus', 'high'],
       'build:backend': ['sonnet', 'medium'], 'build:frontend': ['sonnet', 'medium'],
       'verify:qa': ['sonnet', 'medium'],
       'verify:review': ['opus', 'high'], 'verify:performance': ['opus', 'high'],
-      'verify:security': ['fable', 'high'],
+      'verify:security': ['opus', 'high'],
       readiness: ['opus', 'high'], docs: ['sonnet', 'medium'],
     }
     for (const [label, [model, effort]] of Object.entries(expect)) {
@@ -2019,7 +2033,7 @@ async function main() {
       cwd: tmpdir('noaccess'), args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ intent: null, requirements: null }),
     })
     assert.strictEqual(r.result.status, 'stopped')
-    assert.ok(/cannot use that model/.test(r.result.reason) && /fable/.test(r.result.reason), r.result.reason)
+    assert.ok(/cannot use that model/.test(r.result.reason) && /\(opus\)/.test(r.result.reason) && /'inherit'/.test(r.result.reason), r.result.reason)
   })
 
   await test('the Design mock runs in a worktree', () => {
@@ -2467,6 +2481,41 @@ async function main() {
     assert.ok(!r.calls.some(c => c.label === 'ux-spec' || c.label.startsWith('build:')), 'an unapproved plan was designed or built')
   })
 
+  await test('the RECORDED pause decides a resume — dropping specDir or passing pauseAfterPlan: false still refuses', async () => {
+    // Code review round 5: PAUSE was derived from the new invocation's args, so a
+    // resume without specDir (or with pauseAfterPlan: false) built the plan that
+    // had paused for a person.
+    for (const extra of [{ specDir: undefined }, { pauseAfterPlan: false }]) {
+      const { cwd, runId } = await pausedRun()
+      const args = { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, resume: runId, ...extra }
+      if (args.specDir === undefined) delete args.specDir
+      const r = await runScript('sdlc-feature.js', { cwd, args, onAgent: featureAgents() })
+      assert.strictEqual(r.result.status, 'stopped', `${JSON.stringify(extra)}: ${JSON.stringify(r.result).slice(0, 300)}`)
+      assert.ok(!r.calls.some(c => c.label === 'ux-spec' || c.label.startsWith('build:')), `${JSON.stringify(extra)}: an unapproved plan was designed or built`)
+    }
+  })
+
+  await test('the paused run\'s next step keeps a policy the caller passed', async () => {
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'awaiting-plan-approval')
+    assert.ok(/"policy":/.test(r.result.next), `next drops the policy: ${r.result.next}`)
+  })
+
+  await test('a document in the spec directory that is itself a link is refused before anything is planned', async () => {
+    const { cwd, d } = gitSpecRepo()
+    const outside = tmpdir('leaf-outside')
+    fs.writeFileSync(path.join(outside, 'target.md'), 'OUTSIDE\n')
+    try { fs.symlinkSync(path.join(outside, 'target.md'), path.join(d, 'test-report.md'), 'file') } catch (e) {
+      console.log(`    (skipped: cannot create a file symlink here — ${e.code})`); return
+    }
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'stopped', JSON.stringify(r.result).slice(0, 300))
+    assert.ok(/test-report\.md.*passes through a link/.test(r.result.reason), r.result.reason)
+    assert.strictEqual(fs.readFileSync(path.join(outside, 'target.md'), 'utf8'), 'OUTSIDE\n', 'the file outside the repository was written')
+    assert.ok(!r.calls.some(c => !c.label.startsWith('bridge:')), 'an agent ran')
+  })
+
   await test('a resumed approved run builds only what was approved: a re-committed spec.md stops it', async () => {
     const { cwd, d } = await pausedRun()
     commitAll(cwd, 'approve')
@@ -2547,6 +2596,13 @@ async function main() {
     assert.deepStrictEqual(r.criteria.map(c => c.id), ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5', 'AC-6', 'AC-7', 'AC-8'])
     assert.strictEqual(r.criteria[7].text, 'wraps onto a second line')
     assert.deepStrictEqual(r.surfaces, ['backend'])
+    // Code review round 5: a sub-heading that groups criteria must not end the
+    // section and silently drop every criterion below it.
+    const grouped = parseSpec(['## Acceptance criteria', '', '### Onboarding', '- **AC-1** — one', '', '### WhatsApp', '- **AC-2** — two',
+      '', '## Surfaces', '', 'backend', '', '## Notes', '- not a criterion'].join('\n'))
+    assert.deepStrictEqual(grouped.errors, [])
+    assert.deepStrictEqual(grouped.criteria.map(c => c.id), ['AC-1', 'AC-2'])
+    assert.deepStrictEqual(grouped.surfaces, ['backend'])
   })
 
   await test('approvedPlan refuses to overwrite an uncommitted design.md', async () => {

@@ -198,8 +198,8 @@ async function bridge(op, source, model, data) {
   const m = model === undefined ? BRIDGE_MODEL : (typeof model === 'string' && model && model !== 'inherit' ? model : null)
   const n = ++bridgeCalls
   const file = RUN
-    ? `${RUN.dir}/bridge/${op}-${n}.js`
-    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.js`
+    ? `${RUN.dir}/bridge/${op}-${n}.cjs`
+    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.cjs`
   // CODE IN THE CLEAR, DATA SEALED (security review F1; live smoke test).
   // The step's code is written plainly, so the transcriber, a permission
   // classifier and any person can read exactly what will run — no eval, no
@@ -227,7 +227,7 @@ async function bridge(op, source, model, data) {
       for (let i = 0; i < dataHex.length; i += PART) parts.push(dataHex.slice(i, i + PART))
       for (let i = 0; i < parts.length; i++) {
         const pf = `${file}.in${i}`
-        const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.js`, `// Writes part ${i + 1} of ${parts.length} of the encoded input of bridge step "${op}".
+        const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.cjs`, `// Writes part ${i + 1} of ${parts.length} of the encoded input of bridge step "${op}".
 const fs = require('fs')
 const path = require('path')
 fs.mkdirSync(path.dirname(path.resolve(${JSON.stringify(pf)})), { recursive: true })
@@ -324,7 +324,7 @@ realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.lengt
     while (hex.length < total) {
       const off = hex.length
       if (off / PART >= MAX_RELAY_STEPS) return null
-      const c = await transcribe(`bridge:${op}:read`, `${file}.r${off}.js`,
+      const c = await transcribe(`bridge:${op}:read`, `${file}.r${off}.cjs`,
         `process.stdout.write(JSON.stringify({ chunk: require('fs').readFileSync(${JSON.stringify(`${file}.out`)}, 'utf8').slice(${off}, ${off + PART}) }))`, m)
       if (!c || !isHex(c.chunk) || !c.chunk.length) return null
       hex += c.chunk
@@ -341,7 +341,7 @@ realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.lengt
   }
   if (value === undefined) {
     // One re-read of the kept output, from disk. Not a re-run.
-    const head = await transcribe(`bridge:${op}:reread`, `${file}.rr.js`, `const fs = require('fs')
+    const head = await transcribe(`bridge:${op}:reread`, `${file}.rr.cjs`, `const fs = require('fs')
 const all = fs.readFileSync(${JSON.stringify(`${file}.out`)}, 'utf8')
 process.stdout.write(JSON.stringify({ chunk: all.slice(0, ${PART}), total: all.length, sha256: fs.readFileSync(${JSON.stringify(`${file}.sha`)}, 'utf8') }))`, m)
     if (head && isHex(head.chunk) && Number.isInteger(head.total) && head.total <= MAX_RELAY_HEX && typeof head.sha256 === 'string') {

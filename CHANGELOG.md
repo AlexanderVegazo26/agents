@@ -11,12 +11,12 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Changed
 
-- **Action required without Fable access: `/sdlc-feature` now pins a model and
-  an effort per stage.** By default the `plan` and `security` stages pin
-  `fable`. An account without Fable has to pass `"tiers": "inherit"` (pin
-  nothing) or a per-stage override such as
-  `"tiers": { "plan": { "model": "opus" }, "security": { "model": "opus" } }`
-  in the `args` object. An unknown stage, model or effort is logged and
+- **`/sdlc-feature` now pins a model and an effort per stage.** Opus/high plans,
+  designs and reviews (security included), Sonnet/medium builds and tests, and
+  Haiku runs the mechanical bridge steps. Fable is opt-in per stage for changes
+  where a planning or security mistake is expensive:
+  `"tiers": { "plan": { "model": "fable" }, "security": { "model": "fable" } }`.
+  `"tiers": "inherit"` pins nothing. An unknown stage, model or effort is logged and
   ignored, never passed through. The return value's `tiers` shows what a run
   resolved. Under the pi and Hermes runners, `opts.model` is ignored and only
   low/medium/high efforts are mapped, so those pins fall back to the session
@@ -99,6 +99,23 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 - **Not ported:** `commandcode-suite/` and `.kimi-code/` keep their hand-ported
   copy of the previous `sdlc-feature` and have no `sdlc-maintain`. This is a
   known, accepted divergence, and their READMEs now say so.
+
+### Fixed
+
+- **Bridge scripts are `.cjs`.** In a repository whose `package.json` declares
+  `"type": "module"`, Node loaded each `.js` bridge as ESM, `require` was
+  undefined, and every workflow stopped at its first step (found on the first
+  live run against a real repository).
+- **A rendered `spec.md` is no longer cut at 16 KB.** The cap is 64 KB; a real
+  28-criterion spec came out at 22 KB and was cut.
+- **A resume cannot build a plan that paused for approval.** The Plan record
+  carries `pauseRequired`, and a resume honours it even when the new
+  invocation drops `specDir` or passes `pauseAfterPlan: false`.
+- **A sub-heading inside `## Acceptance criteria` no longer drops the criteria
+  below it** when an approved `spec.md` is read back.
+- **A document path that is itself a link is refused** — at the preflight
+  (which now also covers `test-report.md`) and again at the moment of writing.
+- **The `next` step of a paused run keeps a `policy` the caller passed.**
 
 ### Added
 

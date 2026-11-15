@@ -222,8 +222,8 @@ async function bridge(op, source, model, data) {
   const m = model === undefined ? BRIDGE_MODEL : (typeof model === 'string' && model && model !== 'inherit' ? model : null)
   const n = ++bridgeCalls
   const file = RUN
-    ? `${RUN.dir}/bridge/${op}-${n}.js`
-    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.js`
+    ? `${RUN.dir}/bridge/${op}-${n}.cjs`
+    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.cjs`
   // CODE IN THE CLEAR, DATA SEALED (security review F1; live smoke test).
   // The step's code is written plainly, so the transcriber, a permission
   // classifier and any person can read exactly what will run — no eval, no
@@ -251,7 +251,7 @@ async function bridge(op, source, model, data) {
       for (let i = 0; i < dataHex.length; i += PART) parts.push(dataHex.slice(i, i + PART))
       for (let i = 0; i < parts.length; i++) {
         const pf = `${file}.in${i}`
-        const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.js`, `// Writes part ${i + 1} of ${parts.length} of the encoded input of bridge step "${op}".
+        const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.cjs`, `// Writes part ${i + 1} of ${parts.length} of the encoded input of bridge step "${op}".
 const fs = require('fs')
 const path = require('path')
 fs.mkdirSync(path.dirname(path.resolve(${JSON.stringify(pf)})), { recursive: true })
@@ -348,7 +348,7 @@ realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.lengt
     while (hex.length < total) {
       const off = hex.length
       if (off / PART >= MAX_RELAY_STEPS) return null
-      const c = await transcribe(`bridge:${op}:read`, `${file}.r${off}.js`,
+      const c = await transcribe(`bridge:${op}:read`, `${file}.r${off}.cjs`,
         `process.stdout.write(JSON.stringify({ chunk: require('fs').readFileSync(${JSON.stringify(`${file}.out`)}, 'utf8').slice(${off}, ${off + PART}) }))`, m)
       if (!c || !isHex(c.chunk) || !c.chunk.length) return null
       hex += c.chunk
@@ -365,7 +365,7 @@ realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.lengt
   }
   if (value === undefined) {
     // One re-read of the kept output, from disk. Not a re-run.
-    const head = await transcribe(`bridge:${op}:reread`, `${file}.rr.js`, `const fs = require('fs')
+    const head = await transcribe(`bridge:${op}:reread`, `${file}.rr.cjs`, `const fs = require('fs')
 const all = fs.readFileSync(${JSON.stringify(`${file}.out`)}, 'utf8')
 process.stdout.write(JSON.stringify({ chunk: all.slice(0, ${PART}), total: all.length, sha256: fs.readFileSync(${JSON.stringify(`${file}.sha`)}, 'utf8') }))`, m)
     if (head && isHex(head.chunk) && Number.isInteger(head.total) && head.total <= MAX_RELAY_HEX && typeof head.sha256 === 'string') {
@@ -1145,18 +1145,23 @@ const initiative =
 //
 // Override with `args.tiers`:
 //   'inherit'                    — no pins: every stage follows the session
-//   { plan: { model: 'opus' } }  — partial per-stage override (e.g. no Fable access)
+//   { plan: { model: 'fable' } } — partial per-stage override (e.g. a risky change)
 // An unrecognised stage, model or effort is logged and IGNORED — the default
 // stands. It is never passed through: an unknown model id fails the agent.
 // ===========================================================================
+// Opus plans, designs and reviews; Sonnet builds and tests; Haiku runs the
+// mechanical steps. Fable is opt-in per stage, for changes where a planning or
+// security mistake is expensive (auth, payments, destructive data changes,
+// concurrency, a lasting architecture decision): on the live pilot it cost
+// twice Opus and over-planned a trivial change, with no measured gain.
 const DEFAULT_TIERS = {
-  plan:       { model: 'fable',   effort: 'high' },
-  design:     { model: 'opus',    effort: 'xhigh' },
+  plan:       { model: 'opus',    effort: 'high' },
+  design:     { model: 'opus',    effort: 'high' },
   build:      { model: 'sonnet',  effort: 'medium' },
   test:       { model: 'sonnet',  effort: 'medium' },
   testLoop:   { model: 'haiku',   effort: 'low' },
   review:     { model: 'opus',    effort: 'high' },
-  security:   { model: 'fable',   effort: 'high' },
+  security:   { model: 'opus',    effort: 'high' },
   refute:     { model: 'inherit', effort: 'low' },
   readiness:  { model: 'opus',    effort: 'high' },
   docs:       { model: 'sonnet',  effort: 'medium' },
@@ -1274,7 +1279,7 @@ const REPLAN = !!(args && typeof args === 'object' && args.replan === true)
 const PAUSE = !!SPEC_DIR && (args && typeof args === 'object' && typeof args.pauseAfterPlan === 'boolean' ? args.pauseAfterPlan : true)
 // Who wrote a handed-on file, for the sentence a downstream agent reads.
 const HANDOFF_ORIGIN = {}
-const RENDER_CAP = 16 * 1024          // a rendered document is cut to this before it is written
+const RENDER_CAP = 64 * 1024          // a rendered document is cut to this before it is written (16 KB cut a real 22 KB spec.md, HU 16 pilot)
 const FALLBACK_WRITE_MAX = 16 * 1024  // returned text longer than this is never transcribed to a file
 
 const HANDOFF_FILES = {}   // name -> absolute path, ONLY for files confirmed on disk
@@ -1367,6 +1372,9 @@ const confinedForWrite = (root, p) => {
     cur = path.join(cur, seg)
     try { if (fs.lstatSync(cur).isSymbolicLink()) return false } catch (e) { break }
   }
+  // The file itself: writeFileSync follows a link, so a document swapped for
+  // a link after the preflight would carry the write out (code review round 5).
+  try { if (fs.lstatSync(path.resolve(p)).isSymbolicLink()) return false } catch (e) { /* absent: fine */ }
   try {
     const realRoot = fs.realpathSync(R)
     const realDir = fs.realpathSync(path.dirname(path.resolve(p)))
@@ -1422,7 +1430,7 @@ async function specPreflight(approvedCheck) {
   return sealedBridge('spec-preflight', null, `// What this step inspects, in the clear.
 const CFG = ${JSON.stringify({
     root: repoRoot(), specDir: SPEC_DIR, intentRel: INTENT_ARG.value,
-    names: ['spec.md', 'plan.md', 'design.md', 'mock.html'], approved: approvedCheck,
+    names: ['spec.md', 'plan.md', 'design.md', 'mock.html', 'test-report.md'], approved: approvedCheck,
   })}
 const fs = require('fs')
 const { execFileSync } = require('child_process')
@@ -1472,7 +1480,9 @@ function state(abs) {
   return { state: st, sha }
 }
 const files = {}
-if (dir && !errors.length) for (const n of CFG.names) files[n] = state(path.join(dir, n))
+// Each document's own path too, leaf included: a link planted as plan.md or
+// test-report.md is refused here, before anything is planned (round 5).
+if (dir && !errors.length) for (const n of CFG.names) { if (confine(CFG.specDir + '/' + n, n) !== null) files[n] = state(path.join(dir, n)) }
 const intent = intentAbs && !errors.length ? state(intentAbs) : null
 let specText = null
 if (CFG.approved && dir && !errors.length) {
@@ -1492,17 +1502,25 @@ function parseSpec(text) {
     errors.push('spec.md still carries the "[truncated at N characters]" marker — it was cut when written; restore the missing criteria before approving it')
   }
   const sec = {}
+  const KNOWN = new Set(['acceptance criteria', 'surfaces', 'assumptions', 'open questions'])
   let cur = null
+  let curLevel = 0
   let fenced = false
   for (const l of raw.split(/\r?\n/)) {
     if (/^\s*(```|~~~)/.test(l)) fenced = !fenced
     if (!fenced && l.startsWith('#')) {
       // A heading: "## Acceptance criteria", "### Acceptance criteria (v2)" …
+      const level = l.match(/^#+/)[0].length
       const title = l.replace(/^#+/, '').trim().toLowerCase()
-      cur = /^acceptance criteria\b/.test(title) ? 'acceptance criteria'
+      const known = /^acceptance criteria\b/.test(title) ? 'acceptance criteria'
         : /^surfaces\b/.test(title) ? 'surfaces'
           : /^assumptions\b/.test(title) ? 'assumptions'
-            : /^open questions\b/.test(title) ? 'open questions' : title
+            : /^open questions\b/.test(title) ? 'open questions' : null
+      // "### Onboarding" under "## Acceptance criteria" groups criteria; it
+      // must not end the section and drop every criterion below it (round 5).
+      if (!known && KNOWN.has(cur) && level > curLevel) continue
+      cur = known || title
+      curLevel = level
       sec[cur] = sec[cur] || []
       continue
     }
@@ -1572,6 +1590,9 @@ const confinedForWrite = (root, p) => {
     cur = path.join(cur, seg)
     try { if (fs.lstatSync(cur).isSymbolicLink()) return false } catch (e) { break }
   }
+  // The file itself: writeFileSync follows a link, so a document swapped for
+  // a link after the preflight would carry the write out (code review round 5).
+  try { if (fs.lstatSync(path.resolve(p)).isSymbolicLink()) return false } catch (e) { /* absent: fine */ }
   try {
     const realRoot = fs.realpathSync(R)
     const realDir = fs.realpathSync(path.dirname(path.resolve(p)))
@@ -2048,7 +2069,7 @@ Also classify which implementation surfaces this genuinely touches (backend / fr
     ]
     // No criteria -> nothing for an architect to plan against. Not dispatched,
     // so not recorded as a failure either; the stop below says why.
-    if (!reqs || !reqs.criteria?.length) return { agents, files }
+    if (!reqs || !reqs.criteria?.length) return { agents, files, pauseRequired: PAUSE }
     const architecture = await dispatch(
       withPolicy(`Write the implementation PLAN for these requirements — plan.md, the document a cheaper build tier executes WITHOUT redesigning anything.
 
@@ -2065,7 +2086,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
       { 'intent.md': asText(intent), 'plan.md': asText(architecture) },
       before,
     ))
-    return { agents, files }
+    return { agents, files, pauseRequired: PAUSE }
   })
   await adoptFiles('Plan', planArtifact.files)
   if (MODE_APPROVED && planReplays) {
@@ -2084,7 +2105,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
   // likeliest cause is model access, not the initiative — say so, rather than
   // pointing the user at their requirements (code review S4).
   const tierHint = () => (!MODE_APPROVED && TIERS.plan.model !== 'inherit' && !intent && !reqs
-    ? ` The planners returned nothing on the plan tier (${TIERS.plan.model}). If this account cannot use that model, re-run with args.tiers: { plan: { model: 'opus' } } or args.tiers: 'inherit'.`
+    ? ` The planners returned nothing on the plan tier (${TIERS.plan.model}). If this account cannot use that model, re-run with args.tiers: 'inherit' (follow the session model) or another plan model, e.g. args.tiers: { plan: { model: 'sonnet' } }.`
     : '')
 
   if (!reqs || !reqs.criteria?.length) {
@@ -2109,7 +2130,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
       status: 'stopped',
       reason: MODE_APPROVED
         ? `the approved plan.md is not confirmed in ${handoffDir()} — commit it there and start a fresh run with approvedPlan: true.`
-        : `solution-architect produced no plan. The build tier executes plan.md and is not allowed to design — running it without a plan would move every design decision to the cheapest tier, unreviewed.${TIERS.plan.model !== 'inherit' ? ` If this account cannot use ${TIERS.plan.model}, re-run with args.tiers: { plan: { model: 'opus' } }.` : ''}`,
+        : `solution-architect produced no plan. The build tier executes plan.md and is not allowed to design — running it without a plan would move every design decision to the cheapest tier, unreviewed.${TIERS.plan.model !== 'inherit' ? ` If this account cannot use ${TIERS.plan.model}, re-run with args.tiers: 'inherit'.` : ''}`,
       requirements: reqs,
     }
   }
@@ -2131,7 +2152,13 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
   // A resume of a run whose Plan still awaits approval must neither build the
   // unapproved plan nor pause a second time unnoticed: it is refused, and the
   // way forward is the approval itself (round-5 mutation check).
-  if (PAUSE && !MODE_APPROVED && planReplays) {
+  // The record decides, not this invocation: a resume that drops specDir or
+  // passes pauseAfterPlan: false must not build a plan that paused for a
+  // person (code review round 5). Records from before the marker fall back
+  // to this invocation's PAUSE.
+  const recordedPause = planReplays && RUN.resumed.Plan && typeof RUN.resumed.Plan.pauseRequired === 'boolean'
+    ? RUN.resumed.Plan.pauseRequired : PAUSE
+  if (recordedPause && !MODE_APPROVED && planReplays) {
     status = 'stopped'
     return {
       status: 'stopped',
@@ -2146,7 +2173,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
     // intentPath, tiers and strict carry over (code review round 4).
     const nextArgs = {}
     for (const [k, v] of Object.entries(args && typeof args === 'object' ? args : {})) {
-      if (!['resume', 'approvedPlan', 'pauseAfterPlan', 'replan', 'runtimeDir', 'policy', 'policyDefault'].includes(k)) nextArgs[k] = v
+      if (!['resume', 'approvedPlan', 'pauseAfterPlan', 'replan', 'runtimeDir', 'policyDefault'].includes(k)) nextArgs[k] = v
     }
     nextArgs.approvedPlan = true
     status = 'awaiting-plan-approval'

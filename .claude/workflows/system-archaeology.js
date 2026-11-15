@@ -185,7 +185,7 @@ const BRIDGE_MODEL = args && typeof args === 'object' && args.tiers === 'inherit
 /** One mechanical step: write `script` to `file`, run it, relay its stdout. */
 async function transcribe(label, file, script, model) {
   const out = await agent(
-    `Mechanical bridge step. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. Do exactly these three things and nothing else. Do not edit, improve, shorten, decode or re-derive the script. Do not read the modules it requires. Do not summarise, re-key or pretty-print its output.
+    `Mechanical bridge step of an sdlc-suite workflow. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. The script below is plain JavaScript you may read; if it has a DATA constant, that is this step's JSON input, encoded so that untrusted text from the run (agent output, CI and log evidence) is not shown to you — it is parsed, never executed. Do exactly these three things and nothing else. Do not edit, improve or shorten the script, and copy DATA exactly as it is. Do not summarise, re-key or pretty-print its output.
 
 1. Write the block between the two markers below, byte for byte, to ${file} — creating parent directories if they do not exist. If that path is relative, resolve it against your working directory first; the Write tool needs an absolute path.
 2. Run it: node "${file}"
@@ -201,132 +201,179 @@ ${script}
     log(`${label} did not run${out && out.error ? ` — ${String(out.error).slice(0, 300)}` : ''}`)
     return null
   }
-  try {
-    return JSON.parse(out.result)
-  } catch (e) {
-    log(`${label} returned output that is not JSON — treating the module as unreachable`)
-    return null
+  // Tolerant of what a real transcriber's shell hands back: stderr lines
+  // interleaved before the JSON (the Bash tool merges both streams — smoke
+  // test, round 5), or a code fence around it. The JSON is the last line.
+  const raw = out.result.trim().replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/, '')
+  for (const cand of [raw, raw.slice(raw.lastIndexOf('\n{') + 1)]) {
+    try { return JSON.parse(cand) } catch (e) { /* next candidate */ }
   }
+  log(`${label} returned output that is not JSON — treating the module as unreachable`)
+  return null
 }
 
-async function bridge(op, source, model) {
+async function bridge(op, source, model, data) {
   if (!RUNTIME_DIR) return null
   const m = model === undefined ? BRIDGE_MODEL : (typeof model === 'string' && model && model !== 'inherit' ? model : null)
   const n = ++bridgeCalls
   const file = RUN
-    ? `${RUN.dir}/bridge/${op}-${n}.js`
-    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.js`
-  // SEALED, both directions (security review F1): the script is carried as hex
-  // the transcriber cannot read, and the loader refuses to run it unless it
-  // hashes to the value computed here; what the script prints is captured and
-  // handed back as hex with sha256(nonce ‖ output). Phase artifacts, resumed
-  // results, blocked-gate candidates and repo-authored learnings all travel
-  // through here, and some of them quote untrusted text.
-  const srcBytes = utf8Bytes(source)
-  const srcHex = hexOf(srcBytes)
+    ? `${RUN.dir}/bridge/${op}-${n}.cjs`
+    : `.claude/runs/pre-${slug(`${WORKFLOW}-${POLICY_PATH || 'no-policy'}`)}-${op}-${n}.cjs`
+  // CODE IN THE CLEAR, DATA SEALED (security review F1; live smoke test).
+  // The step's code is written plainly, so the transcriber, a permission
+  // classifier and any person can read exactly what will run — no eval, no
+  // encoded program. An earlier version encoded the whole script and ran it
+  // with new Function; the auto-mode classifier refused it as "undermining
+  // oversight" and the transcriber refused to run what it could not inspect,
+  // both rightly. Only the step's DATA — artifacts, agent output, evidence that
+  // may quote untrusted text — is XORed with a SHA-256 keystream of the nonce
+  // and hex-encoded: parsed as JSON, never executed, and inspectable with
+  // BRIDGE_PRINT_INPUT=1. Scrambled data also copies reliably: Haiku copied
+  // random hex exactly but autocompleted hex that encoded English.
   const nonce = `${RUN && RUN.runId ? RUN.runId : `pre-${WORKFLOW}`}:${op}:${n}`
   const PART = RELAY_CHUNK * 2
-  let srcExpr = `Buffer.from('${srcHex}', 'hex')`
-  if (srcHex.length > PART * MAX_RELAY_STEPS) {
-    log(`bridge:${op} script is ${srcHex.length / 2} bytes — over the ${MAX_RELAY_STEPS}-step relay limit; not sent`)
-    return null
-  }
-  if (srcHex.length > PART) {
-    const parts = []
-    for (let i = 0; i < srcHex.length; i += PART) parts.push(srcHex.slice(i, i + PART))
-    for (let i = 0; i < parts.length; i++) {
-      const pf = `${file}.in${i}`
-      const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.js`, `const fs = require('fs')
+  let dataBlock = 'const input = null'
+  if (data !== undefined) {
+    const dataBytes = utf8Bytes(JSON.stringify(data))
+    const dataHex = hexOf(xorStream(dataBytes, 'in', nonce))
+    if (dataHex.length > PART * MAX_RELAY_STEPS) {
+      log(`bridge:${op} input is ${dataHex.length / 2} bytes — over the ${MAX_RELAY_STEPS}-step relay limit; not sent`)
+      return null
+    }
+    let dataExpr = `'${dataHex}'`
+    if (dataHex.length > PART) {
+      const parts = []
+      for (let i = 0; i < dataHex.length; i += PART) parts.push(dataHex.slice(i, i + PART))
+      for (let i = 0; i < parts.length; i++) {
+        const pf = `${file}.in${i}`
+        const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.cjs`, `// Writes part ${i + 1} of ${parts.length} of the encoded input of bridge step "${op}".
+const fs = require('fs')
 const path = require('path')
 fs.mkdirSync(path.dirname(path.resolve(${JSON.stringify(pf)})), { recursive: true })
 fs.writeFileSync(${JSON.stringify(pf)}, '${parts[i]}')
 process.stdout.write('{"ok":true}')`, m)
-      if (!w || w.ok !== true) {
-        log(`bridge:${op} input part ${i + 1}/${parts.length} was not written — discarded`)
-        return null
+        if (!w || w.ok !== true) {
+          log(`bridge:${op} input part ${i + 1}/${parts.length} was not written — discarded`)
+          return null
+        }
       }
+      dataExpr = `[${parts.map((_, i) => `fs.readFileSync(${JSON.stringify(`${file}.in${i}`)}, 'utf8')`).join(', ')}].join('')`
     }
-    srcExpr = `Buffer.from([${parts.map((_, i) => `fs.readFileSync(${JSON.stringify(`${file}.in${i}`)}, 'utf8')`).join(', ')}].join(''), 'hex')`
-  }
-  const loader = `'use strict'
-// Sealed bridge loader, generated by the workflow runtime. The script to run is
-// carried as hex and refused unless it hashes to the value below.
-const fs = require('fs')
-const crypto = require('crypto')
-const SRC = ${srcExpr}
-if (crypto.createHash('sha256').update(SRC).digest('hex') !== '${sha256Hex(srcBytes)}') {
-  process.stderr.write('bridge script was altered in transcription; refusing to run')
+    dataBlock = `// DATA: this step's JSON input, XOR-scrambled with a SHA-256 keystream of
+// NONCE and hex-encoded. Parsed, never executed. To read it, run this file
+// with the environment variable BRIDGE_PRINT_INPUT=1.
+const DATA = ${dataExpr}
+const plain = xs(Buffer.from(DATA, 'hex'), 'in')
+if (crypto.createHash('sha256').update(plain).digest('hex') !== '${sha256Hex(dataBytes)}') {
+  process.stderr.write('bridge input was altered in transcription; refusing to run')
   process.exit(3)
 }
-let captured = ''
-let failed = null
+const input = JSON.parse(plain.toString('utf8'))
+if (process.env.BRIDGE_PRINT_INPUT) { realWrite(JSON.stringify(input, null, 2) + '\\n'); process.exit(0) }`
+  }
+  const loader = `'use strict'
+// Bridge step "${op}" of the ${WORKFLOW} workflow (sdlc-suite). The code in this
+// file is plain and is exactly what runs. Its output is captured and handed
+// back XOR-scrambled and hex-encoded, with sha256(NONCE + output) to detect a
+// damaged copy; the plain output is kept beside this file as .out/.sha.
+const fs = require('fs')
+const crypto = require('crypto')
+const NONCE = ${JSON.stringify(nonce)}
+const xs = (buf, tag) => {
+  const out = Buffer.alloc(buf.length)
+  for (let i = 0, o = 0; o < buf.length; i++, o += 32) {
+    const k = crypto.createHash('sha256').update(tag + ':' + NONCE + ':' + i, 'utf8').digest()
+    for (let j = 0; j < 32 && o + j < buf.length; j++) out[o + j] = buf[o + j] ^ k[j]
+  }
+  return out
+}
 const realWrite = process.stdout.write.bind(process.stdout)
+const realErr = process.stderr.write.bind(process.stderr)
+${dataBlock}
+let captured = ''
+let errlog = ''
+let failed = null
 process.stdout.write = (chunk) => { captured += String(chunk); return true }
+// A module's own stderr (e.g. "[run] ...") goes to a file: the transcriber's
+// shell would otherwise splice it into the relayed JSON.
+process.stderr.write = (chunk) => { errlog += String(chunk); return true }
 try {
-  new Function('require', SRC.toString('utf8'))(require)
+  ;(function () {
+// ---- the step itself -------------------------------------------------------
+${source}
+// ----------------------------------------------------------------------------
+  })()
 } catch (e) {
   failed = e
 } finally {
   process.stdout.write = realWrite
+  process.stderr.write = realErr
 }
+if (errlog) fs.writeFileSync(${JSON.stringify(`${file}.log`)}, errlog)
 if (failed) {
-  // An error message can quote the script's data, so it is not printed where
-  // the transcriber relays it: it goes to a file beside the script.
+  // An error can quote the step's data, so it is not printed where the
+  // transcriber relays it: it goes to a file beside this script.
   fs.writeFileSync(${JSON.stringify(`${file}.err`)}, String((failed && failed.stack) || failed))
-  process.stderr.write('bridge script failed; the error is in ' + ${JSON.stringify(`${file}.err`)})
+  realErr('bridge step failed; the error is in ' + ${JSON.stringify(`${file}.err`)})
   process.exit(1)
 }
 const OUT = Buffer.from(captured, 'utf8')
-const HEXOUT = OUT.toString('hex')
-const SHA = crypto.createHash('sha256').update(${JSON.stringify(nonce)}, 'utf8').update(OUT).digest('hex')
-if (HEXOUT.length <= ${PART}) {
-  realWrite(JSON.stringify({ sealed: HEXOUT, sha256: SHA }))
-} else {
-  fs.writeFileSync(${JSON.stringify(`${file}.out`)}, HEXOUT)
-  realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.length, sha256: SHA }))
-}`
+const HEXOUT = xs(OUT, 'out').toString('hex')
+const SHA = crypto.createHash('sha256').update(NONCE, 'utf8').update(OUT).digest('hex')
+// Kept on disk, so a relay that came back damaged can be read again without
+// running this step a second time (some steps are not idempotent).
+fs.writeFileSync(${JSON.stringify(`${file}.out`)}, HEXOUT)
+fs.writeFileSync(${JSON.stringify(`${file}.sha`)}, SHA)
+realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.length, sha256: SHA }))`
   const env = await transcribe(`bridge:${op}`, file, loader, m)
-  if (!env || typeof env.sealed !== 'string' || typeof env.sha256 !== 'string' ||
-      env.sealed.length % 2 !== 0 || !/^[0-9a-f]*$/.test(env.sealed)) {
-    if (env) log(`bridge:${op} returned no sealed payload — discarded`)
-    return null
+
+  // Reassemble from the first relay; on any damage, read the kept output again
+  // from the start — once. The loader is never run twice.
+  const isHex = x => typeof x === 'string' && x.length % 2 === 0 && /^[0-9a-f]*$/.test(x)
+  const decode = (hex, sha) => {
+    const plain = xorStream(bytesOfHex(hex), 'out', nonce)
+    const nb = utf8Bytes(nonce)
+    const both = new Uint8Array(nb.length + plain.length)
+    both.set(nb)
+    both.set(plain, nb.length)
+    if (sha256Hex(both) !== sha) return undefined
+    try { return JSON.parse(utf8Text(plain)) } catch (e) { return undefined }
   }
-  let hex = env.sealed
-  if (env.total !== undefined) {
-    if (!Number.isInteger(env.total) || env.total % 2 !== 0 || env.total <= hex.length || env.total > MAX_RELAY_HEX) {
-      log(`bridge:${op} announced an implausible output size — discarded`)
-      return null
-    }
-    while (hex.length < env.total) {
+  const readFrom = async (hex, total) => {
+    while (hex.length < total) {
       const off = hex.length
-      const c = await transcribe(`bridge:${op}:read`, `${file}.r${off}.js`,
+      if (off / PART >= MAX_RELAY_STEPS) return null
+      const c = await transcribe(`bridge:${op}:read`, `${file}.r${off}.cjs`,
         `process.stdout.write(JSON.stringify({ chunk: require('fs').readFileSync(${JSON.stringify(`${file}.out`)}, 'utf8').slice(${off}, ${off + PART}) }))`, m)
-      if (!c || typeof c.chunk !== 'string' || !c.chunk.length || c.chunk.length % 2 !== 0 || !/^[0-9a-f]*$/.test(c.chunk)) {
-        log(`bridge:${op} output chunk at ${off} was not relayed — discarded`)
-        return null
-      }
+      if (!c || !isHex(c.chunk) || !c.chunk.length) return null
       hex += c.chunk
     }
-    if (hex.length !== env.total) {
-      log(`bridge:${op} output reassembled to the wrong size — discarded`)
+    return hex.length === total ? hex : null
+  }
+  let value
+  if (env && isHex(env.sealed) && typeof env.sha256 === 'string' &&
+      Number.isInteger(env.total) && env.total % 2 === 0 && env.total <= MAX_RELAY_HEX && env.total >= env.sealed.length) {
+    const hex = await readFrom(env.sealed, env.total)
+    if (hex !== null) value = decode(hex, env.sha256)
+  } else if (env) {
+    log(`bridge:${op} returned no sealed payload`)
+  }
+  if (value === undefined) {
+    // One re-read of the kept output, from disk. Not a re-run.
+    const head = await transcribe(`bridge:${op}:reread`, `${file}.rr.cjs`, `const fs = require('fs')
+const all = fs.readFileSync(${JSON.stringify(`${file}.out`)}, 'utf8')
+process.stdout.write(JSON.stringify({ chunk: all.slice(0, ${PART}), total: all.length, sha256: fs.readFileSync(${JSON.stringify(`${file}.sha`)}, 'utf8') }))`, m)
+    if (head && isHex(head.chunk) && Number.isInteger(head.total) && head.total <= MAX_RELAY_HEX && typeof head.sha256 === 'string') {
+      const hex = await readFrom(head.chunk, head.total)
+      if (hex !== null) value = decode(hex, head.sha256)
+    }
+    if (value === undefined) {
+      log(`bridge:${op} output FAILED its integrity check, twice — discarded, never used`)
       return null
     }
+    log(`bridge:${op} relay was damaged once and re-read from disk`)
   }
-  const outBytes = bytesOfHex(hex)
-  const nb = utf8Bytes(nonce)
-  const both = new Uint8Array(nb.length + outBytes.length)
-  both.set(nb)
-  both.set(outBytes, nb.length)
-  if (sha256Hex(both) !== env.sha256) {
-    log(`bridge:${op} output FAILED its integrity check — discarded, never used`)
-    return null
-  }
-  try {
-    return JSON.parse(utf8Text(outBytes))
-  } catch (e) {
-    log(`bridge:${op} returned output that is not JSON — treating the module as unreachable`)
-    return null
-  }
+  return value
 }
 
 // --------------------------------------------------------------------------
@@ -444,17 +491,29 @@ function bytesOfHex(h) {
 }
 
 /**
+ * XOR `bytes` with a SHA-256 keystream: block i is sha256(`${tag}:${nonce}:${i}`).
+ * Its own inverse. Matches the loader's `xs()` byte for byte (_seal.test.js).
+ */
+function xorStream(bytes, tag, nonce) {
+  const out = new Uint8Array(bytes.length)
+  for (let i = 0, o = 0; o < bytes.length; i++, o += 32) {
+    const k = bytesOfHex(sha256Hex(utf8Bytes(`${tag}:${nonce}:${i}`)))
+    for (let j = 0; j < 32 && o + j < bytes.length; j++) out[o + j] = bytes[o + j] ^ k[j]
+  }
+  return out
+}
+
+/**
  * Run `body` — the inside of `function (input) { ... }`, returning a JSON-able
  * value — out-of-process with `input`. `path`, `DIR` and `crypto` are in scope.
  * Sealed like every bridge; returns the body's value, or null.
  */
 async function sealedBridge(op, input, body, model) {
   return bridge(op, `${REQUIRE_HEAD}const crypto = require('crypto')
-const input = ${JSON.stringify(input === undefined ? null : input)}
 const output = (function (input) {
 ${body}
 })(input)
-process.stdout.write(JSON.stringify(output === undefined ? null : output))`, model)
+process.stdout.write(JSON.stringify(output === undefined ? null : output))`, model, input === undefined ? null : input)
 }
 
 // --------------------------------------------------------------------------
@@ -655,7 +714,7 @@ async function openRun(firstPhase, knownPhases) {
     return null
   }
   const r = await bridge('open', `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
-const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, args: ${JSON.stringify(args ?? null)}, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RESUME_ID)} })
+const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, args: input.args, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RESUME_ID)} })
 // A run recorded under a phase layout this workflow no longer has is refused
 // HERE, before beginAttempt() or startPhase() rewrite its record (QA round 3:
 // a refusal used to bump the attempt and wipe the old breaker trip).
@@ -674,7 +733,7 @@ if (${JSON.stringify(RESUME_ID)}) run.beginAttempt()
 const resumed = {}
 for (const t of run.resumedPhases) resumed[t] = run.resumed(t)
 run.startPhase(${JSON.stringify(firstPhase)})
-process.stdout.write(JSON.stringify({ runId: run.runId, dir: run.dir, resumed: resumed }))`)
+process.stdout.write(JSON.stringify({ runId: run.runId, dir: run.dir, resumed: resumed }))`, undefined, { args: args ?? null })
   if (r && Array.isArray(r.refused)) {
     return { fatal: `refusing to resume ${RESUME_ID}: it was recorded by an older ${WORKFLOW} (phases: ${r.refused.join(', ')}). Replaying part of it would mix two phase layouts — one build checked against another run's plan. Start a fresh run instead; the old record is left untouched.` }
   }
@@ -736,7 +795,7 @@ const prevIso = done.length ? (run._cache.get(done[done.length - 1].title) || {}
 run._phaseStartMs = Date.parse(prevIso || run.manifest.startedAt)
 const title = ${JSON.stringify(title)}
 const cls = f.classify({})
-for (const x of ${JSON.stringify(failed)}) {
+for (const x of input.failed) {
   run.recordFailure({ label: x.label, agentType: x.agentType, phase: title, class: cls, attempt: x.attempts, of: x.attempts,
     detail: 'agent() returned no result - skipped, blocked, or gave up after the host runtime retried',
     strategyNext: x.attempts > 1 ? 'the workflow re-dispatched once with the output contract restated and it still returned nothing'
@@ -750,7 +809,7 @@ for (const rec of run.readFailures()) {
 // but are NOT written again: they are already on failures.jsonl under the
 // phase that produced them, and a second record would credit this phase's
 // failures to an agent that never ran in it (code review S-A).
-const carried = ${JSON.stringify(carried || null)}
+const carried = input.carried
 const ownTripped = breaker.isTripped(title)
 if (carried) for (const l of carried.labels) breaker.record(title, cls)
 const tripped = breaker.isTripped(title)
@@ -764,10 +823,10 @@ if (tripped) {
     run.failPhase(carried.from, 'its failures counted toward the breaker trip in ' + title)
   }
 } else {
-  run.completePhase(title, ${JSON.stringify(artifact)})
+  run.completePhase(title, input.artifact)
   if (${JSON.stringify(nextPhase)}) run.startPhase(${JSON.stringify(nextPhase)})
 }
-process.stdout.write(JSON.stringify({ tripped: tripped, info: breaker.trippedInfo(title), entry: breaker.asBlockedEntry(title) }))`)
+process.stdout.write(JSON.stringify({ tripped: tripped, info: breaker.trippedInfo(title), entry: breaker.asBlockedEntry(title) }))`, undefined, { artifact, failed, carried: carried || null })
   if (!r) {
     // The phase bridge was lost or its output discarded. The breaker must not
     // depend on it (QA round 3: a tampered phase output let a run with every
@@ -875,7 +934,7 @@ async function collectBlockedGates() {
   })
   if (!candidates.length) return { gates: [], complete: true }
   const r = await bridge('blocked-gates', `${REQUIRE_HEAD}const p = require(path.join(DIR, '_policy.js'))
-process.stdout.write(JSON.stringify(p.collectBlockedGates(${JSON.stringify(candidates)})))`)
+process.stdout.write(JSON.stringify(p.collectBlockedGates(input.candidates)))`, undefined, { candidates })
   if (Array.isArray(r)) return { gates: r, complete: true }
   // An empty array here would read as "no gate was hit", which is the exact
   // disappearance the reducer exists to prevent. Report the failure as a gate.
@@ -905,8 +964,8 @@ run._startMs = Date.parse(run.manifest.startedAt)
 run.resumedPhases = new Set(${JSON.stringify(REPLAYED)})
 // Only an acknowledgement crosses back: outcome.json is on disk, and echoing
 // the whole outcome made this the largest relay of a run (round 3, M1).
-const outcome = run.close(${JSON.stringify(summary)})
-process.stdout.write(JSON.stringify({ ok: true, status: outcome && outcome.status }))`)
+const outcome = run.close(input.summary)
+process.stdout.write(JSON.stringify({ ok: true, status: outcome && outcome.status }))`, undefined, { summary })
 }
 
 /**

@@ -234,15 +234,15 @@ Commands are shown bare for readability, matching the naming note at the top. In
 
 ### `/sdlc-feature` — plan expensive, execute cheap
 
-The most capable model is spent where a mistake costs the most to undo: the plan that every later stage executes. Build and test then run a cheaper tier against that plan. Review goes back to a strong tier and security to the strongest, because a reviewer weaker than the writer isn't much of an independent check.
+The most capable model is spent where a mistake costs the most to undo: the plan that every later stage executes. Build and test then run a cheaper tier against that plan. Review and security go back to a strong tier, because a reviewer weaker than the writer isn't much of an independent check; the strongest (Fable) is opt-in for changes where a mistake is expensive.
 
 | Stage (recorded phase) | Who | Default tier | Hands the next stage |
 |---|---|---|---|
-| **Plan** | `product-manager` → `product-analyst` → `solution-architect`, in that order | `plan`: Fable / high | `intent.md`, `spec.md` (numbered acceptance criteria), `plan.md` |
+| **Plan** | `product-manager` → `product-analyst` → `solution-architect`, in that order | `plan`: Opus / high | `intent.md`, `spec.md` (numbered acceptance criteria), `plan.md` |
 | **Design** | `ux-designer` spec, then `ui-engineer` builds a static self-contained HTML mock of it, in a worktree (the mock file itself is written by absolute path to the main checkout's handoff directory — the run's `handoff/`, or the spec directory; anything else the agent touches stays in the worktree). The mock is skipped when there is no run directory to hold it. **Only when the change touches a frontend surface**; otherwise the phase is recorded empty | `design`: Opus / xhigh | `design.md`, `mock.html` |
 | **Build** | One builder per surface (`software-engineer` / `ui-engineer` / `database-engineer`), in a worktree, executing `plan.md` and returning a build manifest | `build`: Sonnet / medium | the manifests |
 | **Test** | `qa-engineer`, which designs and interprets the cases and is told to hand execution loops to `qa-runner` | `test`: Sonnet / medium; `testLoop`: Haiku / low (see below) | `test-report.md` |
-| **Review** | `code-reviewer` and `performance-engineer`; `security-engineer`. They get `test-report.md` as evidence to weigh, not a verdict to adopt | `review`: Opus / high; `security`: Fable / high | findings |
+| **Review** | `code-reviewer` and `performance-engineer`; `security-engineer`. They get `test-report.md` as evidence to weigh, not a verdict to adopt | `review`: Opus / high; `security`: Opus / high | findings |
 | Cross-check | Every Test and Review finding goes to a refuter (`code-reviewer`) before it counts | `refute`: session model / low | — |
 | **Repair**, **Re-verify** | The builder fixes confirmed blocking findings in its own change, and then only the lenses that raised them re-check the fix, at most 2 rounds. `"repair": false` in `args` turns this off | `build`, then each lens's own tier | — |
 | **Readiness** | `release-manager` writes a go/no-go **recommendation**, and `technical-writer` drafts the docs | `readiness`: Opus / high; `docs`: Sonnet / medium | — |
@@ -309,11 +309,11 @@ Each criterion is one list line, `- **<ID>** — <text>`, under the `## Acceptan
 
 **A file an earlier run left in the spec directory is never taken as this run's.** The preflight records each document's hash before the run starts. After an agent's stage, a file at that path counts as this run's only if it changed during the stage, or if it matches the text the agent returned. Otherwise the workflow writes the returned text over it (when that text is 16,384 characters or less), or doesn't hand the file on at all. In strict mode, a stage that needs that file then doesn't start.
 
-**Overriding the tiers — required if your account has no Fable access.** The `plan` and `security` stages pin `fable` by default. Pass `args.tiers`:
+**Overriding the tiers.** No stage pins Fable by default: on the live pilot it cost twice Opus and over-planned a trivial change, with no measured gain. Opt into it for a change where a planning or security mistake is expensive (auth, payments, permissions, destructive data changes, concurrency, a lasting architecture decision), or when a person rejects an Opus plan as too shallow. Pass `args.tiers`:
 
 ```
 "tiers": "inherit"                                                           // pin nothing; every stage follows the session model
-"tiers": { "plan": { "model": "opus" }, "security": { "model": "opus" } }   // partial override; other stages keep their default
+"tiers": { "plan": { "model": "fable" }, "security": { "model": "fable" } } // partial override; other stages keep their default
 ```
 
 The stage keys are the ones in the table above, plus `transcribe`. Models: `fable`, `opus`, `sonnet`, `haiku`, `inherit`. Efforts: `low`, `medium`, `high`, `xhigh`, `max`. An unknown stage, model or effort is logged and ignored, and the default stays in place. It is never passed through to the agent call. The return value's `tiers` shows what the run actually resolved. With `"inherit"`, the only pin left is the refuter's low effort, which existed before tiers did.
