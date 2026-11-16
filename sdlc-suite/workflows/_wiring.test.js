@@ -2729,6 +2729,62 @@ async function main() {
     assert.deepStrictEqual(grouped.surfaces, ['backend'])
   })
 
+  await test('the test report traces every criterion to a case, its type, result and evidence — and readiness sees the count', async () => {
+    // Pilot, HU 16: the report had a verdict and findings and nothing else.
+    const { cwd, d } = gitSpecRepo()
+    const qa = {
+      verdict: 'AC-1 proven; AC-2 needs a person',
+      findings: [],
+      cases: [
+        { id: 'CP-01', criterion: 'AC-1', title: 'Exportar un CSV | con columnas', type: 'unit', test: 'test/export.test.ts › csv', result: 'pass', evidence: 'specs/features/HU-9/evidencia/CP-01/out.txt' },
+        { id: 'CP-02', criterion: 'AC-2', title: 'Rechazar una exportación vacía', type: 'manual', result: 'not-run' },
+      ],
+      mutation: { tool: 'stryker', score: 86, survived: 2, scope: 'src/export.ts' },
+    }
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents({ 'verify:qa': qa }),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const rep = fs.readFileSync(path.join(d, 'test-report.md'), 'utf8')
+    assert.ok(/## Traceability — one case per criterion/.test(rep), rep.slice(0, 400))
+    assert.ok(rep.includes('| AC-1 | CP-01 — Exportar un CSV \\| con columnas | unit | test/export.test.ts › csv | pass | specs/features/HU-9/evidencia/CP-01/out.txt |'), rep)
+    assert.ok(/1 of 2 criteria proven by a passing automated case; pending human QA \(no passing automated case\): AC-2; mutation score 86% \(stryker, src\/export\.ts\)/.test(rep), rep)
+    const qaCall = r.calls.find(c => c.label === 'verify:qa')
+    assert.strictEqual(qaCall.opts.schema.required.includes('cases'), true, 'the test lens is not asked for cases')
+    assert.ok(qaCall.prompt.includes(`${SPEC}/evidencia/`) || qaCall.prompt.includes('evidencia/<case id>'), 'the test lens is not told where to save evidence')
+    assert.ok(/1 of 2 criteria proven/.test(byLabel(r, 'readiness').prompt), 'readiness does not see the traceability count')
+    // The review lenses keep the plain findings schema.
+    assert.ok(!r.calls.find(c => c.label === 'verify:review').opts.schema.required.includes('cases'))
+  })
+
+  await test('contradictions found while planning reach spec.md, the pause and readiness — and survive approval', async () => {
+    // Pilot, HU 16: the ticket put zones in onboarding, an existing spec ruled
+    // them out; a person found it by hand.
+    const C = 'the intent says «zones in onboarding» (ClickUp HU 16) but specs/010 says «el alta no pide zona» — the intent wins'
+    const withC = { ...REQS, contradictions: [C] }
+    const { cwd, d } = gitSpecRepo()
+    const p = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents({ requirements: withC }) })
+    assert.strictEqual(p.result.status, 'awaiting-plan-approval', JSON.stringify(p.result).slice(0, 300))
+    assert.ok(/## Contradictions\n\n- the intent says «zones in onboarding»/.test(fs.readFileSync(path.join(d, 'spec.md'), 'utf8')), 'spec.md does not carry the contradiction')
+    assert.ok(p.result.humanDecisionRequired.some(x => x === `CONTRADICTION: ${C}`), JSON.stringify(p.result.humanDecisionRequired))
+    assert.ok(/CONTRADICTIONS\. Before you write criteria/.test(byLabel(p, 'requirements').prompt), 'the planner is not asked to look for contradictions')
+    gitIn(cwd, 'add', '-A')
+    gitIn(cwd, 'commit', '-q', '-m', 'approve')
+    const a = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, approvedPlan: true }, onAgent: featureAgents() })
+    assert.strictEqual(a.result.status, 'completed', JSON.stringify(a.result).slice(0, 300))
+    assert.ok(a.result.requirements.contradictions.includes(C), 'the approved spec lost its contradiction on the way back in')
+    assert.ok(byLabel(a, 'readiness').prompt.includes(C), 'readiness does not see the contradiction')
+  })
+
+  await test('a test stage that reports no cases leaves every criterion pending human QA', async () => {
+    const { cwd, d } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const rep = fs.readFileSync(path.join(d, 'test-report.md'), 'utf8')
+    assert.ok(/0 of 2 criteria proven.*pending human QA \(no passing automated case\): AC-1, AC-2/.test(rep), rep.slice(0, 600))
+    assert.ok(/reported no cases — every criterion is pending human QA/.test(rep), rep.slice(0, 600))
+  })
+
   await test('spec mode builds in the CHECKOUT: no worktree, builders take turns, each sees the earlier ones, one diff route', async () => {
     // First live run: three per-builder worktrees diverged, were never joined,
     // and came from the default branch, not the HU branch.
