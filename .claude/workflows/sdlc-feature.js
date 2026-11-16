@@ -1730,9 +1730,21 @@ function parseSpec(text) {
     if (seen.has(c.id)) errors.push(`spec.md: criterion id ${c.id} appears more than once`)
     seen.add(c.id)
   }
+  // Contradictions: one per bullet; an indented line continues the one above,
+  // and any other text is QUOTED back as an error — a contradiction written as a
+  // paragraph must not vanish on approval (code review round 8).
+  const contradictions = []
+  for (const l of sec['contradictions'] || []) {
+    if (!l.trim()) continue
+    const m = /^\s*(?:[-*+]|\d+[.)])\s+(.+)$/.exec(l)
+    if (m) { if (m[1].trim() !== '(none)') contradictions.push(m[1].trim()); continue }
+    if (/^\s{2,}\S/.test(l) && contradictions.length) { contradictions[contradictions.length - 1] += ` ${l.trim()}`; continue }
+    if (l.trim() === '(none)') continue
+    errors.push(`spec.md: this line under "Contradictions" is not a list item: ${JSON.stringify(l.trim().slice(0, 160))} — write each one as "- <both sides, quoted> — <resolution>"`)
+  }
   const surfaces = ((sec['surfaces'] || []).join(' ').toLowerCase().match(/\b(backend|frontend|data)\b/g) || [])
     .filter((v, i, a) => a.indexOf(v) === i)
-  return { criteria, assumptions: items('assumptions'), openQuestions: items('open questions'), contradictions: items('contradictions'), surfaces, errors }
+  return { criteria, assumptions: items('assumptions'), openQuestions: items('open questions'), contradictions, surfaces, errors }
 }
 /**
  * Adopt a phase's authored files. Fresh: the in-phase confirmation already
@@ -1822,7 +1834,7 @@ function criteriaTextOf(reqs) {
 }
 
 function renderSpec(reqs) {
-  const list = (xs) => (xs && xs.length ? xs.map(x => `- ${x}`) : ['(none)'])
+  const list = (xs) => (xs && xs.length ? xs.map(x => `- ${String(x).replace(/\s+/g, ' ').trim()}`) : ['(none)'])
   return [
     '# spec.md', '',
     `Initiative: ${initiative}`, '',
@@ -1838,14 +1850,20 @@ function renderSpec(reqs) {
 
 /** One line of traceability numbers, shared by the report and the readiness prompt. */
 function traceability(raw, criteria) {
-  const cases = raw && Array.isArray(raw.cases) ? raw.cases : []
+  const cases = raw && Array.isArray(raw.cases) ? raw.cases.filter(c => c && typeof c === 'object') : []
   const ids = (criteria || []).map(c => c.id)
   const by = id => cases.filter(c => c.criterion === id)
-  const auto = c => c.type !== 'manual'
+  // An allow-list, and a test that is named: a "Manual", a missing type or a
+  // mutation run is not a proof of a criterion (code review round 8).
+  const auto = c => AUTOMATED_TYPES.includes(c.type) && String(c.test || '').trim().length > 0
   const proven = ids.filter(id => by(id).some(c => auto(c) && c.result === 'pass') && !by(id).some(c => c.result === 'fail'))
   const failing = ids.filter(id => by(id).some(c => c.result === 'fail'))
   const pending = ids.filter(id => !proven.includes(id) && !failing.includes(id))
-  return { cases, ids, by, proven, failing, pending }
+  const known = new Set(ids)
+  const unknown = cases.filter(c => !known.has(c.criterion))
+  const seen = new Set()
+  const duplicates = [...new Set(cases.map(c => c.id).filter(id => (seen.has(id) ? true : (seen.add(id), false))))]
+  return { cases, ids, by, proven, failing, pending, unknown, duplicates }
 }
 
 function traceabilityLine(raw, criteria) {
@@ -1854,6 +1872,8 @@ function traceabilityLine(raw, criteria) {
   return `${t.proven.length} of ${t.ids.length} criteria proven by a passing automated case` +
     (t.failing.length ? `; FAILING: ${t.failing.join(', ')}` : '') +
     (t.pending.length ? `; pending human QA (no passing automated case): ${t.pending.join(', ')}` : '') +
+    (t.unknown.length ? `; ${t.unknown.length} case(s) name no known criterion and prove nothing` : '') +
+    (t.duplicates.length ? `; duplicate case id(s): ${t.duplicates.join(', ')}` : '') +
     (m && typeof m.score === 'number' ? `; mutation score ${m.score}%${m.tool ? ` (${m.tool}` : ''}${m.scope ? `${m.tool ? ', ' : ' ('}${m.scope}` : ''}${m.tool || m.scope ? ')' : ''}` : '; no mutation testing reported')
 }
 
@@ -1861,7 +1881,7 @@ function renderTestReport(raw, findings, criteria) {
   const lines = ['# test-report.md', '']
   lines.push(`Verdict (qa-engineer): ${raw && raw.verdict ? raw.verdict : '(qa-engineer returned no verdict — the test stage produced no evidence)'}`, '')
   const t = traceability(raw, criteria)
-  const cell = v => String(v ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || '—'
+  const cell = v => String(v ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || '—'
   lines.push('## Traceability — one case per criterion', '')
   lines.push(traceabilityLine(raw, criteria), '')
   if (t.cases.length) {
@@ -1990,6 +2010,9 @@ const FINDINGS_SCHEMA = {
 // test report carried a verdict and findings and nothing else: a reviewer could
 // not see what had been proven, and human QA could not see where to start.
 const CASE_TYPES = ['unit', 'component', 'integration', 'e2e', 'visual', 'mutation', 'manual']
+// The types whose passing case proves a criterion. A mutation run measures the
+// tests; it does not prove the behaviour, and a manual case was not executed.
+const AUTOMATED_TYPES = ['unit', 'component', 'integration', 'e2e', 'visual']
 const QA_SCHEMA = {
   type: 'object',
   required: ['findings', 'verdict', 'cases'],
@@ -2014,7 +2037,7 @@ const QA_SCHEMA = {
     mutation: {
       type: 'object',
       description: 'Mutation testing on the changed files, when the repository has it set up.',
-      properties: { tool: { type: 'string' }, score: { type: 'number' }, survived: { type: 'number' }, scope: { type: 'string' } },
+      properties: { tool: { type: 'string' }, score: { type: 'number', description: 'mutation score, 0-100' }, survived: { type: 'number' }, scope: { type: 'string' } },
     },
   },
 }
@@ -2484,7 +2507,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
       requirements: reqs,
       plan: architecture,
       handoff: { dir: handoffDir(), files: { ...HANDOFF_FILES }, specDir: SPEC_DIR, strict: STRICT },
-      next: `Review spec.md and plan.md in ${handoffDir()}. Edit them if needed (criteria stay one per line: "- **AC-n** — text"), commit them, then start a FRESH run with ${JSON.stringify(nextArgs)} — it starts at Design from exactly the committed files.`,
+      next: `Review spec.md and plan.md in ${handoffDir()}. Edit them if needed (criteria stay one per line: "- **AC-n** — text"; under "## Contradictions" each line must end with its resolution — which side wins — or be deleted once settled), commit them, then start a FRESH run with ${JSON.stringify(nextArgs)} — it starts at Design from exactly the committed files.`,
       humanDecisionRequired: [
         `Approve the plan: review and commit spec.md and plan.md in ${handoffDir()}, then run with approvedPlan: true.`,
         ...(reqs.contradictions || []).map(c => `CONTRADICTION: ${c}`),
@@ -2736,6 +2759,7 @@ EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from
 - In "cases", give EVERY acceptance criterion at least one case: an id (CP-01, CP-02, ...), the criterion id, a title that says what is checked, the type (${CASE_TYPES.join(', ')}), the test (file › test name, or the exact command), the result (pass, fail or not-run) and the evidence path.
 - Choose the type the criterion needs: logic → unit; a UI component → component; several modules or the database together → integration; a user journey → e2e; how a screen looks → visual. A criterion you cannot check by execution here is type manual, result not-run: it is pending human QA, never "pass".
 - ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md: one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
+- Evidence is committed with the spec: before saving any output, response or screenshot, redact tokens, credentials, secrets and personal data (names, phone numbers, emails) — or use test data that has none.
 - If the repository has mutation testing set up (for example a Stryker configuration), run it on the changed files only and report it in "mutation". Each surviving mutant in changed code is a Should Fix finding: a test that does not fail when the code is broken does not protect it.
 - A criterion with no automated test where one was possible is a finding, not a case to skip.`)
 
@@ -3022,9 +3046,11 @@ REPAIR LOOP RECORD — blocking findings the builder repaired and an independent
 
 OPEN ASSUMPTIONS / QUESTIONS FROM REQUIREMENTS:\n${[...reqs.assumptions, ...reqs.openQuestions].join('\n') || '(none)'}
 
-CONTRADICTIONS FOUND WHILE PLANNING (intent vs the repository's specs, docs or code) — a criterion one of them touches is not Confirmed until a person settles it:\n${(reqs.contradictions || []).join('\n') || '(none)'}
+${MODE_APPROVED
+    ? `CONTRADICTIONS IN THE APPROVED SPEC — a person reviewed and committed each with its stated resolution; treat those as settled. One that still says a person must decide keeps the criteria it touches from Confirmed`
+    : `CONTRADICTIONS FOUND WHILE PLANNING (intent vs the repository's specs, docs or code) — a criterion one of them touches is not Confirmed until a person settles it`}:\n${(reqs.contradictions || []).join('\n') || '(none)'}
 
-TRACEABILITY (test stage): ${traceabilityLine(testRaw, reqs.criteria)}. A criterion pending human QA or failing is not Confirmed.
+TRACEABILITY (test stage): ${repairRounds && repairRounds.rounds && repairRounds.rounds.length ? `MEASURED BEFORE THE REPAIR LOOP — ${repairRounds.rounds.length} repair round(s) changed the code after these cases ran, so a "proven" criterion is Claimed-not-verified and a "failing" one may since be fixed: ` : ''}${traceabilityLine(testRaw, reqs.criteria)}. A criterion pending human QA or failing is not Confirmed.
 
 TEST STAGE: ${testDead.length ? `produced NO result (${testDead.join(', ')}) — nothing was exercised at runtime; no criterion may be classified Confirmed on test evidence.` : 'ran; its findings are among those above.'}
 

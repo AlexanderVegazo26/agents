@@ -2774,6 +2774,62 @@ async function main() {
     assert.strictEqual(a.result.status, 'completed', JSON.stringify(a.result).slice(0, 300))
     assert.ok(a.result.requirements.contradictions.includes(C), 'the approved spec lost its contradiction on the way back in')
     assert.ok(byLabel(a, 'readiness').prompt.includes(C), 'readiness does not see the contradiction')
+    // Approval settles a contradiction that states its resolution (round 8).
+    assert.ok(/CONTRADICTIONS IN THE APPROVED SPEC — a person reviewed and committed each/.test(byLabel(a, 'readiness').prompt), 'an approved spec cannot settle its contradictions')
+    assert.ok(/under "## Contradictions" each line must end with its resolution/.test(p.result.next), 'the pause does not say how to settle a contradiction')
+  })
+
+  await test('traceability counts: a fail beats a pass, manual or untyped never proves, unknown criteria and duplicate ids are named', async () => {
+    // Code review round 8: no fixture reached the "failing" or "manual" logic.
+    const { cwd, d } = gitSpecRepo()
+    const qa = {
+      verdict: 'mixed', findings: [],
+      cases: [
+        { id: 'CP-01', criterion: 'AC-1', title: 'ok path', type: 'unit', test: 'a.test.ts › ok', result: 'pass', evidence: 'e1' },
+        { id: 'CP-02', criterion: 'AC-1', title: 'edge', type: 'unit', test: 'a.test.ts › edge \\| /x\\|y/', result: 'fail', evidence: 'e2' },
+        { id: 'CP-03', criterion: 'AC-2', title: 'por una persona', type: 'Manual', test: 'checked by eye', result: 'pass' },
+        { id: 'CP-03', criterion: 'AC-2', title: 'sin prueba nombrada', type: 'unit', result: 'pass' },
+        { id: 'CP-09', criterion: 'AC-99', title: 'ghost', type: 'unit', test: 'g.test.ts', result: 'pass' },
+      ],
+    }
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents({ 'verify:qa': qa }) })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const rep = fs.readFileSync(path.join(d, 'test-report.md'), 'utf8')
+    assert.ok(/0 of 2 criteria proven by a passing automated case; FAILING: AC-1; pending human QA \(no passing automated case\): AC-2; 1 case\(s\) name no known criterion and prove nothing; duplicate case id\(s\): CP-03/.test(rep), rep.slice(0, 700))
+    assert.ok(rep.includes('| AC-99 | CP-09 — ghost |'), 'a case on an unknown criterion is hidden from the table')
+    assert.ok(rep.includes('a.test.ts › edge \\\\\\| /x\\\\\\|y/'), `backslashes and pipes are not both escaped: ${rep.split('\n').find(l => l.includes('edge'))}`)
+    assert.ok(/redact tokens, credentials, secrets and personal data/.test(r.calls.find(c => c.label === 'verify:qa').prompt), 'the evidence prompt says nothing about secrets')
+  })
+
+  await test('readiness is told the traceability was measured BEFORE a repair changed the code', async () => {
+    const { cwd } = gitSpecRepo()
+    const qa = { verdict: 'one blocker', findings: [{ severity: 'Must Fix', summary: 'AC-1 fails', evidence: 'src/export.ts:3' }],
+      cases: [{ id: 'CP-01', criterion: 'AC-1', title: 'x', type: 'unit', test: 't › x', result: 'fail' }] }
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: featureAgents({ 'verify:qa': qa, 'refute:qa': { refuted: false, reasoning: 'real' } }),
+    })
+    const rp = byLabel(r, 'readiness')
+    assert.ok(rp, `readiness did not run: ${JSON.stringify(r.result).slice(0, 200)}`)
+    if (r.result.repairRounds && r.result.repairRounds.rounds.length) {
+      assert.ok(/MEASURED BEFORE THE REPAIR LOOP/.test(rp.prompt), 'readiness is not told the code changed after the cases ran')
+    } else {
+      assert.fail(`the scenario never repaired: ${JSON.stringify(r.result.repairRounds)}`)
+    }
+  })
+
+  await test('contradictions: multi-line ones survive the round trip, prose is refused, an approved spec settles them', () => {
+    const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
+    const a = src.indexOf('function parseSpec(text) {')
+    const b = src.indexOf('\n}\n', a) + 3
+    const parseSpec = new Function(`${src.slice(a, b)}; return parseSpec`)()
+    const ok = parseSpec(['## Acceptance criteria', '- **AC-1** — x', '', '## Contradictions', '', '- the intent says «A» (ticket)', '  but specs/010 says «B» — the intent wins', '- (none)'].join('\n'))
+    assert.deepStrictEqual(ok.errors, [])
+    assert.deepStrictEqual(ok.contradictions, ['the intent says «A» (ticket) but specs/010 says «B» — the intent wins'])
+    const prose = parseSpec(['## Acceptance criteria', '- **AC-1** — x', '', '## Contradictions', '', 'The ticket and specs/010 disagree about onboarding.'].join('\n'))
+    assert.ok(prose.errors.some(e => /under "Contradictions" is not a list item/.test(e)), JSON.stringify(prose.errors))
+    const none = parseSpec(['## Acceptance criteria', '- **AC-1** — x'].join('\n'))
+    assert.deepStrictEqual(none.contradictions, [], 'a spec without the section must still parse')
   })
 
   await test('a test stage that reports no cases leaves every criterion pending human QA', async () => {
