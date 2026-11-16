@@ -125,6 +125,8 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   against the base its Build recorded, and the diff route names new untracked
   files too. `"buildTree": "worktrees"` keeps the old
   behaviour, which stays the default outside spec mode.
+  The Design mock runs in the checkout too: in a worktree it never reached its
+  absolute path on two live runs and the worktree was left behind.
 - **Large bridge data is written by write-only steps and compressed.** A
   transcriber refused to execute a script carrying a 40 KB hex block, and the run
   lost its Build record and its `outcome.json`. Data over 4,000 hex characters

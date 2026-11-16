@@ -2861,6 +2861,11 @@ async function main() {
     assert.ok(builds[0].prompt.includes('git status --short'), 'the diff route does not reach new untracked files')
     const review = r.calls.find(c => c.label === 'verify:review')
     assert.ok(review && review.prompt.includes(`git diff ${head} --stat`), 'the lens brief carries no route to the whole change')
+
+    // The mock too: in a worktree it never reached its absolute path on two live runs.
+    const mock = r.calls.find(c => c.label === 'mock')
+    assert.ok(mock && mock.opts.isolation === undefined, 'the mock still runs in a worktree in a checkout build')
+    assert.ok(/EXACTLY this absolute path/.test(mock.prompt) && /Write no other file/.test(mock.prompt), 'the mock is not held to one file')
   })
 
   await test('buildTree: "worktrees" keeps the isolated, parallel build in spec mode', async () => {
@@ -2871,6 +2876,7 @@ async function main() {
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
     const builds = r.calls.filter(c => /^build:/.test(c.label))
     assert.ok(builds.length && builds.every(c => c.opts.isolation === 'worktree'), JSON.stringify(builds.map(c => c.opts.isolation)))
+    assert.strictEqual((r.calls.find(c => c.label === 'mock') || {}).opts.isolation, 'worktree', 'the worktree build lost the isolated mock')
   })
 
   await test('a resume whose Build already ran diffs against the RECORDED base, not the moved HEAD', async () => {

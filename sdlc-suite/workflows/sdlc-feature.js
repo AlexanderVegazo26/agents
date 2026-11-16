@@ -2545,15 +2545,17 @@ Specify every interactive state — initial, loading, empty, success, error, per
       log('no run directory — the static mock has nowhere to live and is skipped; builders get the UX spec only')
     } else if (ux) {
       const mock = await dispatch(
-        withPolicy(`Build a static, self-contained HTML MOCK of the UX specification below and write it to ${mockPath} (create the parent directory if needed).
+        withPolicy(`Build a static, self-contained HTML MOCK of the UX specification below and write it to EXACTLY this absolute path: ${mockPath} (create the parent directory if needed). Write no other file and change nothing else in the repository — the mock is the only thing this step produces.
 
 This is a design artifact, not production code: one file, inline CSS and JS, no build step, no package install, no network request. Every state the spec names must be reachable in the mock — a visible state switcher is fine. Do not invent a state the spec omits; list each gap. Return a short note: the path you wrote, which states the mock covers, and the spec gaps you found.
 
 ${handoffRef('design.md', 'UX SPEC', asText(ux))}`),
-        // A worktree: ui-engineer has Write/Edit/Bash, and the prompt alone is
-        // what limits it to one file. The mock's ABSOLUTE path still lands in
-        // the main checkout; anything else it touches does not.
-        { agentType: 'sdlc-suite:ui-engineer', label: 'mock', phase: 'Design', isolation: 'worktree', ...tier('design') },
+        // Outside spec mode, a worktree: ui-engineer has Write/Edit/Bash, and the
+        // prompt alone is what limits it to one file. In a checkout build there is
+        // no worktree — on both live runs the worktree mock never reached its
+        // absolute path, and the worktree was left behind — so the prompt's
+        // one-file rule is the boundary, as it is for the builders after it.
+        { agentType: 'sdlc-suite:ui-engineer', label: 'mock', phase: 'Design', ...(BUILD_TREE === 'checkout' ? {} : { isolation: 'worktree' }), ...tier('design') },
       )
       agents.push({ label: 'mock', result: mock })
     }
