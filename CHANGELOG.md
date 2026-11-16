@@ -116,6 +116,31 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 - **A document path that is itself a link is refused** — at the preflight
   (which now also covers `test-report.md`) and again at the moment of writing.
 - **The `next` step of a paused run keeps a `policy` the caller passed.**
+- **Spec mode builds in one tree.** Builders take turns in the checkout the run
+  started in (data, backend, frontend), each told what the earlier ones changed,
+  and repairs run there too. On the first live run the per-builder worktrees
+  diverged, were never joined, and came from the default branch rather than the
+  HU branch. A build refuses to start while anything outside the spec directory
+  and `.claude/` is uncommitted, or when git cannot be read; a resume diffs
+  against the base its Build recorded, and the diff route names new untracked
+  files too. `"buildTree": "worktrees"` keeps the old
+  behaviour, which stays the default outside spec mode.
+- **Large bridge data is written by write-only steps and compressed.** A
+  transcriber refused to execute a script carrying a 40 KB hex block, and the run
+  lost its Build record and its `outcome.json`. Data over 4,000 hex characters
+  is now saved by DATA steps that only write a file, each checked against its
+  hash and written again once if damaged; data and output are LZW-compressed
+  before scrambling; parts are 12,000 hex characters.
+- **Readiness is told which lenses ran.** It reported that security never ran
+  when security had run and every finding of it had been refuted. Its prompt now
+  carries a coverage line per lens: ran or not, findings raised, confirmed,
+  refuted, and whether its brief was partial.
+- **A lens brief no longer drops the file list first.** Code review, security
+  and performance never read two of the files a real change was about. The
+  notAddressed and plan-gap detail goes first, then the summaries; the file
+  list is cut only past 40% of the budget, every dropped path is still named,
+  and in spec mode the brief always says how to see the whole change
+  (`git diff <base>`).
 
 ### Added
 

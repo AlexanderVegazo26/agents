@@ -123,6 +123,7 @@ function pipelineImpl(items, ...stages) {
 }
 
 const BRIDGE_RE = /--- BEGIN ([^\n]+) ---\n([\s\S]*?)\n--- END \1 ---/
+const BRIDGE_DATA_RE = /--- BEGIN DATA ([^\n]+) ---\n([\s\S]*?)\n--- END DATA \1 ---/
 const HOST_OUTPUT_CAP = 30000
 const BRIDGE_OUTPUT_CUTS = []   // every relay the cap cut, for the size assertions
 
@@ -132,6 +133,15 @@ const BRIDGE_OUTPUT_CUTS = []   // every relay the cap cut, for the size asserti
  * the most literal possible reading of the instruction the prompt gives.
  */
 function runBridge(prompt, cwd) {
+  // A DATA step only writes its file — exactly what its prompt tells the
+  // transcriber, and nothing is run.
+  const dm = prompt.match(BRIDGE_DATA_RE)
+  if (dm) {
+    const df = path.isAbsolute(dm[1]) ? dm[1] : path.join(cwd, dm[1])
+    fs.mkdirSync(path.dirname(df), { recursive: true })
+    fs.writeFileSync(df, dm[2], 'utf8')
+    return { ok: true, result: '{"ok":true}' }
+  }
   const m = prompt.match(BRIDGE_RE)
   if (!m) return { ok: false, error: 'no bridge script found between the markers' }
   const rel = m[1]
@@ -255,7 +265,29 @@ function unscramble(prompt, hex) {
     const k = require('crypto').createHash('sha256').update(`in:${nonce}:${i}`, 'utf8').digest()
     for (let j = 0; j < 32 && o + j < buf.length; j++) out[o + j] = buf[o + j] ^ k[j]
   }
-  return out.toString('utf8')
+  return Buffer.from(testLzwUnpack(out)).toString('utf8')
+}
+
+/** An independent LZW decoder (16-bit codes, reset at 65536), to read bridge data. */
+function testLzwUnpack(packed) {
+  const out = []
+  let dict = []
+  let next = 256
+  let prev = null
+  for (let i = 0; i + 1 < packed.length; i += 2) {
+    const c = packed[i] * 256 + packed[i + 1]
+    let e
+    if (prev === null || next === 65536) {
+      if (prev !== null) { dict = []; next = 256 }
+      e = [c]
+    } else {
+      e = c < 256 ? [c] : (dict[c] || (c === next ? prev.concat([prev[0]]) : []))
+      dict[next++] = prev.concat([e[0]])
+    }
+    out.push(...e)
+    prev = e
+  }
+  return Uint8Array.from(out)
 }
 
 /**
@@ -267,14 +299,12 @@ function bridgeSource(prompt, calls) {
   const text = String(prompt)
   const one = /const DATA = '([0-9a-f]*)'/.exec(text)
   if (one) return `${text}\n${unscramble(text, one[1])}`
-  const files = [...text.matchAll(/fs\.readFileSync\(("(?:[^"\\]|\\.)+\.in\d+"), 'utf8'\)/g)].map(x => x[1])
-  if (!files.length || !calls) return text
-  const hex = files.map(f => {
-    const needle = `fs.writeFileSync(${f}, '`
-    const c = calls.find(k => String(k.prompt).includes(needle))
-    if (!c) return ''
-    const at = c.prompt.indexOf(needle) + needle.length
-    return c.prompt.slice(at, c.prompt.indexOf("'", at))
+  const pm = /const PARTS = (\[[^\n]*\])/.exec(text)
+  if (!pm || !calls) return text
+  const hex = JSON.parse(pm[1]).map(p => {
+    const c = calls.find(k => String(k.prompt).includes(`--- BEGIN DATA ${p.file} ---`))
+    const dm = c && String(c.prompt).match(BRIDGE_DATA_RE)
+    return dm ? dm[2] : ''
   }).join('')
   return `${text}\n${unscramble(text, hex)}`
 }
@@ -578,7 +608,7 @@ async function main() {
     const call = big.calls.find(c => c.label === 'bridge:brief')
     assert.ok(call, 'no brief bridge step ran')
     const src = bridgeSource(call.prompt, big.calls)
-    assert.ok(/buildBrief\(\{ manifests: manifests, lens: lens, criteria: criteria \}\)/.test(src),
+    assert.ok(/buildBrief\(\{ manifests: manifests, lens: lens, criteria: criteria, changeRef: input\.changeRef \}\)/.test(src),
       'the generated script does not pass the lens through to buildBrief')
     for (const k of ['review', 'qa', 'security', 'performance']) {
       assert.ok(src.includes(`"${k}"`), `lens ${k} was not passed to the brief builder`)
@@ -2045,6 +2075,20 @@ async function main() {
     assert.ok(!r.calls.some(c => c.label.startsWith('build:')), 'a builder ran without a plan')
   })
 
+  await test('readiness is told which lenses RAN, even when every finding of a lens was refuted', async () => {
+    // First live run: security ran, its findings were all refuted, nothing of it
+    // reached the confirmed list — and readiness reported that security never ran.
+    const r = await runScript('sdlc-feature.js', { cwd: tmpdir('coverage'), args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents() })
+    const p = byLabel(r, 'readiness').prompt
+    assert.ok(p.includes('VERIFICATION COVERAGE'), 'no coverage section in the readiness prompt')
+    assert.ok(/- security \(security-engineer\): RAN — raised 1 finding\(s\): 0 confirmed, 0 unverified, 1 refuted/.test(p),
+      p.slice(p.indexOf('VERIFICATION COVERAGE'), p.indexOf('VERIFICATION COVERAGE') + 700))
+    const dead = await runScript('sdlc-feature.js', { cwd: tmpdir('coverage'), args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ 'verify:security': null }) })
+    const rp = byLabel(dead, 'readiness')
+    assert.ok(rp, `readiness did not run with one dead lens: ${JSON.stringify(dead.result).slice(0, 200)}`)
+    assert.ok(/- security \(security-engineer\): DID NOT RUN/.test(rp.prompt), 'a dead lens is not reported as not having run')
+  })
+
   await test('planners that both return nothing on a pinned tier get a model-access hint', async () => {
     const r = await runScript('sdlc-feature.js', {
       cwd: tmpdir('noaccess'), args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ intent: null, requirements: null }),
@@ -2183,6 +2227,7 @@ async function main() {
 
   // --- spec mode: the Hay Mesa layout --------------------------------------
   function specRepo(intent) {
+    // Not a git checkout: these runs build in worktrees (a checkout build needs git).
     const cwd = tmpdir('spec')
     const d = path.join(cwd, 'specs', 'features', 'HU-9')
     fs.mkdirSync(d, { recursive: true })
@@ -2193,7 +2238,7 @@ async function main() {
   await test('specDir: a person\'s intent.md is used, product-manager does not run, and the files land in the spec directory', async () => {
     const { cwd, d } = specRepo('# intent\nHUMAN-INTENT-MARKER: exporters need CSV\n')
     const r = await runScript('sdlc-feature.js', {
-      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: 'specs/features/HU-9', pauseAfterPlan: false }, onAgent: featureAgents(),
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: 'specs/features/HU-9', pauseAfterPlan: false, buildTree: 'worktrees' }, onAgent: featureAgents(),
     })
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
     assert.ok(!byLabel(r, 'intent'), 'product-manager ran although a person wrote the intent')
@@ -2217,7 +2262,7 @@ async function main() {
   await test('strict: a stage whose input file is not confirmed does not start', async () => {
     const { cwd } = specRepo('# intent\n')
     const r = await runScript('sdlc-feature.js', {
-      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: 'specs/features/HU-9', pauseAfterPlan: false },
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: 'specs/features/HU-9', pauseAfterPlan: false, buildTree: 'worktrees' },
       onAgent: featureAgents({ 'ux-spec': null }),
     })
     assert.strictEqual(r.result.status, 'stopped')
@@ -2410,8 +2455,10 @@ async function main() {
 
   await test('a realistic-size run relays in chunks under the host cap, and resumes', async () => {
     const cwd = tmpdir('bigrelay')
-    const BIG = 'PLAN-LINE: ' + 'x'.repeat(70) + '\n'
-    const bigPlan = BIG.repeat(800)   // ~65 KB: over the cap in hex many times
+    // ~65 KB of lines that do not repeat: bridge data is compressed now, and a
+    // repeated line would shrink to one relay and test nothing.
+    const bigPlan = Array.from({ length: 800 }, (_, i) =>
+      `PLAN-LINE ${i}: ${require('crypto').createHash('sha256').update(String(i)).digest('hex')}\n`).join('')
     const three = { ...REQS, surfaces: ['backend', 'frontend', 'data'] }
     const cuts0 = BRIDGE_OUTPUT_CUTS.length
     const r1 = await runScript('sdlc-feature.js', {
@@ -2429,6 +2476,40 @@ async function main() {
     assert.deepStrictEqual(r2.result.resumedPhases, ['Plan', 'Design'])
     assert.strictEqual(r2.result.outcomeRecorded, true)
     assert.strictEqual(BRIDGE_OUTPUT_CUTS.length, cuts0, `a relay exceeded the host cap: ${BRIDGE_OUTPUT_CUTS.slice(cuts0).join(', ')} chars`)
+    // Live run: a transcriber refused to EXECUTE a script carrying a 40 KB hex
+    // block. Large data now travels only in write-only DATA steps.
+    for (const c of [...r1.calls, ...r2.calls].filter(k => /^bridge:/.test(k.label))) {
+      const longest = Math.max(0, ...(String(c.prompt).match(/[0-9a-f]{200,}/g) || []).map(h => h.length))
+      if (/--- BEGIN DATA /.test(c.prompt)) continue
+      assert.ok(longest <= 4000, `${c.label}: a script to execute carries a ${longest}-character hex block`)
+    }
+    const parts = r1.calls.filter(c => c.label === 'bridge:phase:part')
+    assert.ok(parts.length && parts.every(c => /--- BEGIN DATA /.test(c.prompt) && /never executed/.test(c.prompt)), 'a data part is not a write-only DATA step')
+  })
+
+  await test('a data part that arrives damaged is written again once, and the step runs on the right input', async () => {
+    const cwd = tmpdir('damaged')
+    const bigPlan = Array.from({ length: 800 }, (_, i) =>
+      `PLAN-LINE ${i}: ${require('crypto').createHash('sha256').update(`d${i}`).digest('hex')}\n`).join('')
+    let spoiled = 0
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan }),
+      tamperBridge: (label, out, prompt) => {
+        if (label === 'bridge:phase:part' && spoiled === 0) {
+          // The transcriber "copied" it wrong: one character changed on disk.
+          const dm = prompt.match(BRIDGE_DATA_RE)
+          const f = path.isAbsolute(dm[1]) ? dm[1] : path.join(cwd, dm[1])
+          const t = fs.readFileSync(f, 'utf8')
+          fs.writeFileSync(f, (t[0] === 'a' ? 'b' : 'a') + t.slice(1))
+          spoiled++
+        }
+        return out
+      },
+    })
+    assert.strictEqual(spoiled, 1, 'the scenario never spoiled a part')
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    assert.ok(r.logs.some(l => /arrived damaged — written again once/.test(l)), r.logs.join('\n'))
+    assert.strictEqual(r.result.outcomeRecorded, true, 'the run lost its record over one damaged part')
   })
 
   await test('a refused old-layout resume leaves the old record untouched', async () => {
@@ -2646,6 +2727,102 @@ async function main() {
     assert.deepStrictEqual(grouped.errors, [])
     assert.deepStrictEqual(grouped.criteria.map(c => c.id), ['AC-1', 'AC-2'])
     assert.deepStrictEqual(grouped.surfaces, ['backend'])
+  })
+
+  await test('spec mode builds in the CHECKOUT: no worktree, builders take turns, each sees the earlier ones, one diff route', async () => {
+    // First live run: three per-builder worktrees diverged, were never joined,
+    // and came from the default branch, not the HU branch.
+    const { cwd } = gitSpecRepo()
+    const head = gitIn(cwd, 'rev-parse', 'HEAD').trim()
+    const three = { ...REQS, surfaces: ['backend', 'frontend', 'data'] }
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: featureAgents({ requirements: three, 'build:data': manifest('build:data', ['db/0001_zones.sql']) }),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 400))
+    const builds = r.calls.filter(c => /^build:/.test(c.label))
+    assert.deepStrictEqual(builds.map(c => c.label), ['build:data', 'build:backend', 'build:frontend'], 'builders did not take turns in order')
+    assert.ok(builds.every(c => c.opts.isolation === undefined), `a builder ran in a worktree: ${JSON.stringify(builds.map(c => c.opts.isolation))}`)
+    assert.ok(builds[2].prompt.includes('db/0001_zones.sql') && builds[2].prompt.includes('src/export.ts'), 'the last builder was not told what the earlier ones changed')
+    assert.ok(builds[0].prompt.includes(`git diff ${head}`), 'builders were not given the base to diff against')
+    // `git diff` alone misses new, untracked files (code review round 7, S5).
+    assert.ok(builds[0].prompt.includes('git status --short'), 'the diff route does not reach new untracked files')
+    const review = r.calls.find(c => c.label === 'verify:review')
+    assert.ok(review && review.prompt.includes(`git diff ${head} --stat`), 'the lens brief carries no route to the whole change')
+  })
+
+  await test('buildTree: "worktrees" keeps the isolated, parallel build in spec mode', async () => {
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false, buildTree: 'worktrees' }, onAgent: featureAgents(),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const builds = r.calls.filter(c => /^build:/.test(c.label))
+    assert.ok(builds.length && builds.every(c => c.opts.isolation === 'worktree'), JSON.stringify(builds.map(c => c.opts.isolation)))
+  })
+
+  await test('a resume whose Build already ran diffs against the RECORDED base, not the moved HEAD', async () => {
+    // Code review round 7, S1: a run stopped in Review, the person committed
+    // something, and the resume pointed every lens at `git diff <new HEAD>`.
+    const { cwd } = gitSpecRepo()
+    const base = gitIn(cwd, 'rev-parse', 'HEAD').trim()
+    const r1 = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: featureAgents({ 'verify:review': null, 'verify:security': null, 'verify:performance': null }),
+    })
+    assert.strictEqual(r1.result.status, 'stopped', JSON.stringify(r1.result).slice(0, 300))
+    fs.writeFileSync(path.join(cwd, 'moved.txt'), 'HEAD moves\n')
+    gitIn(cwd, 'add', 'moved.txt')
+    gitIn(cwd, 'commit', '-q', '-m', 'move HEAD')
+    const moved = gitIn(cwd, 'rev-parse', 'HEAD').trim()
+    const r2 = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false, resume: r1.result.runId }, onAgent: featureAgents(),
+    })
+    assert.ok(r2.result.resumedPhases.includes('Build'), `Build did not replay: ${JSON.stringify(r2.result.resumedPhases)}`)
+    const review = r2.calls.find(c => c.label === 'verify:review')
+    assert.ok(review && review.prompt.includes(`git diff ${base} --stat`), 'the resumed lens is not pointed at the recorded base')
+    assert.ok(!review.prompt.includes(`git diff ${moved}`), 'the resumed lens was pointed at the moved HEAD')
+  })
+
+  await test('a resume that stopped BEFORE Build is still checked for uncommitted work', async () => {
+    // Code review round 7, S2: the check was skipped whenever Plan replayed.
+    const { cwd } = gitSpecRepo()
+    const r1 = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents({ 'ux-spec': null }),
+    })
+    assert.strictEqual(r1.result.status, 'stopped', JSON.stringify(r1.result).slice(0, 300))
+    assert.ok(!r1.calls.some(c => /^build:/.test(c.label)), 'the scenario reached Build — it must stop before it')
+    fs.writeFileSync(path.join(cwd, 'stray.txt'), 'edited while the run was stopped\n')
+    const r2 = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false, resume: r1.result.runId }, onAgent: featureAgents(),
+    })
+    assert.strictEqual(r2.result.status, 'stopped', JSON.stringify(r2.result).slice(0, 300))
+    assert.ok(/uncommitted changes outside/.test(r2.result.reason) && /stray\.txt/.test(r2.result.reason), r2.result.reason)
+    assert.ok(!r2.calls.some(c => /^build:/.test(c.label)), 'a builder ran on top of uncommitted work')
+  })
+
+  await test('a checkout build without git refuses instead of building blind', async () => {
+    // Code review round 7, S3: a git failure read as "nothing uncommitted".
+    const cwd = tmpdir('nogit')
+    fs.mkdirSync(path.join(cwd, 'specs', 'features', 'HU-9'), { recursive: true })
+    fs.writeFileSync(path.join(cwd, 'specs', 'features', 'HU-9', 'intent.md'), '# intent\nHU-9\n')
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'stopped', JSON.stringify(r.result).slice(0, 300))
+    assert.ok(/needs git/.test(r.result.reason), r.result.reason)
+    assert.ok(!r.calls.some(c => /^build:/.test(c.label)), 'a builder ran without git')
+  })
+
+  await test('a checkout build refuses to mix with uncommitted work outside the spec directory', async () => {
+    const { cwd, d } = gitSpecRepo()
+    fs.writeFileSync(path.join(cwd, 'stray.txt'), 'my own unfinished work\n')
+    fs.writeFileSync(path.join(d, 'notes.md'), 'inside the spec directory: allowed\n')
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'stopped', JSON.stringify(r.result).slice(0, 300))
+    assert.ok(/uncommitted changes outside/.test(r.result.reason) && /stray\.txt/.test(r.result.reason) && !/notes\.md/.test(r.result.reason), r.result.reason)
+    assert.ok(!r.calls.some(c => !c.label.startsWith('bridge:')), 'an agent ran')
+    // A plan-only run never builds, so it is not refused.
+    const plan = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents() })
+    assert.strictEqual(plan.result.status, 'awaiting-plan-approval', JSON.stringify(plan.result).slice(0, 300))
   })
 
   await test('approvedPlan refuses to overwrite an uncommitted design.md', async () => {

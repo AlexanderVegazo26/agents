@@ -23,7 +23,7 @@ const start = src.indexOf('const SHA256_K = [')
 const end = src.indexOf('/**\n * Run `body`')
 assert.ok(start > 0 && end > start, 'could not locate the seal helpers in _runtime.block.js')
 const ctx = vm.createContext({})
-vm.runInContext(`${src.slice(start, end)}\nthis.h = { sha256Hex, utf8Bytes, utf8Text, hexOf, bytesOfHex, xorStream }`, ctx)
+vm.runInContext(`${src.slice(start, end)}\nthis.h = { sha256Hex, utf8Bytes, utf8Text, hexOf, bytesOfHex, xorStream, lzwPack, lzwUnpack }`, ctx)
 const h = ctx.h
 
 let passed = 0
@@ -96,6 +96,18 @@ test('scrambled output carries no readable text', () => {
   const plain = Buffer.from('AUTONOMY POLICY — resolved, proceed and record that you acted', 'utf8')
   const hex = Buffer.from(h.xorStream(Uint8Array.from(plain), 'out', 'n:1')).toString('hex')
   assert.ok(!hex.includes(plain.toString('hex').slice(0, 16)), 'the plain text survives in the scrambled hex')
+})
+
+test('lzwPack / lzwUnpack round-trip every sample, random bytes and a dictionary restart', () => {
+  const cases = [...SAMPLES.map(x => Buffer.from(x, 'utf8')), crypto.randomBytes(300000), Buffer.alloc(200000, 97),
+    Buffer.from(Array.from({ length: 4000 }, (_, i) => JSON.stringify({ i, k: 'key' + (i % 13) })).join(''))]
+  for (const b of cases) {
+    const back = Buffer.from(h.lzwUnpack(h.lzwPack(Uint8Array.from(b))))
+    assert.ok(back.equals(b), `round-trip failed for a ${b.length}-byte input`)
+  }
+  const json = Buffer.from(JSON.stringify(Array.from({ length: 500 }, (_, i) => ({ label: 'verify:review', severity: 'Should Fix', n: i }))))
+  assert.ok(h.lzwPack(Uint8Array.from(json)).length < json.length / 3, 'repetitive JSON did not shrink')
+  assert.throws(() => h.lzwUnpack(Uint8Array.from([1, 0])), /single byte/, 'a corrupt first code must be refused, not decoded')
 })
 
 console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)

@@ -180,16 +180,56 @@ test('clamp handles n <= 1 — the negative-index slice that caused the overrun'
     'either it fits, or overBudget says plainly that the cap was unsatisfiable')
 })
 
-test('the file list is dropped BEFORE any summary is cut', () => {
-  // A lens can recover a file list with Glob. It cannot recover a builder's
-  // reasoning from anywhere, so reasoning is the last thing to go.
-  // 900 files x ~30 chars overruns the 16k performance budget on the list alone,
-  // while the 1,000-char summary is under the 2,000 per-builder cap.
+test('the file list goes LAST — details and summaries are cut before any path', () => {
+  // The first version dropped the file list first ("a lens can recover it with
+  // Glob"). On the first live run the lenses did not, and code review, security
+  // and performance never read table-assigner.ts or availability.ts — two of the
+  // files the change was about. A realistic HU: 3 builders, 33 files, long
+  // plan gaps and notAddressed reasons, 28 long criteria.
+  const gaps = Array.from({ length: 6 }, (_, i) => `OD-${i}: ${'a decision the plan left open '.repeat(8)}`)
+  const ms = ['backend', 'frontend', 'data'].map((l, k) => ({
+    label: `build:${l}`, summary: 's'.repeat(1_900), diffRef: 'git diff 3f03357',
+    filesChanged: Array.from({ length: 11 }, (_, i) => ({ path: `apps/${l}/src/lib/services/file-${k}-${i}.ts`, role: 'implementation' })),
+    criteriaAddressed: ['HU16-AC-01'],
+    notAddressed: [{ id: 'HU16-AC-20', why: 'w'.repeat(400) }],
+    planGaps: gaps,
+  }))
+  const criteria = Array.from({ length: 28 }, (_, i) => `HU16-AC-${i}: ${'c'.repeat(380)}`).join('\n')
+  for (const lens of Object.keys(b.LENS_BUDGETS)) {
+    const r = b.buildBrief({ manifests: ms, lens, criteria, changeRef: 'git diff 3f03357 --stat; git status --short' })
+    assert.deepStrictEqual(r.omittedFiles, [], `${lens}: a path was dropped while details or summaries could still go`)
+    for (const m of ms) for (const f of m.filesChanged) assert.ok(r.text.includes(f.path), `${lens}: ${f.path} missing`)
+    assert.ok(r.text.includes('git diff 3f03357 --stat'), `${lens}: the route to the whole change was cut`)
+    assert.ok(r.chars <= b.LENS_BUDGETS[lens] || r.overBudget, `${lens}: ${r.chars} > budget`)
+    if (r.truncated) assert.ok(r.text.includes('TRUNCATED'), `${lens}: cut without a marker`)
+  }
+})
+
+test('a big head never cuts a path mid-name: every changed file is listed whole or reported omitted', () => {
+  // Code review round 7, S4: with ~11 K of criteria and 80 files, the final
+  // clamp cut the file list mid-path and reported nothing omitted.
+  const criteria = Array.from({ length: 28 }, (_, i) => `HU16-AC-${i}: ${'c'.repeat(380)}`).join('\n')
+  for (const nFiles of [55, 80, 200]) {
+    const m = { label: 'build:backend', summary: 's'.repeat(1_900), filesChanged: Array.from({ length: nFiles }, (_, i) => ({ path: `apps/api/src/lib/services/zones-${i}.ts`, role: 'implementation' })), criteriaAddressed: [] }
+    for (const lens of Object.keys(b.LENS_BUDGETS)) {
+      const r = b.buildBrief({ manifests: [m], lens, criteria, changeRef: 'git diff abc --stat' })
+      assert.ok(r.chars <= b.LENS_BUDGETS[lens] || r.overBudget, `${lens}/${nFiles}: over budget`)
+      for (const f of m.filesChanged) {
+        const listed = r.text.includes(`  - ${f.path} (`)
+        const reported = r.omittedFiles.includes(f.path)
+        assert.ok(listed !== reported, `${lens}/${nFiles}: ${f.path} is ${listed ? 'both listed and reported omitted' : 'neither listed nor reported omitted'}`)
+      }
+      if (r.omittedFiles.length) assert.ok(r.text.includes('Also changed, not listed above'), `${lens}/${nFiles}: files dropped without a word`)
+    }
+  }
+})
+
+test('when even the file list cannot fit, every dropped path is still named', () => {
   const m = manifest('backend', 900, 1_000)
   const r = b.buildBrief({ manifests: [m], lens: 'performance' })
   assert.strictEqual(r.truncated, true)
-  assert.strictEqual(r.omittedFiles.length, 900, 'the file list went first')
-  assert.ok(r.text.includes('x'.repeat(1_000)), 'the whole summary survived the file-list drop')
+  assert.ok(r.omittedFiles.length > 0 && r.omittedFiles.length < 900, 'part of the list is kept, the rest named')
+  assert.ok(r.text.includes(r.omittedFiles[0]), 'the first dropped path is named in the marker')
 })
 
 test('omitted files are named individually, not counted', () => {

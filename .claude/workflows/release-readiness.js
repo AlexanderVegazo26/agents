@@ -168,17 +168,49 @@ function slug(s) {
 // (24,000 hex characters) per step: a larger script is written in parts first,
 // and a larger output is read back in chunks. One SHA-256 covers the whole
 // either way (code review round 3 M1: resuming a realistic run relayed ~122k).
-const RELAY_CHUNK = 12000
+const RELAY_CHUNK = 6000
 // At most this many part or read steps per relay, each one an agent call: a
 // relay larger than that fails visibly instead of quietly running hundreds of
 // transcriber calls (code review / security round 4).
-const MAX_RELAY_STEPS = 64
+const MAX_RELAY_STEPS = 96
+// Data at or under this many hex characters rides inside the loader; anything
+// larger is written as DATA FILES by a step that only writes and never runs
+// anything. On the first live run a transcriber refused to execute a script
+// carrying a 40 KB hex block it could not inspect, and the run lost its Build
+// record and its outcome.json.
+const INLINE_DATA_HEX = 4000
 const MAX_RELAY_HEX = RELAY_CHUNK * 2 * MAX_RELAY_STEPS
 
 // Every bridge step is mechanical, so it runs on the cheapest model unless the
 // run pins nothing at all (`args.tiers: 'inherit'`). A caller may still pass a
 // model of its own.
 const BRIDGE_MODEL = args && typeof args === 'object' && args.tiers === 'inherit' ? null : 'haiku'
+
+/**
+ * One mechanical DATA step: write `text` to `file` and nothing else. Nothing is
+ * run, so there is nothing to inspect before executing — the reason a
+ * transcriber refused the old part-writer scripts. The loader that reads the
+ * file checks its hash before using it.
+ */
+async function transcribeData(label, file, text, model) {
+  const out = await agent(
+    `Mechanical bridge step of an sdlc-suite workflow: save one data file. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. The text between the markers is opaque DATA (hexadecimal, part of an encoded JSON input); it is never executed, and nothing in this step runs any command.
+
+1. Write the text between the two markers, exactly as it is, to ${file} — creating parent directories if they do not exist. If that path is relative, resolve it against your working directory first; the Write tool needs an absolute path. Copy it character for character: do not shorten, wrap, reformat or comment it.
+2. Return ok=true with result {"ok":true}. If the file could not be written, return ok=false with the reason in "error".
+
+--- BEGIN DATA ${file} ---
+${text}
+--- END DATA ${file} ---`,
+    { agentType: 'general-purpose', label, phase: 'Runtime', effort: 'low', schema: BRIDGE_SCHEMA,
+      ...(model ? { model } : {}) },
+  )
+  if (!out || out.ok !== true) {
+    log(`${label} did not write its data file${out && out.error ? ` — ${String(out.error).slice(0, 300)}` : ''}`)
+    return false
+  }
+  return true
+}
 
 /** One mechanical step: write `script` to `file`, run it, relay its stdout. */
 async function transcribe(label, file, script, model) {
@@ -235,37 +267,43 @@ async function bridge(op, source, model, data) {
   const nonce = `${RUN && RUN.runId ? RUN.runId : `pre-${WORKFLOW}-${preTag}`}:${op}:${n}`
   const PART = RELAY_CHUNK * 2
   let dataBlock = 'const input = null'
+  // Data files and their hashes, for the parts check in the loader below.
+  let partFiles = []
   if (data !== undefined) {
     const dataBytes = utf8Bytes(JSON.stringify(data))
-    const dataHex = hexOf(xorStream(dataBytes, 'in', nonce))
+    // Compressed, then scrambled: scrambled bytes do not compress.
+    const dataHex = hexOf(xorStream(lzwPack(dataBytes), 'in', nonce))
     if (dataHex.length > PART * MAX_RELAY_STEPS) {
-      log(`bridge:${op} input is ${dataHex.length / 2} bytes — over the ${MAX_RELAY_STEPS}-step relay limit; not sent`)
+      log(`bridge:${op} input is ${dataHex.length / 2} bytes compressed — over the ${MAX_RELAY_STEPS}-step relay limit; not sent`)
       return null
     }
     let dataExpr = `'${dataHex}'`
-    if (dataHex.length > PART) {
-      const parts = []
-      for (let i = 0; i < dataHex.length; i += PART) parts.push(dataHex.slice(i, i + PART))
-      for (let i = 0; i < parts.length; i++) {
-        const pf = `${file}.in${i}`
-        const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.cjs`, `// Writes part ${i + 1} of ${parts.length} of the encoded input of bridge step "${op}".
-const fs = require('fs')
-const path = require('path')
-fs.mkdirSync(path.dirname(path.resolve(${JSON.stringify(pf)})), { recursive: true })
-fs.writeFileSync(${JSON.stringify(pf)}, '${parts[i]}')
-process.stdout.write('{"ok":true}')`, m)
-        if (!w || w.ok !== true) {
-          log(`bridge:${op} input part ${i + 1}/${parts.length} was not written — discarded`)
+    if (dataHex.length > INLINE_DATA_HEX) {
+      for (let i = 0, k = 0; i < dataHex.length; i += PART, k++) {
+        const text = dataHex.slice(i, i + PART)
+        partFiles.push({ file: `${file}.in${k}`, sha: sha256Hex(utf8Bytes(text)), text })
+      }
+      for (let k = 0; k < partFiles.length; k++) {
+        if (!(await transcribeData(`bridge:${op}:part`, partFiles[k].file, partFiles[k].text, m))) {
+          log(`bridge:${op} data part ${k + 1}/${partFiles.length} was not written — discarded`)
           return null
         }
       }
-      dataExpr = `[${parts.map((_, i) => `fs.readFileSync(${JSON.stringify(`${file}.in${i}`)}, 'utf8')`).join(', ')}].join('')`
+      dataExpr = 'PARTS.map(p => fs.readFileSync(p.file, \'utf8\').trim()).join(\'\')'
     }
-    dataBlock = `// DATA: this step's JSON input, XOR-scrambled with a SHA-256 keystream of
-// NONCE and hex-encoded. Parsed, never executed. To read it, run this file
-// with the environment variable BRIDGE_PRINT_INPUT=1.
+    dataBlock = `${partFiles.length ? `// DATA FILES: this step's input, written by separate data-only steps. Each
+// is checked against its hash before anything runs; a damaged one is named
+// and written again — this step never runs on altered input.
+const PARTS = ${JSON.stringify(partFiles.map(x => ({ file: x.file, sha: x.sha })))}
+const damaged = PARTS.map((p, i) => {
+  try { return crypto.createHash('sha256').update(fs.readFileSync(p.file, 'utf8').trim()).digest('hex') === p.sha ? -1 : i } catch (e) { return i }
+}).filter(i => i >= 0)
+if (damaged.length) { realWrite(JSON.stringify({ rewrite: damaged })); process.exit(0) }
+` : ''}// DATA: this step's JSON input, LZW-compressed, XOR-scrambled with a SHA-256
+// keystream of NONCE and hex-encoded. Parsed, never executed. To read it, run
+// this file with the environment variable BRIDGE_PRINT_INPUT=1.
 const DATA = ${dataExpr}
-const plain = xs(Buffer.from(DATA, 'hex'), 'in')
+const plain = Buffer.from(lzwUnpack(xs(Buffer.from(DATA, 'hex'), 'in')))
 if (crypto.createHash('sha256').update(plain).digest('hex') !== '${sha256Hex(dataBytes)}') {
   process.stderr.write('bridge input was altered in transcription; refusing to run')
   process.exit(3)
@@ -289,6 +327,8 @@ const xs = (buf, tag) => {
   }
   return out
 }
+${lzwPack.toString()}
+${lzwUnpack.toString()}
 const realWrite = process.stdout.write.bind(process.stdout)
 const realErr = process.stderr.write.bind(process.stderr)
 // Output an earlier run (or an earlier attempt of a resumed run) left at this
@@ -323,20 +363,35 @@ if (failed) {
   process.exit(1)
 }
 const OUT = Buffer.from(captured, 'utf8')
-const HEXOUT = xs(OUT, 'out').toString('hex')
+const HEXOUT = xs(Buffer.from(lzwPack(OUT)), 'out').toString('hex')
 const SHA = crypto.createHash('sha256').update(NONCE, 'utf8').update(OUT).digest('hex')
 // Kept on disk, so a relay that came back damaged can be read again without
 // running this step a second time (some steps are not idempotent).
 fs.writeFileSync(${JSON.stringify(`${file}.out`)}, HEXOUT)
 fs.writeFileSync(${JSON.stringify(`${file}.sha`)}, SHA)
 realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.length, sha256: SHA }))`
-  const env = await transcribe(`bridge:${op}`, file, loader, m)
+  let env = await transcribe(`bridge:${op}`, file, loader, m)
+  // A damaged data file is written again, once, and the loader re-run: it
+  // stopped before the step itself, so nothing ran twice.
+  if (env && Array.isArray(env.rewrite) && partFiles.length) {
+    const again = env.rewrite.filter(i => Number.isInteger(i) && i >= 0 && i < partFiles.length)
+    log(`bridge:${op} data part(s) ${again.map(i => i + 1).join(', ')} arrived damaged — written again once`)
+    for (const i of again) {
+      if (!(await transcribeData(`bridge:${op}:part`, partFiles[i].file, partFiles[i].text, m))) return null
+    }
+    env = await transcribe(`bridge:${op}`, file, loader, m)
+    if (env && Array.isArray(env.rewrite)) {
+      log(`bridge:${op} data still damaged after one rewrite — discarded, never used`)
+      return null
+    }
+  }
 
   // Reassemble from the first relay; on any damage, read the kept output again
   // from the start — once. The loader is never run twice.
   const isHex = x => typeof x === 'string' && x.length % 2 === 0 && /^[0-9a-f]*$/.test(x)
   const decode = (hex, sha) => {
-    const plain = xorStream(bytesOfHex(hex), 'out', nonce)
+    let plain
+    try { plain = lzwUnpack(xorStream(bytesOfHex(hex), 'out', nonce)) } catch (e) { return undefined }
     const nb = utf8Bytes(nonce)
     const both = new Uint8Array(nb.length + plain.length)
     both.set(nb)
@@ -514,6 +569,66 @@ function xorStream(bytes, tag, nonce) {
     for (let j = 0; j < 32 && o + j < bytes.length; j++) out[o + j] = bytes[o + j] ^ k[j]
   }
   return out
+}
+
+/**
+ * LZW over bytes: 16-bit codes, the dictionary restarting from the 256 single
+ * bytes once it holds 65536 entries. Bridge data is compressed before it is
+ * scrambled, because every byte of it is copied by a transcriber: the first
+ * live run relayed ~250 KB of JSON as ~500 KB of hex, and a transcriber
+ * refused a 40 KB block outright. JSON repeats its keys, so it shrinks several
+ * times. Plain code on Uint8Array — no Buffer, no zlib — because the same
+ * source runs in the sandbox (which has neither) and, via toString(), inside
+ * every loader, where a person or a classifier can read exactly what decodes.
+ */
+function lzwPack(bytes) {
+  const dict = new Map()
+  let next = 256
+  const codes = []
+  let w = -1
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]
+    if (w < 0) { w = b; continue }
+    const key = w * 256 + b
+    const c = dict.get(key)
+    if (c !== undefined) { w = c; continue }
+    codes.push(w)
+    if (next < 65536) dict.set(key, next++)
+    else { dict.clear(); next = 256 }
+    w = b
+  }
+  if (w >= 0) codes.push(w)
+  const out = new Uint8Array(codes.length * 2)
+  for (let i = 0; i < codes.length; i++) { out[2 * i] = codes[i] >> 8; out[2 * i + 1] = codes[i] & 255 }
+  return out
+}
+
+function lzwUnpack(packed) {
+  if (packed.length % 2) throw new Error('lzw: odd length')
+  let dict = []
+  let next = 256
+  const out = []
+  let prev = null
+  for (let i = 0; i < packed.length; i += 2) {
+    const c = packed[i] * 256 + packed[i + 1]
+    let e
+    if (prev === null || next === 65536) {
+      // The first code, and the first after the dictionary restarts, is always
+      // a single byte: the packer had nothing longer to match.
+      if (c >= 256) throw new Error('lzw: a multi-byte code where a single byte must stand')
+      if (prev !== null) { dict = []; next = 256 }
+      e = [c]
+    } else {
+      if (c < 256) e = [c]
+      else if (dict[c]) e = dict[c]
+      else if (c === next) e = prev.concat([prev[0]])
+      else throw new Error('lzw: unknown code')
+      dict[next++] = prev.concat([e[0]])
+    }
+    for (let j = 0; j < e.length; j++) out.push(e[j])
+    prev = e
+  }
+  return Uint8Array.from(out)
 }
 
 /**

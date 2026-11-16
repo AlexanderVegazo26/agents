@@ -175,17 +175,49 @@ function slug(s) {
 // (24,000 hex characters) per step: a larger script is written in parts first,
 // and a larger output is read back in chunks. One SHA-256 covers the whole
 // either way (code review round 3 M1: resuming a realistic run relayed ~122k).
-const RELAY_CHUNK = 12000
+const RELAY_CHUNK = 6000
 // At most this many part or read steps per relay, each one an agent call: a
 // relay larger than that fails visibly instead of quietly running hundreds of
 // transcriber calls (code review / security round 4).
-const MAX_RELAY_STEPS = 64
+const MAX_RELAY_STEPS = 96
+// Data at or under this many hex characters rides inside the loader; anything
+// larger is written as DATA FILES by a step that only writes and never runs
+// anything. On the first live run a transcriber refused to execute a script
+// carrying a 40 KB hex block it could not inspect, and the run lost its Build
+// record and its outcome.json.
+const INLINE_DATA_HEX = 4000
 const MAX_RELAY_HEX = RELAY_CHUNK * 2 * MAX_RELAY_STEPS
 
 // Every bridge step is mechanical, so it runs on the cheapest model unless the
 // run pins nothing at all (`args.tiers: 'inherit'`). A caller may still pass a
 // model of its own.
 const BRIDGE_MODEL = args && typeof args === 'object' && args.tiers === 'inherit' ? null : 'haiku'
+
+/**
+ * One mechanical DATA step: write `text` to `file` and nothing else. Nothing is
+ * run, so there is nothing to inspect before executing — the reason a
+ * transcriber refused the old part-writer scripts. The loader that reads the
+ * file checks its hash before using it.
+ */
+async function transcribeData(label, file, text, model) {
+  const out = await agent(
+    `Mechanical bridge step of an sdlc-suite workflow: save one data file. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. The text between the markers is opaque DATA (hexadecimal, part of an encoded JSON input); it is never executed, and nothing in this step runs any command.
+
+1. Write the text between the two markers, exactly as it is, to ${file} — creating parent directories if they do not exist. If that path is relative, resolve it against your working directory first; the Write tool needs an absolute path. Copy it character for character: do not shorten, wrap, reformat or comment it.
+2. Return ok=true with result {"ok":true}. If the file could not be written, return ok=false with the reason in "error".
+
+--- BEGIN DATA ${file} ---
+${text}
+--- END DATA ${file} ---`,
+    { agentType: 'general-purpose', label, phase: 'Runtime', effort: 'low', schema: BRIDGE_SCHEMA,
+      ...(model ? { model } : {}) },
+  )
+  if (!out || out.ok !== true) {
+    log(`${label} did not write its data file${out && out.error ? ` — ${String(out.error).slice(0, 300)}` : ''}`)
+    return false
+  }
+  return true
+}
 
 /** One mechanical step: write `script` to `file`, run it, relay its stdout. */
 async function transcribe(label, file, script, model) {
@@ -242,37 +274,43 @@ async function bridge(op, source, model, data) {
   const nonce = `${RUN && RUN.runId ? RUN.runId : `pre-${WORKFLOW}-${preTag}`}:${op}:${n}`
   const PART = RELAY_CHUNK * 2
   let dataBlock = 'const input = null'
+  // Data files and their hashes, for the parts check in the loader below.
+  let partFiles = []
   if (data !== undefined) {
     const dataBytes = utf8Bytes(JSON.stringify(data))
-    const dataHex = hexOf(xorStream(dataBytes, 'in', nonce))
+    // Compressed, then scrambled: scrambled bytes do not compress.
+    const dataHex = hexOf(xorStream(lzwPack(dataBytes), 'in', nonce))
     if (dataHex.length > PART * MAX_RELAY_STEPS) {
-      log(`bridge:${op} input is ${dataHex.length / 2} bytes — over the ${MAX_RELAY_STEPS}-step relay limit; not sent`)
+      log(`bridge:${op} input is ${dataHex.length / 2} bytes compressed — over the ${MAX_RELAY_STEPS}-step relay limit; not sent`)
       return null
     }
     let dataExpr = `'${dataHex}'`
-    if (dataHex.length > PART) {
-      const parts = []
-      for (let i = 0; i < dataHex.length; i += PART) parts.push(dataHex.slice(i, i + PART))
-      for (let i = 0; i < parts.length; i++) {
-        const pf = `${file}.in${i}`
-        const w = await transcribe(`bridge:${op}:part`, `${file}.w${i}.cjs`, `// Writes part ${i + 1} of ${parts.length} of the encoded input of bridge step "${op}".
-const fs = require('fs')
-const path = require('path')
-fs.mkdirSync(path.dirname(path.resolve(${JSON.stringify(pf)})), { recursive: true })
-fs.writeFileSync(${JSON.stringify(pf)}, '${parts[i]}')
-process.stdout.write('{"ok":true}')`, m)
-        if (!w || w.ok !== true) {
-          log(`bridge:${op} input part ${i + 1}/${parts.length} was not written — discarded`)
+    if (dataHex.length > INLINE_DATA_HEX) {
+      for (let i = 0, k = 0; i < dataHex.length; i += PART, k++) {
+        const text = dataHex.slice(i, i + PART)
+        partFiles.push({ file: `${file}.in${k}`, sha: sha256Hex(utf8Bytes(text)), text })
+      }
+      for (let k = 0; k < partFiles.length; k++) {
+        if (!(await transcribeData(`bridge:${op}:part`, partFiles[k].file, partFiles[k].text, m))) {
+          log(`bridge:${op} data part ${k + 1}/${partFiles.length} was not written — discarded`)
           return null
         }
       }
-      dataExpr = `[${parts.map((_, i) => `fs.readFileSync(${JSON.stringify(`${file}.in${i}`)}, 'utf8')`).join(', ')}].join('')`
+      dataExpr = 'PARTS.map(p => fs.readFileSync(p.file, \'utf8\').trim()).join(\'\')'
     }
-    dataBlock = `// DATA: this step's JSON input, XOR-scrambled with a SHA-256 keystream of
-// NONCE and hex-encoded. Parsed, never executed. To read it, run this file
-// with the environment variable BRIDGE_PRINT_INPUT=1.
+    dataBlock = `${partFiles.length ? `// DATA FILES: this step's input, written by separate data-only steps. Each
+// is checked against its hash before anything runs; a damaged one is named
+// and written again — this step never runs on altered input.
+const PARTS = ${JSON.stringify(partFiles.map(x => ({ file: x.file, sha: x.sha })))}
+const damaged = PARTS.map((p, i) => {
+  try { return crypto.createHash('sha256').update(fs.readFileSync(p.file, 'utf8').trim()).digest('hex') === p.sha ? -1 : i } catch (e) { return i }
+}).filter(i => i >= 0)
+if (damaged.length) { realWrite(JSON.stringify({ rewrite: damaged })); process.exit(0) }
+` : ''}// DATA: this step's JSON input, LZW-compressed, XOR-scrambled with a SHA-256
+// keystream of NONCE and hex-encoded. Parsed, never executed. To read it, run
+// this file with the environment variable BRIDGE_PRINT_INPUT=1.
 const DATA = ${dataExpr}
-const plain = xs(Buffer.from(DATA, 'hex'), 'in')
+const plain = Buffer.from(lzwUnpack(xs(Buffer.from(DATA, 'hex'), 'in')))
 if (crypto.createHash('sha256').update(plain).digest('hex') !== '${sha256Hex(dataBytes)}') {
   process.stderr.write('bridge input was altered in transcription; refusing to run')
   process.exit(3)
@@ -296,6 +334,8 @@ const xs = (buf, tag) => {
   }
   return out
 }
+${lzwPack.toString()}
+${lzwUnpack.toString()}
 const realWrite = process.stdout.write.bind(process.stdout)
 const realErr = process.stderr.write.bind(process.stderr)
 // Output an earlier run (or an earlier attempt of a resumed run) left at this
@@ -330,20 +370,35 @@ if (failed) {
   process.exit(1)
 }
 const OUT = Buffer.from(captured, 'utf8')
-const HEXOUT = xs(OUT, 'out').toString('hex')
+const HEXOUT = xs(Buffer.from(lzwPack(OUT)), 'out').toString('hex')
 const SHA = crypto.createHash('sha256').update(NONCE, 'utf8').update(OUT).digest('hex')
 // Kept on disk, so a relay that came back damaged can be read again without
 // running this step a second time (some steps are not idempotent).
 fs.writeFileSync(${JSON.stringify(`${file}.out`)}, HEXOUT)
 fs.writeFileSync(${JSON.stringify(`${file}.sha`)}, SHA)
 realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.length, sha256: SHA }))`
-  const env = await transcribe(`bridge:${op}`, file, loader, m)
+  let env = await transcribe(`bridge:${op}`, file, loader, m)
+  // A damaged data file is written again, once, and the loader re-run: it
+  // stopped before the step itself, so nothing ran twice.
+  if (env && Array.isArray(env.rewrite) && partFiles.length) {
+    const again = env.rewrite.filter(i => Number.isInteger(i) && i >= 0 && i < partFiles.length)
+    log(`bridge:${op} data part(s) ${again.map(i => i + 1).join(', ')} arrived damaged — written again once`)
+    for (const i of again) {
+      if (!(await transcribeData(`bridge:${op}:part`, partFiles[i].file, partFiles[i].text, m))) return null
+    }
+    env = await transcribe(`bridge:${op}`, file, loader, m)
+    if (env && Array.isArray(env.rewrite)) {
+      log(`bridge:${op} data still damaged after one rewrite — discarded, never used`)
+      return null
+    }
+  }
 
   // Reassemble from the first relay; on any damage, read the kept output again
   // from the start — once. The loader is never run twice.
   const isHex = x => typeof x === 'string' && x.length % 2 === 0 && /^[0-9a-f]*$/.test(x)
   const decode = (hex, sha) => {
-    const plain = xorStream(bytesOfHex(hex), 'out', nonce)
+    let plain
+    try { plain = lzwUnpack(xorStream(bytesOfHex(hex), 'out', nonce)) } catch (e) { return undefined }
     const nb = utf8Bytes(nonce)
     const both = new Uint8Array(nb.length + plain.length)
     both.set(nb)
@@ -521,6 +576,66 @@ function xorStream(bytes, tag, nonce) {
     for (let j = 0; j < 32 && o + j < bytes.length; j++) out[o + j] = bytes[o + j] ^ k[j]
   }
   return out
+}
+
+/**
+ * LZW over bytes: 16-bit codes, the dictionary restarting from the 256 single
+ * bytes once it holds 65536 entries. Bridge data is compressed before it is
+ * scrambled, because every byte of it is copied by a transcriber: the first
+ * live run relayed ~250 KB of JSON as ~500 KB of hex, and a transcriber
+ * refused a 40 KB block outright. JSON repeats its keys, so it shrinks several
+ * times. Plain code on Uint8Array — no Buffer, no zlib — because the same
+ * source runs in the sandbox (which has neither) and, via toString(), inside
+ * every loader, where a person or a classifier can read exactly what decodes.
+ */
+function lzwPack(bytes) {
+  const dict = new Map()
+  let next = 256
+  const codes = []
+  let w = -1
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]
+    if (w < 0) { w = b; continue }
+    const key = w * 256 + b
+    const c = dict.get(key)
+    if (c !== undefined) { w = c; continue }
+    codes.push(w)
+    if (next < 65536) dict.set(key, next++)
+    else { dict.clear(); next = 256 }
+    w = b
+  }
+  if (w >= 0) codes.push(w)
+  const out = new Uint8Array(codes.length * 2)
+  for (let i = 0; i < codes.length; i++) { out[2 * i] = codes[i] >> 8; out[2 * i + 1] = codes[i] & 255 }
+  return out
+}
+
+function lzwUnpack(packed) {
+  if (packed.length % 2) throw new Error('lzw: odd length')
+  let dict = []
+  let next = 256
+  const out = []
+  let prev = null
+  for (let i = 0; i < packed.length; i += 2) {
+    const c = packed[i] * 256 + packed[i + 1]
+    let e
+    if (prev === null || next === 65536) {
+      // The first code, and the first after the dictionary restarts, is always
+      // a single byte: the packer had nothing longer to match.
+      if (c >= 256) throw new Error('lzw: a multi-byte code where a single byte must stand')
+      if (prev !== null) { dict = []; next = 256 }
+      e = [c]
+    } else {
+      if (c < 256) e = [c]
+      else if (dict[c]) e = dict[c]
+      else if (c === next) e = prev.concat([prev[0]])
+      else throw new Error('lzw: unknown code')
+      dict[next++] = prev.concat([e[0]])
+    }
+    for (let j = 0; j < e.length; j++) out.push(e[j])
+    prev = e
+  }
+  return Uint8Array.from(out)
 }
 
 /**
@@ -1292,6 +1407,30 @@ const APPROVED = !!(args && typeof args === 'object' && args.approvedPlan === tr
 const REPLAN = !!(args && typeof args === 'object' && args.replan === true)
 // Pausing hands the person durable files to approve, so it exists only in spec mode.
 const PAUSE = !!SPEC_DIR && (args && typeof args === 'object' && typeof args.pauseAfterPlan === 'boolean' ? args.pauseAfterPlan : true)
+// WHERE BUILDERS WORK. 'worktrees': one isolated worktree per builder, in
+// parallel. 'checkout': one after another (data, backend, frontend) in the
+// checkout the run started in — the default in spec mode. On the first live
+// run the per-builder worktrees diverged (three versions of the same files,
+// repairs landing in different trees), were never joined, and were created
+// from the default branch rather than the HU branch; a person had to pick the
+// right tree by hand. In the checkout there is one tree, on the HU branch.
+const BUILD_TREE_ARG = args && typeof args === 'object' ? args.buildTree : undefined
+const BUILD_TREE = (() => {
+  if (BUILD_TREE_ARG !== undefined && BUILD_TREE_ARG !== 'checkout' && BUILD_TREE_ARG !== 'worktrees') {
+    log(`args.buildTree ${JSON.stringify(BUILD_TREE_ARG)} ignored — expected 'checkout' or 'worktrees'`)
+  }
+  const want = BUILD_TREE_ARG === 'checkout' || BUILD_TREE_ARG === 'worktrees' ? BUILD_TREE_ARG : (SPEC_DIR ? 'checkout' : 'worktrees')
+  if (want === 'checkout' && !SPEC_DIR) {
+    log("args.buildTree 'checkout' needs args.specDir (its preflight finds the base commit) — building in worktrees")
+    return 'worktrees'
+  }
+  return want
+})()
+let BUILD_BASE = null   // the commit a checkout build diffs against, from the spec preflight
+/** How a reader sees the WHOLE change — never cut from a lens brief. */
+const changeRef = () => (BUILD_TREE === 'checkout' && BUILD_BASE
+  ? `The whole change is UNCOMMITTED in the checkout this run started in. List it with \`git diff ${BUILD_BASE} --stat\` and \`git status --short\` (new files are untracked); read it with \`git diff ${BUILD_BASE}\`.`
+  : '')
 // Who wrote a handed-on file, for the sentence a downstream agent reads.
 const HANDOFF_ORIGIN = {}
 const RENDER_CAP = 64 * 1024          // a rendered document is cut to this before it is written (16 KB cut a real 22 KB spec.md, HU 16 pilot)
@@ -1514,7 +1653,28 @@ if (CFG.approved && dir && !errors.length) {
   }
   if (!errors.length) specText = fs.readFileSync(path.join(dir, 'spec.md'), 'utf8').slice(0, 200000)
 }
-return { errors, files, intent, specText }`, TIERS.transcribe.model)
+// The commit a checkout build diffs against, and what is uncommitted OUTSIDE
+// the spec directory and .claude/ — a checkout build refuses to mix with it.
+let head = null
+try { head = git('rev-parse', 'HEAD') } catch (e) { head = null }
+let dirty = []
+try {
+  // -z: paths are never quoted, and a rename or copy carries BOTH paths — the
+  // destination, then the source — so moving a file out of the spec directory
+  // still counts as a change outside it (code review round 7, N2).
+  const st = execFileSync('git', ['status', '--porcelain=v1', '-uall', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  const spec = CFG.specDir ? CFG.specDir.replace(/\\/+$/, '') + '/' : null
+  const tok = st.split('\\0')
+  const paths = []
+  for (let i = 0; i < tok.length; i++) {
+    if (!tok[i]) continue
+    const xy = tok[i].slice(0, 2)
+    paths.push(tok[i].slice(3))
+    if (/[RC]/.test(xy) && tok[i + 1]) paths.push(tok[++i])
+  }
+  dirty = paths.filter(x => !(spec && x.startsWith(spec)) && !x.startsWith('.claude/'))
+} catch (e) { dirty = null }
+return { errors, files, intent, specText, head, dirty }`, TIERS.transcribe.model)
 }
 
 /** Criteria, surfaces, assumptions and questions back out of a spec.md in renderSpec's layout. */
@@ -1822,7 +1982,7 @@ const LENSES = [
  */
 async function buildBriefs(manifests, criteria, lensKeys) {
   const fallbackText =
-    `## Acceptance criteria\n${criteria}\n\n## Implementation (build manifest — budget not applied)\n${JSON.stringify(manifests, null, 2)}`
+    `## Acceptance criteria\n${criteria}\n\n${changeRef() ? `## The whole change\n${changeRef()}\n\n` : ''}## Implementation (build manifest — budget not applied)\n${JSON.stringify(manifests, null, 2)}`
   const fallback = () => {
     const out = {}
     for (const k of lensKeys) {
@@ -1844,11 +2004,11 @@ const manifests = input.manifests
 const criteria = input.criteria
 const out = {}
 for (const lens of ${JSON.stringify(lensKeys)}) {
-  const br = b.buildBrief({ manifests: manifests, lens: lens, criteria: criteria })
+  const br = b.buildBrief({ manifests: manifests, lens: lens, criteria: criteria, changeRef: input.changeRef })
   out[lens] = { text: br.text, chars: br.chars, truncated: br.truncated, omittedFiles: br.omittedFiles,
                 handoff: b.handoffRecord(br, manifests), briefSource: 'buildBrief' }
 }
-process.stdout.write(JSON.stringify(out))`, undefined, { manifests, criteria })
+process.stdout.write(JSON.stringify(out))`, undefined, { manifests, criteria, changeRef: changeRef() })
 
   if (!r) {
     log('brief bridge unavailable — each lens receives the build manifest itself, unbudgeted')
@@ -2001,6 +2161,34 @@ async function runWorkflow() {
     if (pre.errors.length) {
       status = 'stopped'
       return { status: 'stopped', reason: pre.errors.join(' ') }
+    }
+    if (BUILD_TREE === 'checkout') {
+      // On a resume whose Build already ran, the recorded base wins (set after
+      // Build replays): HEAD may have moved since, and a diff against the new
+      // HEAD would show reviewers an empty change (code review round 7, S1).
+      BUILD_BASE = pre.head || null
+      // A plan-only run never builds, and a resume whose Build already ran
+      // continues its own uncommitted work. Every other run that will build is
+      // checked — including a resume that stopped BEFORE Build (S2).
+      const buildRecorded = !!(RUN && RUN.resumed && Object.prototype.hasOwnProperty.call(RUN.resumed, 'Build'))
+      const willBuild = (APPROVED || !PAUSE) && !buildRecorded
+      if (willBuild && (pre.dirty === null || pre.dirty === undefined || !pre.head)) {
+        // Without git there is nothing to check the tree against and nothing to
+        // diff the change against: never build blind in a person's checkout (S3).
+        status = 'stopped'
+        return {
+          status: 'stopped',
+          reason: "a checkout build needs git: the base commit or the working-tree status could not be read. Run it in a git checkout, or with buildTree: 'worktrees'.",
+        }
+      }
+      if (willBuild && Array.isArray(pre.dirty) && pre.dirty.length) {
+        status = 'stopped'
+        const shown = pre.dirty.slice(0, 8).join(', ') + (pre.dirty.length > 8 ? `, and ${pre.dirty.length - 8} more` : '')
+        return {
+          status: 'stopped',
+          reason: `the checkout has uncommitted changes outside ${handoffDir()} (${shown}). Builders work in this checkout, so their change would mix with yours. Commit or stash them first, or run with buildTree: 'worktrees'.`,
+        }
+      }
     }
     if (!pre.intent || !pre.intent.sha) {
       status = 'stopped'
@@ -2307,11 +2495,17 @@ ${handoffRef('design.md', 'UX SPEC', asText(uxSpec))}${HANDOFF_FILES['mock.html'
   }
 
   const surfaces = reqs.surfaces.filter(s => BUILDERS[s])
-  const buildArtifact = await runPhase('Build', 'Test', async () => {
-    const built = await parallel(
-      surfaces.map(surface => () =>
-        dispatch(
-          withPolicy(`${BUILDERS[surface].brief}
+  const IN_CHECKOUT = BUILD_TREE === 'checkout'
+  // In the checkout the builders take turns, data first and the frontend last,
+  // each told what the earlier ones changed — one tree, no merge step.
+  const buildOrder = IN_CHECKOUT ? ['data', 'backend', 'frontend'].filter(x => surfaces.includes(x)) : surfaces
+  const checkoutRules = earlier => (IN_CHECKOUT
+    ? `\n\nWHERE YOU BUILD: in the repository checkout this run started in, on its current branch — not a worktree. ${earlier.length
+      ? `Earlier builders already changed this tree; build on their work and never revert it:\n${earlier.map(m => `- ${m.label}: ${(m.filesChanged || []).map(f => f.path).join(', ') || '(no files listed)'}`).join('\n')}\n`
+      : ''}Do not commit, switch branches, stash, reset or clean — the change stays uncommitted for review.${BUILD_BASE ? ` For diffRef, write: git diff ${BUILD_BASE}, plus the new untracked files: git status --short` : ''}`
+    : '')
+  const buildOne = (surface, earlier) => dispatch(
+    withPolicy(`${BUILDERS[surface].brief}
 
 ACCEPTANCE CRITERIA (trace to these IDs):\n${criteriaText}
 
@@ -2319,14 +2513,25 @@ ${handoffRef('plan.md', 'IMPLEMENTATION PLAN — execute it; do not redesign it'
 
 When the plan does not settle something you need — an interface, a data shape, an error behaviour, anything listed under "Open decisions" — do NOT make the design decision yourself. Implement what the plan does settle and put each open decision in planGaps, worded so a planner can answer it. An escalated gap costs one planning round; an improvised design choice at build tier costs a review cycle and usually a rewrite.
 
-Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code themselves — your summary is at most 2000 characters and exists to tell them what to look at and why, never to reproduce the diff. List every file you changed with its role, give a diffRef a reader can reach the change through (a git range, or the worktree path you were given), and name the criteria you addressed. Any criterion you did not address goes in notAddressed with the reason — an omission that is written down is a decision; one that is not is a defect found later.`),
-          // retry: false — a builder mutates a worktree; see dispatch().
-          { agentType: BUILDERS[surface].agentType, label: `build:${surface}`, phase: 'Build', isolation: 'worktree', schema: BUILD_MANIFEST_SCHEMA, retry: false, ...tier('build') },
-        ),
-      ),
-    )
+Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code themselves — your summary is at most 2000 characters and exists to tell them what to look at and why, never to reproduce the diff. List every file you changed with its role, give a diffRef a reader can reach the change through (a git range, or the worktree path you were given), and name the criteria you addressed. Any criterion you did not address goes in notAddressed with the reason — an omission that is written down is a decision; one that is not is a defect found later.${checkoutRules(earlier)}`),
+    // retry: false — a builder mutates the tree; see dispatch().
+    { agentType: BUILDERS[surface].agentType, label: `build:${surface}`, phase: 'Build', ...(IN_CHECKOUT ? {} : { isolation: 'worktree' }), schema: BUILD_MANIFEST_SCHEMA, retry: false, ...tier('build') },
+  )
+  const buildArtifact = await runPhase('Build', 'Test', async () => {
+    if (IN_CHECKOUT) {
+      const out = []
+      for (const surface of buildOrder) {
+        const earlier = out.filter(x => x.result).map(x => ({ label: x.label, ...x.result }))
+        out.push({ label: `build:${surface}`, result: await buildOne(surface, earlier) })
+      }
+      // Recorded with the phase: a resume diffs against the commit the build
+      // started from, not wherever HEAD is by then (code review round 7, S1).
+      return { agents: out, base: BUILD_BASE }
+    }
+    const built = await parallel(surfaces.map(surface => () => buildOne(surface, [])))
     return { agents: surfaces.map((s, i) => ({ label: `build:${s}`, result: built[i] })) }
   })
+  if (IN_CHECKOUT && buildArtifact && typeof buildArtifact.base === 'string' && buildArtifact.base) BUILD_BASE = buildArtifact.base
 
   const manifests = surfaces
     .map(s => {
@@ -2339,6 +2544,10 @@ Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code 
     status = 'stopped'
     return { status: 'stopped', reason: 'No build surface produced an implementation manifest.', requirements: reqs }
   }
+  // One tree, one route to it: a builder's own diffRef could name a range that
+  // misses the others' uncommitted work.
+  // `git diff` alone misses every NEW file — they are untracked (round 7, S5).
+  if (IN_CHECKOUT && BUILD_BASE) for (const m of manifests) m.diffRef = `git diff ${BUILD_BASE}, plus the new untracked files: git status --short`
 
   // Whitespace collapsed: a gap is one line of a BLOCKED entry, and a newline
   // inside it would end the entry early in the reducer (code review C1).
@@ -2521,11 +2730,11 @@ The section above is a BRIEF, by reference. It is not the diff. Read the changed
     const surfaceOf = m => String(m.label).replace(/^build:/, '')
 
     const repairArtifact = await runPhase(`Repair ${k}`, `Re-verify ${k}`, async () => {
-      const fixed = await parallel(fixers.map(m => () =>
+      const fixOne = m =>
         dispatch(
           withPolicy(`REPAIR, round ${k} of ${MAX_REPAIR_ROUNDS}. Independent reviewers confirmed the blocking findings below against the change you built. Fix them.
 
-Work on YOUR ORIGINAL CHANGE, where it already lives — ${m.diffRef ? `reach it through: ${m.diffRef}` : 'the worktree or branch you built it in'}. Do not start from a fresh checkout: the change is not there, and a fix applied to the wrong tree fixes nothing. Stay inside the findings' scope; anything else you notice goes in your summary as noticed-but-not-touched.
+Work on YOUR ORIGINAL CHANGE, where it already lives — ${m.diffRef ? `reach it through: ${m.diffRef}` : 'the worktree or branch you built it in'}. Do not start from a fresh checkout: the change is not there, and a fix applied to the wrong tree fixes nothing.${IN_CHECKOUT ? ' It is uncommitted in the checkout this run started in, together with the other builders\' work: fix only what the findings name, never revert theirs, and do not commit, switch branches, stash, reset or clean.' : ''} Stay inside the findings' scope; anything else you notice goes in your summary as noticed-but-not-touched.
 
 A finding you believe is wrong is not yours to dismiss — say so in notAddressed with the evidence, and the independent lens that raised it will re-check. You do not certify this repair; the lens re-verifies it after you.
 
@@ -2542,8 +2751,11 @@ Report a BUILD MANIFEST of the repair, with the same rules as the build: every f
           // retry: false — a repair MUTATES the change. A null after a partial
           // edit is not something a second attempt on top of it can cleanly fix.
           { agentType: BUILDERS[surfaceOf(m)].agentType, label: `repair:${surfaceOf(m)}`, phase: 'Repair', schema: BUILD_MANIFEST_SCHEMA, retry: false, ...tier('build') },
-        ),
-      ))
+        )
+      // In the checkout the fixers share one tree, so they take turns.
+      const fixed = IN_CHECKOUT
+        ? await (async () => { const r = []; for (const m of fixers) r.push(await fixOne(m)); return r })()
+        : await parallel(fixers.map(m => () => fixOne(m)))
       return { agents: fixers.map((m, i) => ({ label: `repair:${surfaceOf(m)}`, result: fixed[i] })) }
     }, 'Repair')
 
@@ -2673,6 +2885,21 @@ ${criteriaText}`),
     }, {}),
   }
 
+  // Which lenses ran, stated positively. With only "lenses that did not run:
+  // (none)" to go on, readiness on the first live run reported that security
+  // never ran — it had run, raised findings, and every one was refuted, so none
+  // reached the confirmed list readiness reads.
+  const deadLenses = new Set([...testDead, ...reviewDead].map(l => l.replace(/^verify:/, '')))
+  const coverageText = LENSES.map(l => {
+    if (deadLenses.has(l.key)) return `- ${l.key} (${l.agentType.replace(/^/, '')}): DID NOT RUN — it returned nothing`
+    const raised = seenFindings.filter(f => f.lens === l.key)
+    const b = briefs[l.key] || {}
+    const brief = b.truncated
+      ? `its brief was PARTIAL${(b.omittedFiles || []).length ? ` (${b.omittedFiles.length} changed file(s) not listed in it)` : ''}`
+      : 'its brief was complete'
+    return `- ${l.key} (${l.agentType.replace(/^/, '')}): RAN — raised ${raised.length} finding(s): ${verified.filter(f => f.lens === l.key).length} confirmed, ${unverified.filter(f => f.lens === l.key).length} unverified, ${raised.filter(f => f.refuted).length} refuted; ${brief}`
+  }).join('\n')
+
   // -------------------------------------------------------------------------
   // Phase 6 — Readiness, on the readiness tier. Recommendation only, for a
   // HUMAN to approve. No deploy authority here.
@@ -2686,6 +2913,9 @@ ${criteriaText}`),
 Produce a RECOMMENDATION for human confirmation. You do not hold deploy authority and this workflow cannot grant it.
 
 The autonomy policy in force is stated at the top of this prompt — you do not need to go and find it. Reproduce every BLOCKED gate entry from the evidence below verbatim in your output, each with what was prepared so a human can execute it in one step. Do not drop a blocked gate because the recommendation is otherwise a Go.
+
+VERIFICATION COVERAGE — every lens of this run and what it did. A lens marked RAN looked at the change even when none of its findings survived; never report it as missing or as not having run. A PARTIAL brief means that lens may have missed part of the change — say so where it matters:
+${coverageText}
 
 CONFIRMED FINDINGS (an independent refuter checked each; after the bounded repair loop):\n${JSON.stringify(verified, null, 2)}
 
