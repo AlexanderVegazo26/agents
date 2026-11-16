@@ -144,6 +144,20 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **Evidence a person can approve from.** `/sdlc-feature`'s Test stage returns
+  one case per acceptance criterion — id, criterion, title, type (unit,
+  component, integration, e2e, visual, mutation, manual), test, result and
+  evidence path — saves the evidence under `<handoff>/evidencia/` with a
+  `casos.md`, and runs mutation testing on the changed files when the
+  repository has it set up (surviving mutants are Should Fix findings).
+  `test-report.md` opens with a traceability table and one line — proven,
+  failing, pending human QA, mutation score — which readiness also receives.
+- **Contradictions found while planning.** The analyst compares the intent
+  with the repository's specs, docs and code and lists every disagreement,
+  both sides quoted, in `spec.md` (`## Contradictions`, read back on
+  approval). They lead `humanDecisionRequired` at the pause, and readiness
+  treats a criterion they touch as not Confirmed.
+
 - **`/sdlc-feature` spec mode: `args.specDir`, `args.intentPath`,
   `args.strict`.** `"specDir": "specs/features/HU-22"` keeps the handoff files
   in the repository beside the change. A person's `intent.md` in that

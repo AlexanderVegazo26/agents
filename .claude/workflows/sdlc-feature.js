@@ -1685,7 +1685,7 @@ function parseSpec(text) {
     errors.push('spec.md still carries the "[truncated at N characters]" marker — it was cut when written; restore the missing criteria before approving it')
   }
   const sec = {}
-  const KNOWN = new Set(['acceptance criteria', 'surfaces', 'assumptions', 'open questions'])
+  const KNOWN = new Set(['acceptance criteria', 'surfaces', 'assumptions', 'open questions', 'contradictions'])
   let cur = null
   let curLevel = 0
   let fenced = false
@@ -1698,7 +1698,8 @@ function parseSpec(text) {
       const known = /^acceptance criteria\b/.test(title) ? 'acceptance criteria'
         : /^surfaces\b/.test(title) ? 'surfaces'
           : /^assumptions\b/.test(title) ? 'assumptions'
-            : /^open questions\b/.test(title) ? 'open questions' : null
+            : /^open questions\b/.test(title) ? 'open questions'
+              : /^contradictions\b/.test(title) ? 'contradictions' : null
       // "### Onboarding" under "## Acceptance criteria" groups criteria; it
       // must not end the section and drop every criterion below it (round 5).
       if (!known && KNOWN.has(cur) && level > curLevel) continue
@@ -1731,7 +1732,7 @@ function parseSpec(text) {
   }
   const surfaces = ((sec['surfaces'] || []).join(' ').toLowerCase().match(/\b(backend|frontend|data)\b/g) || [])
     .filter((v, i, a) => a.indexOf(v) === i)
-  return { criteria, assumptions: items('assumptions'), openQuestions: items('open questions'), surfaces, errors }
+  return { criteria, assumptions: items('assumptions'), openQuestions: items('open questions'), contradictions: items('contradictions'), surfaces, errors }
 }
 /**
  * Adopt a phase's authored files. Fresh: the in-phase confirmation already
@@ -1831,12 +1832,51 @@ function renderSpec(reqs) {
     reqs.surfaces.join(', ') || '(none classified)', '',
     '## Assumptions', '', ...list(reqs.assumptions), '',
     '## Open questions', '', ...list(reqs.openQuestions), '',
+    '## Contradictions', '', ...list(reqs.contradictions), '',
   ].join('\n')
 }
 
-function renderTestReport(raw, findings) {
+/** One line of traceability numbers, shared by the report and the readiness prompt. */
+function traceability(raw, criteria) {
+  const cases = raw && Array.isArray(raw.cases) ? raw.cases : []
+  const ids = (criteria || []).map(c => c.id)
+  const by = id => cases.filter(c => c.criterion === id)
+  const auto = c => c.type !== 'manual'
+  const proven = ids.filter(id => by(id).some(c => auto(c) && c.result === 'pass') && !by(id).some(c => c.result === 'fail'))
+  const failing = ids.filter(id => by(id).some(c => c.result === 'fail'))
+  const pending = ids.filter(id => !proven.includes(id) && !failing.includes(id))
+  return { cases, ids, by, proven, failing, pending }
+}
+
+function traceabilityLine(raw, criteria) {
+  const t = traceability(raw, criteria)
+  const m = raw && raw.mutation
+  return `${t.proven.length} of ${t.ids.length} criteria proven by a passing automated case` +
+    (t.failing.length ? `; FAILING: ${t.failing.join(', ')}` : '') +
+    (t.pending.length ? `; pending human QA (no passing automated case): ${t.pending.join(', ')}` : '') +
+    (m && typeof m.score === 'number' ? `; mutation score ${m.score}%${m.tool ? ` (${m.tool}` : ''}${m.scope ? `${m.tool ? ', ' : ' ('}${m.scope}` : ''}${m.tool || m.scope ? ')' : ''}` : '; no mutation testing reported')
+}
+
+function renderTestReport(raw, findings, criteria) {
   const lines = ['# test-report.md', '']
   lines.push(`Verdict (qa-engineer): ${raw && raw.verdict ? raw.verdict : '(qa-engineer returned no verdict — the test stage produced no evidence)'}`, '')
+  const t = traceability(raw, criteria)
+  const cell = v => String(v ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || '—'
+  lines.push('## Traceability — one case per criterion', '')
+  lines.push(traceabilityLine(raw, criteria), '')
+  if (t.cases.length) {
+    lines.push('| Criterion | Case | Type | Test | Result | Evidence |', '| --- | --- | --- | --- | --- | --- |')
+    const known = new Set(t.ids)
+    const ordered = [...t.ids.flatMap(id => t.by(id)), ...t.cases.filter(c => !known.has(c.criterion))]
+    for (const c of ordered) {
+      lines.push(`| ${cell(c.criterion)} | ${cell(c.id)} — ${cell(c.title)} | ${cell(c.type)} | ${cell(c.test)} | ${cell(c.result)} | ${cell(c.evidence)} |`)
+    }
+    lines.push('')
+  } else {
+    lines.push('(the test stage reported no cases — every criterion is pending human QA)', '')
+  }
+  const uncovered = t.ids.filter(id => !t.by(id).length)
+  if (uncovered.length) lines.push(`Criteria with no case at all: ${uncovered.join(', ')}`, '')
   lines.push('## Findings, after independent cross-check', '')
   if (!findings.length) lines.push('(none)')
   for (const f of findings) {
@@ -1849,7 +1889,7 @@ function renderTestReport(raw, findings) {
 
 const CRITERIA_SCHEMA = {
   type: 'object',
-  required: ['criteria', 'assumptions', 'openQuestions', 'surfaces'],
+  required: ['criteria', 'assumptions', 'openQuestions', 'contradictions', 'surfaces'],
   properties: {
     criteria: {
       type: 'array',
@@ -1861,6 +1901,13 @@ const CRITERIA_SCHEMA = {
     },
     assumptions: { type: 'array', items: { type: 'string' } },
     openQuestions: { type: 'array', items: { type: 'string' } },
+    // Where the intent, the repository's specs and docs, and its code disagree.
+    // The HU 16 pilot's planner met one (the ticket put zones in onboarding, an
+    // existing spec had ruled them out) — found by a person reading by hand.
+    contradictions: {
+      type: 'array', items: { type: 'string' },
+      description: 'Each: side A quoted with its source; side B quoted with its source; which wins under the intent, or that a person must decide. [] after looking and finding none.',
+    },
     // Which implementation surfaces the change actually touches. Drives Build fan-out.
     surfaces: {
       type: 'array',
@@ -1938,6 +1985,40 @@ const FINDINGS_SCHEMA = {
   },
 }
 
+// The test lens also returns ONE CASE PER ACCEPTANCE CRITERION, with its test
+// type, result and the path of the evidence it saved. On the HU 16 pilot the
+// test report carried a verdict and findings and nothing else: a reviewer could
+// not see what had been proven, and human QA could not see where to start.
+const CASE_TYPES = ['unit', 'component', 'integration', 'e2e', 'visual', 'mutation', 'manual']
+const QA_SCHEMA = {
+  type: 'object',
+  required: ['findings', 'verdict', 'cases'],
+  properties: {
+    ...FINDINGS_SCHEMA.properties,
+    cases: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'criterion', 'title', 'type', 'result'],
+        properties: {
+          id: { type: 'string', description: 'CP-01, CP-02, ... — stable within this run' },
+          criterion: { type: 'string', description: 'the acceptance criterion id this case proves' },
+          title: { type: 'string', description: 'what the case checks, as an action: "Rechazar un precio negativo"' },
+          type: { enum: CASE_TYPES },
+          test: { type: 'string', description: 'file › test name, or the exact command run' },
+          result: { enum: ['pass', 'fail', 'not-run'] },
+          evidence: { type: 'string', description: 'path of the evidence saved for this case (output, JSON, screenshot, video)' },
+        },
+      },
+    },
+    mutation: {
+      type: 'object',
+      description: 'Mutation testing on the changed files, when the repository has it set up.',
+      properties: { tool: { type: 'string' }, score: { type: 'number' }, survived: { type: 'number' }, scope: { type: 'string' } },
+    },
+  },
+}
+
 // Per-lens brief budgets live in `_brief.js`'s LENS_BUDGETS, keyed by these
 // same lens keys. They are deliberately NOT duplicated here: a second copy of a
 // budget table is a second thing to drift.
@@ -1954,6 +2035,7 @@ const LENSES = [
     agentType: 'qa-engineer',
     tier: 'test',
     stage: 'Test',
+    schema: QA_SCHEMA,
     brief: 'Verify by executing. Re-run any claimed verification yourself — a "tests pass" report is a hypothesis until you run it this session. Label every claim Verified / Falsified / Unverified / Untestable, and include the "what was NOT tested" section.',
   },
   {
@@ -2277,7 +2359,9 @@ ${intentSection}
 
 Produce numbered, stable acceptance-criterion IDs — every downstream agent in this workflow traces against them, so an unstable ID breaks the whole run. Record assumptions as numbered/traceable/risk-rated per your §4. Do not invent a success metric that wasn't given; label any proposal as proposed-not-confirmed.
 
-Also classify which implementation surfaces this genuinely touches (backend / frontend / data) so the build phase only spawns the specialists actually needed.`),
+Also classify which implementation surfaces this genuinely touches (backend / frontend / data) so the build phase only spawns the specialists actually needed.
+
+CONTRADICTIONS. Before you write criteria, compare the intent (and any ticket text it quotes) with what the repository already says and does: its specs and as-built documents, and the code itself. Record every disagreement in contradictions — quote both sides and say where each comes from, then say which side the intent's scope makes win, or that a person must decide. Never settle one silently by picking a side. An empty list means you looked and found none.`),
       { agentType: 'product-analyst', label: 'requirements', phase: 'Plan', schema: CRITERIA_SCHEMA, ...tier('plan') },
     )
     const agents = [
@@ -2403,6 +2487,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
       next: `Review spec.md and plan.md in ${handoffDir()}. Edit them if needed (criteria stay one per line: "- **AC-n** — text"), commit them, then start a FRESH run with ${JSON.stringify(nextArgs)} — it starts at Design from exactly the committed files.`,
       humanDecisionRequired: [
         `Approve the plan: review and commit spec.md and plan.md in ${handoffDir()}, then run with approvedPlan: true.`,
+        ...(reqs.contradictions || []).map(c => `CONTRADICTION: ${c}`),
         ...reqs.openQuestions,
       ],
       tiers: TIERS,
@@ -2614,10 +2699,14 @@ Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code 
 ${text}
 
 The section above is a BRIEF, by reference. It is not the diff. Read the changed files yourself with Read / Grep / Glob before concluding, and if the brief says it was truncated, say so in your verdict.${extra ? `\n\n${extra(lens)}` : ''}`),
-            { agentType: lens.agentType, label: `verify:${lens.key}`, phase: title, schema: FINDINGS_SCHEMA, ...tier(lens.tier) },
+            { agentType: lens.agentType, label: `verify:${lens.key}`, phase: title, schema: lens.schema || FINDINGS_SCHEMA, ...tier(lens.tier) },
           ).then(r => {
             if (r === null || r === undefined) lensFailures.push(`verify:${lens.key}`)
-            else raw[lens.key] = { verdict: r.verdict }
+            else {
+              raw[lens.key] = { verdict: r.verdict }
+              if (Array.isArray(r.cases)) raw[lens.key].cases = r.cases
+              if (r.mutation && typeof r.mutation === 'object') raw[lens.key].mutation = r.mutation
+            }
             return r
           })
         },
@@ -2639,8 +2728,16 @@ The section above is a BRIEF, by reference. It is not the diff. Read the changed
     loop.model && loop.model !== 'inherit' ? `model "${loop.model}"` : null,
     loop.effort ? `effort "${loop.effort}"` : null,
   ].filter(Boolean).join(' and ')
+  const evidenceDir = handoffDir() ? `${handoffDir()}/evidencia` : null
   const testArtifact = await lensPhase('Test', 'Review', LENSES.filter(l => l.stage === 'Test'), () =>
-    `Execution loops are mechanical: delegate running suites, scripts and re-runs to qa-runner${loopPin ? `, and when your Agent tool accepts these parameters, dispatch it with ${loopPin}` : ''}. You design the cases and interpret the evidence; the runner only runs them and reports raw results.`)
+    `Execution loops are mechanical: delegate running suites, scripts and re-runs to qa-runner${loopPin ? `, and when your Agent tool accepts these parameters, dispatch it with ${loopPin}` : ''}. You design the cases and interpret the evidence; the runner only runs them and reports raw results.
+
+EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from your evidence, so make it easy to check:
+- In "cases", give EVERY acceptance criterion at least one case: an id (CP-01, CP-02, ...), the criterion id, a title that says what is checked, the type (${CASE_TYPES.join(', ')}), the test (file › test name, or the exact command), the result (pass, fail or not-run) and the evidence path.
+- Choose the type the criterion needs: logic → unit; a UI component → component; several modules or the database together → integration; a user journey → e2e; how a screen looks → visual. A criterion you cannot check by execution here is type manual, result not-run: it is pending human QA, never "pass".
+- ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md: one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
+- If the repository has mutation testing set up (for example a Stryker configuration), run it on the changed files only and report it in "mutation". Each surviving mutant in changed code is a Should Fix finding: a test that does not fail when the code is broken does not protect it.
+- A criterion with no automated test where one was possible is a finding, not a case to skip.`)
 
   const testFindings = (testArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
   const testRaw = (testArtifact.raw || {}).qa || null
@@ -2655,7 +2752,7 @@ The section above is a BRIEF, by reference. It is not the diff. Read the changed
       '  Authorize by: not an authorization gate — missing verification',
     ].join('\n'))
   }
-  const testReport = renderTestReport(testRaw, testFindings)
+  const testReport = renderTestReport(testRaw, testFindings, reqs.criteria)
   await writeRendered('test-report.md', testReport)
   {
     const stop = missingInputs('Review', ['test-report.md'])
@@ -2924,6 +3021,10 @@ UNVERIFIED FINDINGS — raised by a lens, but the refuter returned NOTHING, so n
 REPAIR LOOP RECORD — blocking findings the builder repaired and an independent lens re-verified:\n${JSON.stringify(repairRounds, null, 2)}
 
 OPEN ASSUMPTIONS / QUESTIONS FROM REQUIREMENTS:\n${[...reqs.assumptions, ...reqs.openQuestions].join('\n') || '(none)'}
+
+CONTRADICTIONS FOUND WHILE PLANNING (intent vs the repository's specs, docs or code) — a criterion one of them touches is not Confirmed until a person settles it:\n${(reqs.contradictions || []).join('\n') || '(none)'}
+
+TRACEABILITY (test stage): ${traceabilityLine(testRaw, reqs.criteria)}. A criterion pending human QA or failing is not Confirmed.
 
 TEST STAGE: ${testDead.length ? `produced NO result (${testDead.join(', ')}) — nothing was exercised at runtime; no criterion may be classified Confirmed on test evidence.` : 'ran; its findings are among those above.'}
 
