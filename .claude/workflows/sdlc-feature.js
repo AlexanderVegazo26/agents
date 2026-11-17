@@ -1220,24 +1220,41 @@ async function finishRun(body, extras = () => ({})) {
   // and hands it to that person. `"distil": false` turns it off.
   let learningCandidates = null
   if (outcome && WORKFLOW === 'sdlc-feature' && status === 'completed' && !(args && typeof args === 'object' && args.distil === false)) {
-    const r = await bridge('distil', `${REQUIRE_HEAD}const { execFileSync } = require('child_process')
+    // Optional, so it can never cost the run its result (code review round 9).
+    try {
+      const r = await bridge('distil', `${REQUIRE_HEAD}const fs = require('fs')
+const { spawnSync } = require('child_process')
 const tool = path.join(DIR, '..', 'tools', 'distil.py')
-let text = null
-let ran = false
-for (const py of ['python', 'python3']) {
-  try {
-    text = execFileSync(py, [tool, '--root', process.cwd()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 })
-    ran = true
-    break
-  } catch (e) {
-    if (e && e.code === 'ENOENT') continue
-    text = String((e && e.stdout) || '') + String((e && e.stderr) || (e && e.message) || e)
+let out = null
+if (!fs.existsSync(tool)) {
+  out = { ok: false, text: 'distil.py not found at ' + tool + ' (this runtime directory ships no tools/)' }
+} else {
+  // Each interpreter in turn: a missing one, the Windows Store alias (exit
+  // 9009) or one that prints nothing is not an answer — try the next. Run from
+  // the tool's own directory, never the repository's: a bare "python" would
+  // otherwise resolve a python.exe committed at the repository root. -B: no
+  // __pycache__ written beside the tool.
+  const tries = process.platform === 'win32'
+    ? [['python', ['-B']], ['python3', ['-B']], ['py', ['-3', '-B']]]
+    : [['python3', ['-B']], ['python', ['-B']]]
+  for (const [py, flags] of tries) {
+    const r = spawnSync(py, [...flags, tool, '--root', process.cwd()], { cwd: path.dirname(tool), encoding: 'utf8', timeout: 60000 })
+    if (r.error || r.status === 9009 || !String(r.stdout || '').trim()) continue
+    // distil.py: 0 = done; 1 = something quarantined; 2 = something dropped.
+    // All three are a real dry run. Anything else is a failure, not a preview.
+    out = [0, 1, 2].includes(r.status)
+      ? { ok: true, text: String(r.stdout).slice(-4000) }
+      : { ok: false, text: ('distil.py exited ' + r.status + ': ' + String(r.stderr || r.stdout || '')).slice(-1500) }
     break
   }
+  if (!out) out = { ok: false, text: 'no Python interpreter answered (tried ' + tries.map(t => t[0]).join(', ') + ')' }
 }
-process.stdout.write(JSON.stringify({ ok: ran, text: String(text || 'python was not found').slice(-4000) }))`)
-    if (r && typeof r.text === 'string') learningCandidates = r.text
-    else log('the learning preview (distil.py, dry run) did not run')
+process.stdout.write(JSON.stringify(out))`)
+      if (r && r.ok === true && typeof r.text === 'string') learningCandidates = r.text
+      else log(`the learning preview (distil.py, dry run) did not run${r && typeof r.text === 'string' ? ` — ${r.text.slice(0, 300)}` : ''}`)
+    } catch (e) {
+      log(`the learning preview (distil.py, dry run) failed: ${(e && e.message) || e}`)
+    }
   }
 
   const allGates =[...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
@@ -1434,7 +1451,8 @@ const SPEC_DIR = SPEC_DIR_ARG.value
 // of the HU 16 pilot: evidence in the shape the team already reviews in its
 // tracker). Repository-relative; `args.qaTemplate` overrides the default.
 const QA_TEMPLATE_ARG = repoRelPath(args && typeof args === 'object' ? args.qaTemplate : null, 'qaTemplate')
-if (QA_TEMPLATE_ARG.error) log(`${QA_TEMPLATE_ARG.error} — ignored; the default QA template path is used`)
+// A bad path stops the run like a bad specDir does (below): silently using
+// another template would write the evidence in a format nobody asked for.
 const QA_TEMPLATE = QA_TEMPLATE_ARG.value || 'specs/qa-case-template.md'
 const STRICT = !!SPEC_DIR || (args && typeof args === 'object' && args.strict === true)
 // Plan approval (code review M3). In spec mode the run pauses after Plan by
@@ -2255,7 +2273,7 @@ async function runWorkflow() {
     status = 'stopped'
     return { status: 'stopped', reason: opened.fatal }
   }
-  for (const a of [SPEC_DIR_ARG, INTENT_ARG]) {
+  for (const a of [SPEC_DIR_ARG, INTENT_ARG, QA_TEMPLATE_ARG]) {
     if (a.error) {
       status = 'stopped'
       return { status: 'stopped', reason: a.error }

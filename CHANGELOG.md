@@ -159,7 +159,9 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   writes `casos.md` by it and a `tracker-draft.md` it describes, and never
   publishes to a tracker. A completed `/sdlc-feature` run returns
   `learningCandidates`: a dry run of `tools/distil.py` over the repository's
-  runs, for a person to keep or drop (`"distil": false` turns it off).
+  runs, naming each candidate, for a person to keep or drop (`"distil": false`
+  turns it off). Error text is never relayed as candidates; a runtime without
+  `tools/` reports that it has none. A bad `qaTemplate` path stops the run.
 - **Contradictions found while planning.** The analyst compares the intent
   with the repository's specs, docs and code and lists every disagreement,
   both sides quoted, in `spec.md` (`## Contradictions`, read back on

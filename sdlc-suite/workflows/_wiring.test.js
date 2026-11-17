@@ -2080,7 +2080,18 @@ async function main() {
     const cwd = tmpdir('distil')
     const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents() })
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 200))
-    assert.ok(typeof r.result.learningCandidates === 'string' && /candidate/.test(r.result.learningCandidates), `no learning preview: ${JSON.stringify(r.result.learningCandidates)}`)
+    // A runtime directory that ships no tools/ (the generated .claude tree) has
+    // nothing to run: the preview is absent and says why, never error text
+    // presented as candidates (code review round 9).
+    const hasTools = fs.existsSync(path.join(SRC, '..', 'tools', 'distil.py'))
+    if (hasTools) {
+      const t = r.result.learningCandidates
+      assert.ok(typeof t === 'string' && /read 1 outcome\(s\)/.test(t) && /dry run -- nothing written/.test(t) && !/REFUSING/.test(t),
+        `not a dry run of THIS repository's one run: ${JSON.stringify(t)}`)
+    } else {
+      assert.strictEqual(r.result.learningCandidates, null)
+      assert.ok(r.logs.some(l => /distil\.py not found/.test(l)), r.logs.join('\n'))
+    }
     assert.ok(!fs.existsSync(path.join(cwd, 'learnings')), 'the preview wrote into the repository')
     const off = await runScript('sdlc-feature.js', { cwd: tmpdir('distil'), args: { initiative: 'x', policy: POLICY_JSON, distil: false }, onAgent: featureAgents() })
     assert.strictEqual(off.result.learningCandidates, null)
@@ -2093,8 +2104,11 @@ async function main() {
     assert.ok(p.includes('specs/qa-case-template.md') && p.includes('tracker-draft.md') && /Never publish anything to a tracker/.test(p), p.slice(p.indexOf('EVIDENCE'), p.indexOf('EVIDENCE') + 1200))
     const own = await runScript('sdlc-feature.js', { cwd: tmpdir('qatpl'), args: { initiative: 'x', policy: POLICY_JSON, qaTemplate: 'docs/qa/plantilla.md' }, onAgent: featureAgents() })
     assert.ok(own.calls.find(c => c.label === 'verify:qa').prompt.includes('docs/qa/plantilla.md'), 'args.qaTemplate is ignored')
+    // A bad path stops the run, like a bad specDir (code review round 9).
     const bad = await runScript('sdlc-feature.js', { cwd: tmpdir('qatpl'), args: { initiative: 'x', policy: POLICY_JSON, qaTemplate: '../outside.md' }, onAgent: featureAgents() })
-    assert.ok(bad.calls.find(c => c.label === 'verify:qa').prompt.includes('specs/qa-case-template.md') && bad.logs.some(l => /qaTemplate/.test(l)), 'a bad template path is not refused and logged')
+    assert.strictEqual(bad.result.status, 'stopped', JSON.stringify(bad.result).slice(0, 200))
+    assert.ok(/args\.qaTemplate/.test(bad.result.reason), bad.result.reason)
+    assert.ok(!bad.calls.some(c => !c.label.startsWith('bridge:')), 'an agent ran on a bad template path')
   })
 
   await test('readiness is told which lenses RAN, even when every finding of a lens was refuted', async () => {
