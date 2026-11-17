@@ -2075,6 +2075,28 @@ async function main() {
     assert.ok(!r.calls.some(c => c.label.startsWith('build:')), 'a builder ran without a plan')
   })
 
+  await test('a completed feature run previews the learning candidates (dry run, nothing written); distil: false turns it off', async () => {
+    // Learning per ticket (review of the HU 16 pilot).
+    const cwd = tmpdir('distil')
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 200))
+    assert.ok(typeof r.result.learningCandidates === 'string' && /candidate/.test(r.result.learningCandidates), `no learning preview: ${JSON.stringify(r.result.learningCandidates)}`)
+    assert.ok(!fs.existsSync(path.join(cwd, 'learnings')), 'the preview wrote into the repository')
+    const off = await runScript('sdlc-feature.js', { cwd: tmpdir('distil'), args: { initiative: 'x', policy: POLICY_JSON, distil: false }, onAgent: featureAgents() })
+    assert.strictEqual(off.result.learningCandidates, null)
+    assert.ok(!off.calls.some(c => c.label === 'bridge:distil'), 'distil ran though it was turned off')
+  })
+
+  await test('the test lens writes casos.md by the repository\'s QA template, and a tracker draft it never publishes', async () => {
+    const r = await runScript('sdlc-feature.js', { cwd: tmpdir('qatpl'), args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents() })
+    const p = r.calls.find(c => c.label === 'verify:qa').prompt
+    assert.ok(p.includes('specs/qa-case-template.md') && p.includes('tracker-draft.md') && /Never publish anything to a tracker/.test(p), p.slice(p.indexOf('EVIDENCE'), p.indexOf('EVIDENCE') + 1200))
+    const own = await runScript('sdlc-feature.js', { cwd: tmpdir('qatpl'), args: { initiative: 'x', policy: POLICY_JSON, qaTemplate: 'docs/qa/plantilla.md' }, onAgent: featureAgents() })
+    assert.ok(own.calls.find(c => c.label === 'verify:qa').prompt.includes('docs/qa/plantilla.md'), 'args.qaTemplate is ignored')
+    const bad = await runScript('sdlc-feature.js', { cwd: tmpdir('qatpl'), args: { initiative: 'x', policy: POLICY_JSON, qaTemplate: '../outside.md' }, onAgent: featureAgents() })
+    assert.ok(bad.calls.find(c => c.label === 'verify:qa').prompt.includes('specs/qa-case-template.md') && bad.logs.some(l => /qaTemplate/.test(l)), 'a bad template path is not refused and logged')
+  })
+
   await test('readiness is told which lenses RAN, even when every finding of a lens was refuted', async () => {
     // First live run: security ran, its findings were all refuted, nothing of it
     // reached the confirmed list — and readiness reported that security never ran.

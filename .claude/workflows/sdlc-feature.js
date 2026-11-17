@@ -1213,7 +1213,34 @@ async function finishRun(body, extras = () => ({})) {
 
   if (thrown) throw thrown
 
-  const allGates = [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
+  // Learning per ticket (review of the HU 16 pilot). Lessons from this
+  // repository's recent runs already reach the next run unreviewed
+  // (repoLessons); a SHARED lesson needs a person. So a completed feature run
+  // previews what `distil.py` would propose — a dry run that writes nothing —
+  // and hands it to that person. `"distil": false` turns it off.
+  let learningCandidates = null
+  if (outcome && WORKFLOW === 'sdlc-feature' && status === 'completed' && !(args && typeof args === 'object' && args.distil === false)) {
+    const r = await bridge('distil', `${REQUIRE_HEAD}const { execFileSync } = require('child_process')
+const tool = path.join(DIR, '..', 'tools', 'distil.py')
+let text = null
+let ran = false
+for (const py of ['python', 'python3']) {
+  try {
+    text = execFileSync(py, [tool, '--root', process.cwd()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 })
+    ran = true
+    break
+  } catch (e) {
+    if (e && e.code === 'ENOENT') continue
+    text = String((e && e.stdout) || '') + String((e && e.stderr) || (e && e.message) || e)
+    break
+  }
+}
+process.stdout.write(JSON.stringify({ ok: ran, text: String(text || 'python was not found').slice(-4000) }))`)
+    if (r && typeof r.text === 'string') learningCandidates = r.text
+    else log('the learning preview (distil.py, dry run) did not run')
+  }
+
+  const allGates =[...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
   return {
     ...(result || {}),
     status,
@@ -1240,6 +1267,9 @@ async function finishRun(body, extras = () => ({})) {
     repoLessonsLoaded: repoLessonsLoaded(),
     learningsSkipped: LEARNING_SET.skipped || [],
     learningsError: LEARNING_SET.error || null,
+    // What distil.py would propose from this repository's runs (dry run).
+    // Keeping a candidate is a person's call: distil.py --emit, then a PR.
+    learningCandidates,
     retries: RETRIES,
     ...(x.repairRounds ? { repairRounds: x.repairRounds } : {}),
     policySource: POLICY.source,
@@ -1399,6 +1429,13 @@ function repoRelPath(v, what) {
 const SPEC_DIR_ARG = repoRelPath(args && typeof args === 'object' ? args.specDir : null, 'specDir')
 const INTENT_ARG = repoRelPath(args && typeof args === 'object' ? args.intentPath : null, 'intentPath')
 const SPEC_DIR = SPEC_DIR_ARG.value
+// The team's own QA case format, when the repository has one: the Test stage
+// writes casos.md by it, and a tracker draft if it describes one (Jean's review
+// of the HU 16 pilot: evidence in the shape the team already reviews in its
+// tracker). Repository-relative; `args.qaTemplate` overrides the default.
+const QA_TEMPLATE_ARG = repoRelPath(args && typeof args === 'object' ? args.qaTemplate : null, 'qaTemplate')
+if (QA_TEMPLATE_ARG.error) log(`${QA_TEMPLATE_ARG.error} — ignored; the default QA template path is used`)
+const QA_TEMPLATE = QA_TEMPLATE_ARG.value || 'specs/qa-case-template.md'
 const STRICT = !!SPEC_DIR || (args && typeof args === 'object' && args.strict === true)
 // Plan approval (code review M3). In spec mode the run pauses after Plan by
 // default; approvedPlan adopts the person's committed spec.md and plan.md;
@@ -2760,7 +2797,7 @@ The section above is a BRIEF, by reference. It is not the diff. Read the changed
 EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from your evidence, so make it easy to check:
 - In "cases", give EVERY acceptance criterion at least one case: an id (CP-01, CP-02, ...), the criterion id, a title that says what is checked, the type (${CASE_TYPES.join(', ')}), the test (file › test name, or the exact command), the result (pass, fail or not-run) and the evidence path.
 - Choose the type the criterion needs: logic → unit; a UI component → component; several modules or the database together → integration; a user journey → e2e; how a screen looks → visual. A criterion you cannot check by execution here is type manual, result not-run: it is pending human QA, never "pass".
-- ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md: one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
+- ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md. If the repository has ${QA_TEMPLATE}, follow it exactly — its case titles, headings and naming — and, when it describes a tracker draft (a container and its cases), also write ${evidenceDir}/tracker-draft.md from it, ready to paste. Never publish anything to a tracker yourself. Without that file, write one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
 - Evidence is committed with the spec: before saving any output, response or screenshot, redact tokens, credentials, secrets and personal data (names, phone numbers, emails) — or use test data that has none.
 - If the repository has mutation testing set up (for example a Stryker configuration), run it on the changed files only and report it in "mutation". Each surviving mutant in changed code is a Should Fix finding: a test that does not fail when the code is broken does not protect it.
 - A criterion with no automated test where one was possible is a finding, not a case to skip.`)

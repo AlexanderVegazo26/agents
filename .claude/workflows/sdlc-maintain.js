@@ -1189,7 +1189,34 @@ async function finishRun(body, extras = () => ({})) {
 
   if (thrown) throw thrown
 
-  const allGates = [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
+  // Learning per ticket (review of the HU 16 pilot). Lessons from this
+  // repository's recent runs already reach the next run unreviewed
+  // (repoLessons); a SHARED lesson needs a person. So a completed feature run
+  // previews what `distil.py` would propose — a dry run that writes nothing —
+  // and hands it to that person. `"distil": false` turns it off.
+  let learningCandidates = null
+  if (outcome && WORKFLOW === 'sdlc-feature' && status === 'completed' && !(args && typeof args === 'object' && args.distil === false)) {
+    const r = await bridge('distil', `${REQUIRE_HEAD}const { execFileSync } = require('child_process')
+const tool = path.join(DIR, '..', 'tools', 'distil.py')
+let text = null
+let ran = false
+for (const py of ['python', 'python3']) {
+  try {
+    text = execFileSync(py, [tool, '--root', process.cwd()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 })
+    ran = true
+    break
+  } catch (e) {
+    if (e && e.code === 'ENOENT') continue
+    text = String((e && e.stdout) || '') + String((e && e.stderr) || (e && e.message) || e)
+    break
+  }
+}
+process.stdout.write(JSON.stringify({ ok: ran, text: String(text || 'python was not found').slice(-4000) }))`)
+    if (r && typeof r.text === 'string') learningCandidates = r.text
+    else log('the learning preview (distil.py, dry run) did not run')
+  }
+
+  const allGates =[...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
   return {
     ...(result || {}),
     status,
@@ -1216,6 +1243,9 @@ async function finishRun(body, extras = () => ({})) {
     repoLessonsLoaded: repoLessonsLoaded(),
     learningsSkipped: LEARNING_SET.skipped || [],
     learningsError: LEARNING_SET.error || null,
+    // What distil.py would propose from this repository's runs (dry run).
+    // Keeping a candidate is a person's call: distil.py --emit, then a PR.
+    learningCandidates,
     retries: RETRIES,
     ...(x.repairRounds ? { repairRounds: x.repairRounds } : {}),
     policySource: POLICY.source,
