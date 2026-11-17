@@ -2828,6 +2828,19 @@ async function main() {
         { id: 'CP-09', criterion: 'AC-99', title: 'ghost', type: 'unit', test: 'g.test.ts', result: 'pass' },
       ],
     }
+    // A second scenario: proven by automation, a manual check still open.
+    const mixed = { verdict: 'ok', findings: [], cases: [
+      { id: 'CP-01', criterion: 'AC-1', title: 'a', type: 'unit', test: 'a.test › a', result: 'pass' },
+      { id: 'CP-02', criterion: 'AC-2', title: 'b', type: 'component', test: 'b.test › b', result: 'pass' },
+      { id: 'CP-03', criterion: 'AC-2', title: 'en un navegador real', type: 'manual', result: 'not-run' },
+    ] }
+    {
+      const g = gitSpecRepo()
+      const m = await runScript('sdlc-feature.js', { cwd: g.cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents({ 'verify:qa': mixed }) })
+      const mrep = fs.readFileSync(path.join(g.d, 'test-report.md'), 'utf8')
+      assert.ok(/2 of 2 criteria proven by a passing automated case; proven, but a manual check is still open: AC-2/.test(mrep), mrep.slice(0, 500))
+      assert.ok(m.result.status === 'completed')
+    }
     const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents({ 'verify:qa': qa }) })
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
     const rep = fs.readFileSync(path.join(d, 'test-report.md'), 'utf8')

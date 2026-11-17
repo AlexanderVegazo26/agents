@@ -1918,7 +1918,11 @@ function traceability(raw, criteria) {
   const unknown = cases.filter(c => !known.has(c.criterion))
   const seen = new Set()
   const duplicates = [...new Set(cases.map(c => c.id).filter(id => (seen.has(id) ? true : (seen.add(id), false))))]
-  return { cases, ids, by, proven, failing, pending, unknown, duplicates }
+  // Proven by an automated case, but with a manual check still open — on the
+  // second live smoke an accessibility criterion passed against a stubbed DOM
+  // while its real-browser case waited for a person. Say both.
+  const manualOpen = proven.filter(id => by(id).some(c => c.type === 'manual' && c.result !== 'pass'))
+  return { cases, ids, by, proven, failing, pending, unknown, duplicates, manualOpen }
 }
 
 function traceabilityLine(raw, criteria) {
@@ -1927,6 +1931,7 @@ function traceabilityLine(raw, criteria) {
   return `${t.proven.length} of ${t.ids.length} criteria proven by a passing automated case` +
     (t.failing.length ? `; FAILING: ${t.failing.join(', ')}` : '') +
     (t.pending.length ? `; pending human QA (no passing automated case): ${t.pending.join(', ')}` : '') +
+    (t.manualOpen.length ? `; proven, but a manual check is still open: ${t.manualOpen.join(', ')}` : '') +
     (t.unknown.length ? `; ${t.unknown.length} case(s) name no known criterion and prove nothing` : '') +
     (t.duplicates.length ? `; duplicate case id(s): ${t.duplicates.join(', ')}` : '') +
     (m && typeof m.score === 'number' ? `; mutation score ${m.score}%${m.tool ? ` (${m.tool}` : ''}${m.scope ? `${m.tool ? ', ' : ' ('}${m.scope}` : ''}${m.tool || m.scope ? ')' : ''}` : '; no mutation testing reported')
