@@ -30,8 +30,9 @@ applies one transform per target: `sdlc-suite/` is a plugin, so it refers to its
 own agents and skills as `sdlc-suite:name`, while trees installed as plain
 project directories resolve **bare** names. Mirroring the canonical tree verbatim
 into a bare-name tree would push ~120 dead references into it. Command Code keeps
-the namespace, drops `Agent(x)` grants its vocabulary has no name for, and maps
-`inherit` to "omit". Kimi adds `whenToUse` and keeps six workflow-launcher skills
+the namespace, drops `Agent(x)` grants its vocabulary has no name for, and omits
+`model:` (every tier) and `effort:`, since it offers no Claude models (see
+`sdlc-suite/MODEL-ROUTING.md`). Kimi adds `whenToUse` and keeps six workflow-launcher skills
 of its own that the generator must never prune.
 
 **One thing the generator does NOT cover: `workflows/`.** It reads only `agents/`
@@ -91,7 +92,29 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus
 `--selftest`, `commandcode-suite/validate.py`, `.kimi-code/validate.py`,
 `commandcode-suite/verify-bodies.py`, a syntax check over every workflow script,
 and the runtime module suites. It runs unmodified on a fork with no repository
-secret. Running the four commands above locally is enough to predict it.
+secret. All of those are listed once, in `scripts/test-agent`, which CI's
+`validate` job runs as its only check: `python scripts/test-agent` locally
+predicts that job exactly (`--list` names the checks, `-k <name>` runs one).
+Its report is `.test-report/summary.md`: per failure the file:line, the failing
+lines and the command that reruns only that check. A new test file must be
+added to `CHECKS` there, with a comment saying how it was seen red; the runner
+fails naming any test file that no check runs.
+
+Replay evals live in `sdlc-suite/evals/`: `cases.v1.json` holds model and CLI
+outputs (phase results with BLOCKED entries, failure messages, learning files,
+builder manifests for the verify-lens brief budget) with the properties the
+runtime's decision must have, and `replay.test.js`
+grades them deterministically against `sdlc-suite/workflows` (`--case <id>`
+reruns one, `--src` points it at another tree). No model is called. When a run
+produces output the runtime mishandled, add it there as a case first.
+
+`routing-cases.v1.json` holds the evidence for the model-routing pins: a
+representative task per agent, the response recorded on its pinned
+`model:`/`effort:`, deterministic graders, and counterexamples the graders must
+reject. `routing.test.js` replays them in the blocking suite and fails when a
+pin moved without a re-recorded case; `--live` (opt-in, your own `claude`
+login, never CI) runs the tasks now, `--live --tier <t>` tries another tier and
+`--live --record` stores new responses. See MODEL-ROUTING.md "Changing a pin".
 
 *Not yet in force:* a single repository-wide `sdlc-suite/tools/validate.py`. The
 per-tree validators above do the job today; consolidating them is pending. This
@@ -128,7 +151,7 @@ Measured 2026-09-02: 0 of 709 files.
 If you check line endings, read the bytes (`b"\r\n" in path.read_bytes()`), not
 the index and not `file -b`, which reports "JSON text data" for a CRLF JSON file.
 
-## The seven registry invariants
+## The nine registry invariants
 
 `/registry-audit` checks these.
 
@@ -215,9 +238,11 @@ checks for before it writes.
 
 ## Reviewing a learning pull request
 
-> **Not yet in force.** `learnings/` and the distiller do not exist yet. The
-> checklist is recorded now because it is the gate the design depends on, and it
-> is worth agreeing before the mechanism that needs it exists.
+> **In force when the distiller is dispatched.** `learnings/`,
+> `sdlc-suite/tools/distil.py` and the `distil.yml` / `decay.yml` workflows that
+> open these pull requests all exist; the workflows run only when dispatched by
+> hand (there is no schedule yet; `SECURITY.md` names its preconditions). The
+> checklist below is the gate the design depends on.
 
 Pull requests labelled `learnings` will be opened by the distiller from run
 outcomes. **Merging is the ratification** — nothing else in the loop can reach

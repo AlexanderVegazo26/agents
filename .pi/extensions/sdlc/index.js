@@ -99,7 +99,8 @@ export default function (pi) {
       'Run an sdlc-suite workflow script (sdlc-suite/workflows/*.js) in the suite sandbox, which reproduces ' +
       'Claude Code\'s Workflow tool: a node:vm context with an allowlist (agent, parallel, pipeline, workflow, ' +
       'phase, log, args, budget, setTimeout, clearTimeout, console; no require, process or fs) and agent() backed ' +
-      'by separate pi sessions. Returns the pipeline\'s final result object as JSON.',
+      'by separate pi sessions. Only the suite\'s own shipped scripts in sdlc-suite/workflows/ run; any other path ' +
+      'is refused. Returns the pipeline\'s final result object as JSON.',
     parameters: {
       type: 'object',
       properties: {

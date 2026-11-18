@@ -99,3 +99,9 @@ learnings/quarantine/
 # --- Python build output ----------------------------------------------------
 __pycache__/
 *.pyc
+
+# --- scripts/test-agent report ----------------------------------------------
+.test-report/
+
+# Local gitleaks layer: carries names that must not be published (see .gitleaks.toml).
+.gitleaks.local.toml

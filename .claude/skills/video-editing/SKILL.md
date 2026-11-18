@@ -43,13 +43,14 @@ Run these and record the result as the capability matrix; anything unrun is `UNK
 |---|---|---|
 | Core | `ffmpeg -version`, `ffprobe -version` | Stop: nothing here works without it. |
 | Silence / loudness / denoise / quality filters | `ffmpeg -hide_banner -filters` and look for `silencedetect`, `loudnorm`, `afftdn`, `ssim`, `psnr`, `subtitles` | Name the missing filter; degrade only the step that needs it. |
-| Transcription | `ffmpeg -hide_banner -filters` for `whisper`; `python -I -c "import faster_whisper"`; `python -I -c "import whisper"`; `whisper-cli --help`, all run from a directory that holds no downloaded media (a planted `whisper.py` or executable beside it would otherwise run). | **Degraded mode: silence-only cuts, no filler removal, no captions.** Say so in the first line of the report. Never install a transcriber without the caller's go-ahead. |
+| Transcription | `ffmpeg -hide_banner -filters` for `whisper`; `python -I -c "import faster_whisper"`; `python -I -c "import whisper"`; `whisper-cli --help`; `stt-transcribe --help` (a wrapper over a local OpenAI-compatible `/v1/audio/transcriptions` server, e.g. a LlamaStash-managed faster-whisper), all run from a directory that holds no downloaded media (a planted `whisper.py` or executable beside it would otherwise run). | **Degraded mode: silence-only cuts, no filler removal, no captions.** Say so in the first line of the report. Never install a transcriber without the caller's go-ahead. |
 | Capture devices (Windows) | `ffmpeg -hide_banner -list_devices true -f dshow -i dummy` | Ask the user for the device names. |
 | Hardware encoder | `ffmpeg -hide_banner -encoders` | Use `libx264`. |
 
 On 2026-10-07 this machine had FFmpeg 9.0.2 (essentials build) with all of
 the filters above **except `whisper`**, and neither Python Whisper package, so
-it ran in degraded mode. A past matrix is history; re-measure.
+it ran in degraded mode; later that day `stt-transcribe` (local faster-whisper)
+was added. A past matrix is history; re-measure.
 
 ## 3. The talking-head pipeline
 

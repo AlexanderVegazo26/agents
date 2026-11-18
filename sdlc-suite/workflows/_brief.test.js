@@ -180,56 +180,38 @@ test('clamp handles n <= 1 — the negative-index slice that caused the overrun'
     'either it fits, or overBudget says plainly that the cap was unsatisfiable')
 })
 
-test('the file list goes LAST — details and summaries are cut before any path', () => {
-  // The first version dropped the file list first ("a lens can recover it with
-  // Glob"). On the first live run the lenses did not, and code review, security
-  // and performance never read table-assigner.ts or availability.ts — two of the
-  // files the change was about. A realistic HU: 3 builders, 33 files, long
-  // plan gaps and notAddressed reasons, 28 long criteria.
-  const gaps = Array.from({ length: 6 }, (_, i) => `OD-${i}: ${'a decision the plan left open '.repeat(8)}`)
-  const ms = ['backend', 'frontend', 'data'].map((l, k) => ({
-    label: `build:${l}`, summary: 's'.repeat(1_900), diffRef: 'git diff 3f03357',
-    filesChanged: Array.from({ length: 11 }, (_, i) => ({ path: `apps/${l}/src/lib/services/file-${k}-${i}.ts`, role: 'implementation' })),
-    criteriaAddressed: ['HU16-AC-01'],
-    notAddressed: [{ id: 'HU16-AC-20', why: 'w'.repeat(400) }],
-    planGaps: gaps,
-  }))
-  const criteria = Array.from({ length: 28 }, (_, i) => `HU16-AC-${i}: ${'c'.repeat(380)}`).join('\n')
-  for (const lens of Object.keys(b.LENS_BUDGETS)) {
-    const r = b.buildBrief({ manifests: ms, lens, criteria, changeRef: 'git diff 3f03357 --stat; git status --short' })
-    assert.deepStrictEqual(r.omittedFiles, [], `${lens}: a path was dropped while details or summaries could still go`)
-    for (const m of ms) for (const f of m.filesChanged) assert.ok(r.text.includes(f.path), `${lens}: ${f.path} missing`)
-    assert.ok(r.text.includes('git diff 3f03357 --stat'), `${lens}: the route to the whole change was cut`)
-    assert.ok(r.chars <= b.LENS_BUDGETS[lens] || r.overBudget, `${lens}: ${r.chars} > budget`)
-    if (r.truncated) assert.ok(r.text.includes('TRUNCATED'), `${lens}: cut without a marker`)
-  }
-})
-
-test('a big head never cuts a path mid-name: every changed file is listed whole or reported omitted', () => {
-  // Code review round 7, S4: with ~11 K of criteria and 80 files, the final
-  // clamp cut the file list mid-path and reported nothing omitted.
-  const criteria = Array.from({ length: 28 }, (_, i) => `HU16-AC-${i}: ${'c'.repeat(380)}`).join('\n')
-  for (const nFiles of [55, 80, 200]) {
-    const m = { label: 'build:backend', summary: 's'.repeat(1_900), filesChanged: Array.from({ length: nFiles }, (_, i) => ({ path: `apps/api/src/lib/services/zones-${i}.ts`, role: 'implementation' })), criteriaAddressed: [] }
-    for (const lens of Object.keys(b.LENS_BUDGETS)) {
-      const r = b.buildBrief({ manifests: [m], lens, criteria, changeRef: 'git diff abc --stat' })
-      assert.ok(r.chars <= b.LENS_BUDGETS[lens] || r.overBudget, `${lens}/${nFiles}: over budget`)
-      for (const f of m.filesChanged) {
-        const listed = r.text.includes(`  - ${f.path} (`)
-        const reported = r.omittedFiles.includes(f.path)
-        assert.ok(listed !== reported, `${lens}/${nFiles}: ${f.path} is ${listed ? 'both listed and reported omitted' : 'neither listed nor reported omitted'}`)
-      }
-      if (r.omittedFiles.length) assert.ok(r.text.includes('Also changed, not listed above'), `${lens}/${nFiles}: files dropped without a word`)
-    }
-  }
-})
-
-test('when even the file list cannot fit, every dropped path is still named', () => {
+test('the file list is dropped BEFORE any summary is cut', () => {
+  // A lens can recover a file list with Glob. It cannot recover a builder's
+  // reasoning from anywhere, so reasoning is the last thing to go.
+  // 900 files x ~30 chars overruns the 16k performance budget on the list alone,
+  // while the 1,000-char summary is under the 2,000 per-builder cap.
   const m = manifest('backend', 900, 1_000)
   const r = b.buildBrief({ manifests: [m], lens: 'performance' })
   assert.strictEqual(r.truncated, true)
-  assert.ok(r.omittedFiles.length > 0 && r.omittedFiles.length < 900, 'part of the list is kept, the rest named')
-  assert.ok(r.text.includes(r.omittedFiles[0]), 'the first dropped path is named in the marker')
+  assert.strictEqual(r.omittedFiles.length, 900, 'the file list went first')
+  assert.ok(r.text.includes('x'.repeat(1_000)), 'the whole summary survived the file-list drop')
+})
+
+test('many builders with many files still fit, and every builder keeps its summary', () => {
+  // 12 builders x 33 files: the file list alone is ~20k characters. Before the
+  // step-2 marker capped it, this returned 21,108 chars against the 16,000
+  // performance budget with every summary clamped away and only paths left.
+  const ms = Array.from({ length: 12 }, (_, i) => ({
+    label: `builder-${i}`,
+    summary: `summary-of-builder-${i} ` + 'x'.repeat(1_900),
+    filesChanged: Array.from({ length: 33 }, (_, j) => ({
+      path: `src/module_${i}/very/deep/path/component_file_${j}.ts`, role: 'implementation',
+    })),
+    criteriaAddressed: ['AC-1'],
+  }))
+  const r = b.buildBrief({ manifests: ms, lens: 'performance', criteria: 'AC-1 thing' })
+  assert.ok(r.chars <= 16_000, `12 builders / 396 files: ${r.chars} chars > 16000 budget`)
+  assert.strictEqual(r.overBudget, false, 'the cap is satisfiable, so overBudget must be false')
+  assert.strictEqual(r.truncated, true)
+  assert.strictEqual(r.omittedFiles.length, 396)
+  assert.ok(r.text.includes('Omitted files (396)'), 'the marker must still count the omitted files')
+  assert.ok(r.text.includes('summary-of-builder-0'),
+    'the first builder summary must survive; the brief held only paths')
 })
 
 test('omitted files are named individually, not counted', () => {
@@ -251,6 +233,28 @@ test('the brief always carries a diff ref, even when truncated', () => {
   assert.strictEqual(r.truncated, true)
   assert.ok(r.text.includes('HEAD~1..HEAD') || r.omittedFiles.length > 0,
     'the lens must have some route back to the real change')
+})
+
+test('the route to the whole change is never cut, and absent when not given', () => {
+  // The HU 16 pilot: with the file list dropped, review, security and
+  // performance never read two of the files the change was about; the
+  // per-builder worktrees had diverged, so Glob could not bring them back. In
+  // spec mode the caller passes a git route to the whole change; it rides in
+  // the head with the criteria, which no step cuts.
+  const route = 'git diff 3f03357, plus the new untracked files: git status --short'
+  const criteria = Array.from({ length: 28 }, (_, i) => `AC-${i}: ${'c'.repeat(380)}`).join('\n')
+  for (const lens of Object.keys(b.LENS_BUDGETS)) {
+    for (const ms of [[manifest('backend', 300, 60_000)], [manifest('a', 40), manifest('b', 40)]]) {
+      const r = b.buildBrief({ manifests: ms, lens, criteria, changeRef: route })
+      assert.ok(r.text.includes(`## The whole change\n${route}\n`), `${lens}: the route was cut`)
+      assert.ok(r.text.indexOf(route) < r.text.indexOf('## Implementation'), `${lens}: the route must sit in the head`)
+      assert.ok(r.chars <= b.LENS_BUDGETS[lens] || r.overBudget, `${lens}: ${r.chars} over budget`)
+    }
+  }
+  const alone = b.buildBrief({ manifests: [manifest('a', 1)], lens: 'review', changeRef: route })
+  assert.ok(alone.text.startsWith(`## The whole change\n${route}\n\n## Implementation\n`), 'a route without criteria still heads the brief')
+  const none = b.buildBrief({ manifests: [manifest('a', 1)], lens: 'review', criteria: 'AC-1: x' })
+  assert.ok(!none.text.includes('The whole change'), 'no route section when none is given')
 })
 
 test('handoffRecord captures chars and truncated so a degraded lens is visible later', () => {
@@ -284,6 +288,71 @@ test('the build manifest schema forbids extra keys and caps the summary', () => 
   assert.strictEqual(s.additionalProperties, false)
   assert.strictEqual(s.properties.summary.maxLength, b.SUMMARY_CAP)
   assert.deepStrictEqual(s.required, ['summary', 'filesChanged', 'criteriaAddressed'])
+})
+
+console.log('\nproperties — seeded random manifests (deterministic: same seed, same cases)')
+
+// mulberry32: tiny seeded PRNG, so a failure names a seed + case that reproduces.
+function rng(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+test('buildBrief holds its contract over 400 seeded random build phases', () => {
+  const SEED = 20261107
+  const r = rng(SEED)
+  const pick = a => a[Math.floor(r() * a.length)]
+  const lenses = [...Object.keys(b.LENS_BUDGETS), 'unknown-lens']
+  for (let i = 0; i < 400; i++) {
+    const nBuilders = Math.floor(r() * 6)
+    const manifests = Array.from({ length: nBuilders }, (_, k) => ({
+      label: `builder-${k}`,
+      summary: 'x'.repeat(pick([0, 50, 1_999, 2_000, 2_001, 9_000, 60_000])),
+      diffRef: r() < 0.8 ? `HEAD~${k + 1}..HEAD` : undefined,
+      filesChanged: Array.from({ length: pick([0, 1, 7, 60, 400, 1500]) },
+        (_, j) => ({ path: `src/b${k}/mod-${j}.ts`, role: 'implementation' })),
+      criteriaAddressed: ['AC-1'],
+    }))
+    const criteria = 'c'.repeat(pick([0, 20, 900, 5_000, 40_000]))
+    const lens = pick(lenses)
+    const budget = r() < 0.25 ? pick([0, 1, 300, 4_000, 100_000]) : undefined
+    const out = b.buildBrief({ manifests, lens, criteria, budget })
+    const ctx = `seed ${SEED} case ${i}: ${nBuilders} builders, lens ${lens}, budget ${budget}, ` +
+      `criteria ${criteria.length} chars -> ${out.chars} chars`
+    const cap = budget ?? b.LENS_BUDGETS[lens] ?? b.DEFAULT_BUDGET
+
+    assert.strictEqual(out.budget, cap, `${ctx}: budget reported ${out.budget}, expected ${cap}`)
+    assert.strictEqual(out.chars, out.text.length, `${ctx}: chars ${out.chars} != text.length`)
+    assert.ok(out.chars <= cap || out.overBudget,
+      `${ctx}: over the ${cap} cap without overBudget`)
+    if (criteria) assert.ok(out.text.includes(criteria), `${ctx}: acceptance criteria were cut`)
+    assert.strictEqual(out.text.includes('[TRUNCATED'), out.truncated,
+      `${ctx}: marker present=${out.text.includes('[TRUNCATED')} but truncated=${out.truncated}`)
+    if (out.omittedFiles.length) {
+      assert.ok(out.text.includes(`(${out.omittedFiles.length})`),
+        `${ctx}: ${out.omittedFiles.length} files omitted but the marker does not count them`)
+    }
+    for (const m of manifests) {
+      if (m.summary.length > b.SUMMARY_CAP) {
+        assert.ok(out.truncated, `${ctx}: ${m.label} summary > cap but truncated=false`)
+        if (!out.overBudget) {
+          assert.ok(out.text.includes(m.label),
+            `${ctx}: ${m.label}'s ${m.summary.length}-char summary was clamped but no part of the ` +
+            'brief names it (step-2 marker dropped the step-1 clamp note)')
+        }
+      }
+      if (!out.truncated) {
+        assert.ok(out.text.includes(`### ${m.label}`), `${ctx}: ${m.label} missing from an untruncated brief`)
+        for (const f of m.filesChanged) {
+          assert.ok(out.text.includes(f.path), `${ctx}: ${f.path} missing from an untruncated brief`)
+        }
+      }
+    }
+  }
 })
 
 console.log(`\n${passed} passed, exit ${process.exitCode || 0}`)

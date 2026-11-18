@@ -1,0 +1,22 @@
+{
+  "host": "127.0.0.1",
+  "port": 8471,
+  "rules": [
+    {
+      "id": "github-issues-urgent",
+      "source": "github",
+      "secret_env": "TRIGGER_SECRET_GH",
+      "match": {"event": "issues", "action": "opened", "json_path": "issue.title", "contains": "urgent"},
+      "job": "pr-reviewer",
+      "notify": true
+    },
+    {
+      "id": "deploy-failed",
+      "source": "generic",
+      "secret_env": "TRIGGER_SECRET_DEPLOY",
+      "match": {"json_path": "status", "equals": "failed"},
+      "job": "e2e-smoke-run",
+      "notify": true
+    }
+  ]
+}

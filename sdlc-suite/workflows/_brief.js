@@ -111,15 +111,13 @@ function joinCapped(paths, max) {
 
 /**
  * @param {object} m
- * @param {{includeFiles?: boolean, includeDetails?: boolean, clamped?: string[]}} opts
+ * @param {{includeFiles?: boolean, clamped?: string[]}} opts
  *   `clamped` collects the labels of builders whose summary had to be cut, so the
  *   caller can announce it. Enforcing SUMMARY_CAP silently would be the same
  *   defect as a silent budget truncation, one layer down — a builder that wrote
  *   200 KB would have 198 KB dropped and nothing anywhere would say so.
- *   `includeDetails: false` reduces notAddressed and planGaps to counts: both
- *   survive elsewhere (the return value; the plan.insufficient gate).
  */
-function renderManifest(m, { includeFiles = true, includeDetails = true, clamped = null } = {}) {
+function renderManifest(m, { includeFiles = true, clamped = null } = {}) {
   const lines = []
   if (m.label) lines.push(`### ${m.label}`)
   const summary = String(m.summary ?? '')
@@ -134,20 +132,12 @@ function renderManifest(m, { includeFiles = true, includeDetails = true, clamped
     lines.push(`\nCriteria addressed: ${m.criteriaAddressed.join(', ')}`)
   }
   if (Array.isArray(m.notAddressed) && m.notAddressed.length) {
-    if (includeDetails) {
-      lines.push('\nDeliberately NOT addressed:')
-      for (const n of m.notAddressed) lines.push(`  - ${n.id}: ${n.why}`)
-    } else {
-      lines.push(`\nDeliberately NOT addressed: ${m.notAddressed.map(n => n.id).join(', ')} (reasons cut for the budget)`)
-    }
+    lines.push('\nDeliberately NOT addressed:')
+    for (const n of m.notAddressed) lines.push(`  - ${n.id}: ${n.why}`)
   }
   if (Array.isArray(m.planGaps) && m.planGaps.length) {
-    if (includeDetails) {
-      lines.push('\nPlan gaps escalated (decisions the builder did NOT make):')
-      for (const g of m.planGaps) lines.push(`  - ${g}`)
-    } else {
-      lines.push(`\nPlan gaps escalated: ${m.planGaps.length} (cut for the budget; every one is in the run's BLOCKED plan.insufficient gate)`)
-    }
+    lines.push('\nPlan gaps escalated (decisions the builder did NOT make):')
+    for (const g of m.planGaps) lines.push(`  - ${g}`)
   }
   return lines.join('\n')
 }
@@ -161,114 +151,104 @@ function renderManifest(m, { includeFiles = true, includeDetails = true, clamped
  * @param {string} [opts.criteria]         the acceptance criteria text, always kept
  * @param {number} [opts.budget]           override, in characters
  * @param {string} [opts.changeRef]        how to see the WHOLE change (e.g. a git
- *                                         command), always kept
+ *                                         command), always kept with the criteria
  * @returns {{text: string, chars: number, truncated: boolean, omittedFiles: string[]}}
  *
- * Trimming order is deliberate, and it is the opposite of the first version.
- * That one dropped the file list first, on the theory that a lens can recover
- * it with Glob; on the first live run the lenses did not, and code review,
- * security and performance never looked at two of the files the change was
- * about. A path costs ~50 characters and is the one thing a lens cannot work
- * without, so it goes LAST: first the notAddressed/planGaps detail (kept
- * elsewhere), then the summaries, and the file list only past 40% of the budget
- * — with every path that did not fit still named in the marker. The criteria
- * and the route to the whole change are never trimmed.
+ * Trimming order is deliberate. The file LIST is dropped before any summary is
+ * cut, because a lens can recover a file list with `Glob` but cannot recover a
+ * builder's reasoning from anywhere. The criteria are never trimmed: they are
+ * what every finding is traced against.
  */
 function buildBrief({ manifests = [], lens, criteria = '', budget, changeRef = '' }) {
   const cap = budget ?? LENS_BUDGETS[lens] ?? DEFAULT_BUDGET
+  // `changeRef` is the route to the WHOLE change (in spec mode: a git diff
+  // against the recorded base, plus the untracked files). It sits in the head,
+  // which is never cut, so a lens whose file list was omitted can always get it
+  // back — Glob alone cannot when the change spans more than one tree.
   const route = changeRef ? `## The whole change\n${changeRef}\n\n` : ''
-  const head = (criteria ? `## Acceptance criteria\n${criteria}\n\n` : '') + route +
-    (criteria || route ? '## Implementation\n' : '')
-
-  // One consolidated, de-duplicated file list, so three builders that touched
-  // the same file name it once.
-  const seen = new Set()
-  const fileLines = []
-  for (const m of manifests) {
-    for (const f of (m.filesChanged || [])) {
-      if (!f || !f.path || seen.has(f.path)) continue
-      seen.add(f.path)
-      fileLines.push({ path: f.path, line: `  - ${f.path} (${f.role}) — ${m.label || 'builder'}` })
-    }
-  }
-  // The file list: `keptN` lines shown, the rest named in the marker. Whole
-  // lines only — a path is never cut mid-name (code review round 7, S4).
-  const title = fileLines.length
-    ? `\n\n## Files changed (${fileLines.length}, all builders) — read each one before concluding\n`
+  const head = criteria || route
+    ? `${criteria ? `## Acceptance criteria\n${criteria}\n\n` : ''}${route}## Implementation\n`
     : ''
-  const filesTextOf = n => (fileLines.length ? title + fileLines.slice(0, n).map(x => x.line).join('\n') : '')
-  const omittedOf = n => fileLines.slice(n).map(x => x.path)
-  let keptN = 0
-  {
-    const room = Math.floor(cap * 0.4) - title.length
-    let used = 0
-    for (const x of fileLines) {
-      if (used + x.line.length + 1 > room) break
-      keptN++
-      used += x.line.length + 1
-    }
-  }
 
+  let omitted = []
   const clamped = []
-  let detailsCut = false
-  let summariesCut = false
-  let body = manifests.map(m => renderManifest(m, { includeFiles: false, clamped })).join('\n\n')
-  if (head.length + body.length + filesTextOf(keptN).length > cap) {
-    // Step 1: the notAddressed reasons and the plan-gap texts go to counts.
-    detailsCut = true
-    body = manifests.map(m => renderManifest(m, { includeFiles: false, includeDetails: false })).join('\n\n')
+  let body = manifests.map(m => renderManifest(m, { clamped })).join('\n\n')
+
+  if (head.length + body.length > cap) {
+    // Step 1: drop the per-builder file lists, keeping every summary.
+    omitted = manifests.flatMap(m => (m.filesChanged || []).map(f => f.path))
+    body = manifests.map(m => renderManifest(m, { includeFiles: false })).join('\n\n')
   }
 
-  const howToRead = `\n Read the changed files directly — with Read, Grep or Glob${route ? ', or through "The whole change" above' : ''} —` +
-    ` before concluding, and state in your verdict that your brief was truncated.]`
-  const markerOf = n => {
-    const omitted = omittedOf(n)
-    if (!omitted.length && !clamped.length && !detailsCut && !summariesCut) return ''
+  let truncated = omitted.length > 0 || clamped.length > 0
+  let marker = ''
+
+  if (truncated) {
     const parts = [`\n\n[TRUNCATED — this brief is a PARTIAL account of the implementation.`]
     if (clamped.length) {
       parts.push(
         ` The summary from ${clamped.join(', ')} exceeded the ${SUMMARY_CAP}-character` +
         ` per-builder cap and was cut mid-text.`)
     }
-    if (detailsCut) {
-      parts.push(` To stay within a ${cap}-character budget, each builder's notAddressed reasons and plan-gap texts were reduced to counts.`)
-    }
-    if (summariesCut) {
-      parts.push(` The builder summaries were cut mid-text to fit the ${cap}-character budget.`)
-    }
     if (omitted.length) {
+      // The omitted list is capped at a fraction of the budget. Uncapped, it
+      // grew without bound in the number of changed files and could exceed the
+      // whole budget on its own — worst exactly when the brief matters most.
       parts.push(
-        ` ${n ? 'The file list above is cut.' : 'The file list did not fit at all.'} Also changed, not listed above (${omitted.length}):` +
-        ` ${joinCapped(omitted, Math.floor(cap * 0.15))}`)
+        ` The file list was omitted to stay within a ${cap}-character budget.\n` +
+        ` Omitted (${omitted.length}): ${joinCapped(omitted, Math.floor(cap * 0.25))}`)
     }
-    parts.push(howToRead)
-    return parts.join('')
+    parts.push(
+      `\n Read the changed files directly — with Read, Grep or Glob — before` +
+      ` concluding, and state in your verdict that your brief was truncated.]`)
+    marker = parts.join('')
   }
-  const total = () => head.length + body.length + filesTextOf(keptN).length + markerOf(keptN).length
 
   // Step 2: only if it STILL does not fit, cut the summaries — and say so.
-  if (total() > cap) {
-    summariesCut = true
-    body = clamp(body, Math.max(0, cap - head.length - filesTextOf(keptN).length - markerOf(keptN).length))
+  if (head.length + body.length + marker.length > cap) {
+    const room = Math.max(0, cap - head.length - marker.length - 400)
+    body = clamp(body, room)
+    truncated = true
+    // The omitted list stays capped here too. Joined uncapped, 400 changed files
+    // made this marker larger than a 16k budget on its own: the post-condition
+    // below then clamped EVERY builder summary to nothing and still returned an
+    // over-budget brief holding only the file list — the one thing a lens can
+    // recover with Glob, kept in place of the reasoning it cannot recover.
+    marker =
+      `\n\n[TRUNCATED: this brief exceeded its ${cap}-character budget and the ` +
+      `builder summaries were cut mid-text.\n` +
+      // Keep step 1's per-builder note. Rebuilding the marker used to drop it,
+      // so a builder whose summary hit SUMMARY_CAP — and whose label was then
+      // clamped out of the body — was named nowhere in the brief.
+      (clamped.length
+        ? ` Over the ${SUMMARY_CAP}-character per-builder summary cap, cut first: ` +
+          `${joinCapped(clamped, Math.floor(cap * 0.05))}\n`
+        : '') +
+      (omitted.length
+        ? ` Omitted files (${omitted.length}): ${joinCapped(omitted, Math.floor(cap * 0.25))}\n`
+        : '') +
+      ` You are seeing a PARTIAL account of the implementation. Read the changed ` +
+      `files directly before concluding, and state in your verdict that your brief ` +
+      `was truncated.]`
   }
-  // Step 3: whole file lines, from the end, each one then named in the marker.
-  while (keptN > 0 && total() > cap) keptN--
 
-  let text = head + body + filesTextOf(keptN) + markerOf(keptN)
+  let text = head + body + marker
 
-  // POST-CONDITION. The invariant this module exists to hold is `chars <= cap`.
-  // The head (criteria and the route to the whole change) is never dropped, so a
-  // cap smaller than the head is honoured as "head plus the marker" and the
-  // marker says the brief is partial — the one case where the length may exceed
-  // `cap`, reported as overBudget rather than hidden.
-  if (text.length > cap && body) {
-    summariesCut = true
-    body = clamp(body, Math.max(0, cap - head.length - filesTextOf(keptN).length - markerOf(keptN).length))
-    text = head + body + filesTextOf(keptN) + markerOf(keptN)
+  // POST-CONDITION. The invariant this module exists to hold is `chars <= cap`,
+  // and until this existed nothing enforced it: `buildBrief` computed a budget,
+  // announced a truncation, and could still return 19,236 characters against a
+  // 16,000 cap. An invariant with no post-condition is a comment.
+  //
+  // The head (acceptance criteria) is never dropped — every finding traces to
+  // it — so a cap smaller than the head is honoured as "head plus the marker",
+  // and the marker says the brief is partial. That is the one case where the
+  // returned length may exceed `cap`, and it is reported rather than hidden.
+  if (text.length > cap) {
+    const keep = Math.max(0, cap - head.length - marker.length)
+    text = head + clamp(body, keep) + marker
+    truncated = true
   }
 
-  const omitted = omittedOf(keptN)
-  const truncated = omitted.length > 0 || clamped.length > 0 || detailsCut || summariesCut
   return {
     text,
     chars: text.length,

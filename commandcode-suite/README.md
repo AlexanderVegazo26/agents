@@ -43,15 +43,15 @@ commandcode-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 25 | 64 | 7 | — |
-| `sdlc-suite/` | 25 | 64 | 7 | 11 |
-| `commandcode-suite/` | 25 | 64 | 6 | 6 |
-| `.kimi-code/` | 25 | 70 | 6 | — |
-| `.copilot/` | 25 | 64 | — | — |
-| `.codex/` | 25 | 64 | — | — |
-| `.agents/` | — | 64 | — | — |
-| `.pi/` | — | — | — | 11 |
-| `.hermes/` | — | — | — | 10 |
+| `.claude/` | 25 | 65 | 7 | — |
+| `sdlc-suite/` | 25 | 65 | 7 | 12 |
+| `commandcode-suite/` | 25 | 65 | 6 | 6 |
+| `.kimi-code/` | 25 | 71 | 6 | — |
+| `.copilot/` | 25 | 65 | — | — |
+| `.codex/` | 25 | 65 | — | — |
+| `.agents/` | — | 65 | — | — |
+| `.pi/` | — | — | — | 12 |
+| `.hermes/` | — | — | — | 11 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
@@ -183,7 +183,7 @@ Phases are sequential; agents within a phase run concurrently (`Promise.all` ove
 
 ### Three important caveats
 
-**1. Unattended phases run with auto-accept — tool calls are auto-approved.** Several agents have "stop and confirm before" boundaries (`software-engineer` §13, `ui-engineer` §5, `database-engineer`). Those are *prompt-level* commitments; the workflow runner does not enforce them. `sdlc-feature` runs its build agents in a git worktree so edits land in a throwaway copy, but **review the diff before merging** — don't treat a workflow-produced change as pre-approved.
+**1. Unattended phases run with auto-accept — tool calls are auto-approved.** Several agents have "stop and confirm before" boundaries (`software-engineer` §13, `ui-engineer` §5, `database-engineer`). Those are *prompt-level* commitments; the workflow runner does not enforce them. `sdlc-feature` runs each build agent in its own git worktree on its own branch, commits what the builder leaves there, merges the builders' branches onto one integration branch in a further worktree, and runs every verifier and the readiness agents in that tree, so they examine the change itself rather than the builders' reports. Your working tree is never modified: the report's `change.branch` holds the result, and merging it is your decision — **review the diff before merging**; don't treat a workflow-produced change as pre-approved. (Before 2026-11-13 the build worktree was deleted with nothing preserved, so the verifiers reviewed an unchanged tree.)
 
 **2. Workflows accept no mid-run human input.** That's why every workflow terminates in a *recommendation* with an explicit `humanDecisionRequired` list, and why sign-off-shaped stages are separate workflows rather than one long chain.
 

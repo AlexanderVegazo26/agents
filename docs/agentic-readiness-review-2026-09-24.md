@@ -25,7 +25,7 @@ throwaway worktree and left it clean. This builds on, and does not repeat,
 ever run.** Every CI gate is green (23/23 exit 0, measured), and that green says
 nothing about self-improvement, because no gate exercises the loop end to end.
 
-- `.claude/runs/` does not exist in this repo, `nawi/`, or any worktree — **zero
+- `.claude/runs/` does not exist in this repo, the separate project these agents build against, or any worktree — **zero
   runs have ever been recorded**.
 - `learnings/` holds zero ratified learnings; `candidates/` holds `.gitkeep`.
 - **No code path loads a learning into an agent.** Loading is prose in one skill.

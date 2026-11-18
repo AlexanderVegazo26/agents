@@ -61,6 +61,7 @@
   "role_model_aliases": {
     "haiku": "fast",
     "sonnet": "balanced",
-    "opus": "deep"
+    "opus": "deep",
+    "fable": "deep"
   }
 }

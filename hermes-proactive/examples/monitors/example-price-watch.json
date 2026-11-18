@@ -1,0 +1,10 @@
+{
+  "name": "example-price-watch",
+  "url": "https://example.com/pricing",
+  "kind": "price_below",
+  "condition": "4.00",
+  "selector": "Sonnet[^$]{0,120}",
+  "ignore": ["\\d{1,2}:\\d{2}"],
+  "timeout": 15,
+  "max_bytes": 500000
+}

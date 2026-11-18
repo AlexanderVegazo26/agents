@@ -5,7 +5,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/transcript_detect.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/transcript_detect.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/transcript_detect.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_test_edits.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_test_edits.py\"",
             "timeout": 10
           }
         ]
