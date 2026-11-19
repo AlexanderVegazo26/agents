@@ -2366,6 +2366,9 @@ async function main() {
     fs.mkdirSync(d, { recursive: true })
     fs.writeFileSync(path.join(d, 'intent.md'), intent)
     gitIn(cwd, 'init', '-q')
+    // The run commits each stage with the repository's own configuration, as it
+    // would in a person's checkout; a CI runner has no global identity.
+    for (const [k, v] of [['user.email', 't@example.invalid'], ['user.name', 't'], ['commit.gpgsign', 'false']]) gitIn(cwd, 'config', k, v)
     gitIn(cwd, 'add', '-A')
     gitIn(cwd, 'commit', '-q', '-m', 'intent')
     return { cwd, d }
@@ -2949,6 +2952,111 @@ async function main() {
       cwd: gitSpecRepo().cwd, args: { initiative: 'HU-9', policy: POLICY_JSON }, onAgent: featureAgents(),
     })
     assert.ok(plain.calls.length && plain.calls.every(c => !c.prompt.includes('DECISION RECORDS')), 'a run without specDir redirected decision records')
+  })
+
+  // Commit per stage, evidence bound to the commit it was produced on, and
+  // delivered == verified (jeanbot's follow-up to the adversarial review).
+  const writeIn = (cwd, rel, text) => { fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true }); fs.writeFileSync(path.join(cwd, rel), text) }
+  const stageAgents = (cwd, extra = {}) => featureAgents({
+    'build:backend': () => { writeIn(cwd, 'src/export.ts', 'export const csv = 1\n'); return manifest('build:backend', BACKEND_FILES) },
+    'verify:qa': () => { writeIn(cwd, 'test/export.test.ts', 'test("csv", () => {})\n'); return { verdict: 'tested', findings: [] } },
+    ...extra,
+  })
+  const filesIn = (cwd, c) => gitIn(cwd, 'show', '--name-only', '--format=', c).split('\n').map(x => x.trim()).filter(Boolean)
+
+  await test('a checkout build commits each stage and binds the evidence to the commit verification ran on', async () => {
+    const { cwd } = gitSpecRepo()
+    const base = gitIn(cwd, 'rev-parse', 'HEAD').trim()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: stageAgents(cwd),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 400))
+    const v = r.result.verification
+    assert.ok(v && v.stageCommits === true && v.base === base, JSON.stringify(v))
+    assert.deepStrictEqual(v.commits.map(c => c.stage), ['Build', 'Test', 'Readiness'], JSON.stringify(v.commits))
+    const [build, tested] = v.commits
+    assert.ok(!build.empty && filesIn(cwd, build.commit).includes('src/export.ts'), `the Build commit does not hold the code: ${filesIn(cwd, build.commit)}`)
+    assert.ok(/^sdlc-feature\(.+\): Build — HU-9$/.test(gitIn(cwd, 'log', '-1', '--format=%s', build.commit).trim()), 'the Build commit does not name the run and stage')
+    const testFiles = filesIn(cwd, tested.commit)
+    assert.ok(testFiles.includes('test/export.test.ts') && testFiles.includes(`${SPEC}/test-report.md`), `the Test commit lacks the tests or the evidence: ${testFiles}`)
+    assert.strictEqual(v.verifiedCommit, tested.commit, 'the evidence is not bound to the commit Review read')
+    assert.strictEqual(v.deliveredMatchesVerified, true)
+    assert.strictEqual(v.finalCommit, gitIn(cwd, 'rev-parse', 'HEAD').trim())
+    assert.strictEqual(gitIn(cwd, 'status', '--short', '--', '.', ':(exclude).claude').trim(), '', 'the run left part of the change uncommitted')
+    const qa = r.calls.find(c => c.label === 'verify:qa')
+    assert.ok(qa.prompt.includes(`The code under test is commit ${build.commit}`), 'the test stage was not told which commit it tests')
+    assert.ok(r.calls.find(c => c.label === 'build:backend').prompt.includes('this workflow commits each stage itself'), 'builders were not told the workflow commits')
+    assert.ok(r.calls.find(c => c.label === 'readiness').prompt.includes(`CODE UNDER VERIFICATION: commit ${tested.commit}`), 'readiness was not told the verified commit')
+    assert.ok(!r.result.blockedGates.some(g => g.gate === 'verification.drift'))
+  })
+
+  await test('a repair is committed before re-verification, and that commit becomes the verified one', async () => {
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: stageAgents(cwd, {
+        'verify:review': { verdict: 'blocking', findings: [{ severity: 'Must Fix', summary: 'no CSV header', evidence: 'src/export.ts:1', file: 'src/export.ts' }] },
+        'refute:review': { refuted: false, reasoning: 'confirmed on re-read' },
+        'repair:backend': () => { writeIn(cwd, 'src/export.ts', 'export const csv = "id,name"\n'); return manifest('repair:backend', BACKEND_FILES) },
+        'reverify:review': { verdict: 'fixed', findings: [] },
+      }),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const v = r.result.verification
+    assert.deepStrictEqual(v.commits.map(c => c.stage), ['Build', 'Test', 'Repair 1', 'Readiness'], JSON.stringify(v.commits))
+    const repair = v.commits[2]
+    assert.ok(filesIn(cwd, repair.commit).includes('src/export.ts'), 'the repair commit does not hold the fix')
+    assert.strictEqual(v.verifiedCommit, repair.commit, 're-verification read the repair commit, but the evidence is bound elsewhere')
+    assert.strictEqual(v.verifiedStage, 'Repair 1')
+    assert.strictEqual(v.deliveredMatchesVerified, true)
+  })
+
+  await test('code changed after verification is caught: delivered != verified is a blocked gate', async () => {
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: stageAgents(cwd, { docs: () => { writeIn(cwd, 'src/export.ts', 'export const csv = 2 // edited after review\n'); return 'notes' } }),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const v = r.result.verification
+    assert.strictEqual(v.deliveredMatchesVerified, false, JSON.stringify(v))
+    assert.deepStrictEqual(v.changedAfterVerification, ['src/export.ts'])
+    assert.ok(r.result.blockedGates.some(g => g.gate === 'verification.drift'), JSON.stringify(r.result.blockedGates.map(g => g.gate)))
+  })
+
+  await test('a refused stage commit leaves the evidence unbound and says so; the run continues', async () => {
+    const { cwd } = gitSpecRepo()
+    writeIn(cwd, '.git/hooks/pre-commit', '#!/bin/sh\necho "lint failed" >&2\nexit 1\n')
+    fs.chmodSync(path.join(cwd, '.git/hooks/pre-commit'), 0o755)
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: stageAgents(cwd),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const v = r.result.verification
+    assert.strictEqual(v.verifiedCommit, null)
+    assert.ok(v.errors.length && v.errors.every(e => /refused/.test(e)), JSON.stringify(v.errors))
+    assert.ok(r.calls.find(c => c.label === 'readiness').prompt.includes('NOT BOUND TO A COMMIT'), 'readiness was not told the evidence is unbound')
+  })
+
+  await test('commitStages: false leaves the change uncommitted, and a detached HEAD stops a committing build', async () => {
+    const { cwd } = gitSpecRepo()
+    const base = gitIn(cwd, 'rev-parse', 'HEAD').trim()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false, commitStages: false }, onAgent: stageAgents(cwd),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    assert.strictEqual(gitIn(cwd, 'rev-parse', 'HEAD').trim(), base, 'commitStages: false still committed')
+    assert.deepStrictEqual(r.result.verification.commits, [])
+    assert.ok(r.calls.find(c => c.label === 'build:backend').prompt.includes('the change stays uncommitted for review'))
+
+    const d = gitSpecRepo()
+    gitIn(d.cwd, 'checkout', '-q', '--detach')
+    const stopped = await runScript('sdlc-feature.js', {
+      cwd: d.cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: stageAgents(d.cwd),
+    })
+    assert.strictEqual(stopped.result.status, 'stopped')
+    assert.ok(/HEAD is detached/.test(stopped.result.reason), stopped.result.reason)
+    assert.ok(!stopped.calls.some(c => /^build:/.test(c.label)), 'a detached checkout was built in')
   })
 
   await test('a resume whose Build already ran diffs against the RECORDED base, not the moved HEAD', async () => {

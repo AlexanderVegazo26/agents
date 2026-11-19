@@ -155,6 +155,16 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Added
 
+- **Commit per stage, evidence bound to a commit.** A spec-mode build in the
+  checkout is now committed by the workflow after Build, after Test (its tests
+  and evidence), after each Repair and at the end, each as
+  `sdlc-feature(<runId>): <stage>` on the current branch, with the repository's
+  own hooks and signing. The test stage is told the commit it tests, readiness
+  the commit verification ran on, and the outcome's `verification` records the
+  chain and whether anything outside the spec directory changed after the last
+  verification (a `verification.drift` blocked gate when it did). A detached
+  HEAD stops a committing build; a refused commit leaves the evidence unbound
+  and says so. `"commitStages": false` keeps the old uncommitted behaviour.
 - **Evidence a person can approve from.** `/sdlc-feature`'s Test stage returns
   one case per acceptance criterion — id, criterion, title, type (unit,
   component, integration, e2e, visual, mutation, manual), test, result and

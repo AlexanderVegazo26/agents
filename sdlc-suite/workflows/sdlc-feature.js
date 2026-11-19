@@ -1486,10 +1486,88 @@ const BUILD_TREE = (() => {
   return want
 })()
 let BUILD_BASE = null   // the commit a checkout build diffs against, from the spec preflight
+// COMMIT PER STAGE (jeanbot's follow-up to the adversarial review: "commit base
+// y commit por etapa, evidencia sobre el commit final"). In a checkout build the
+// workflow itself commits after Build, after Test, after each Repair and at the
+// end, on the branch the run started on — so every stage's output has a commit,
+// the evidence names the commit it was produced on, and the run can show that
+// what it delivers is what it verified. Builders still never commit; the
+// workflow does. "commitStages": false keeps the change uncommitted, as before.
+const STAGE_COMMITS = BUILD_TREE === 'checkout' && !(args && typeof args === 'object' && args.commitStages === false)
+const verification = {
+  stageCommits: STAGE_COMMITS,
+  base: null,
+  commits: [],               // [{stage, commit, tree, empty}]
+  verifiedCommit: null,      // the commit the last verification stage ran on
+  verifiedStage: null,
+  finalCommit: null,
+  deliveredMatchesVerified: null,
+  changedAfterVerification: [],
+  errors: [],
+}
 /** How a reader sees the WHOLE change — never cut from a lens brief. */
 const changeRef = () => (BUILD_TREE === 'checkout' && BUILD_BASE
-  ? `The whole change is UNCOMMITTED in the checkout this run started in. List it with \`git diff ${BUILD_BASE} --stat\` and \`git status --short\` (new files are untracked); read it with \`git diff ${BUILD_BASE}\`.`
+  ? (STAGE_COMMITS
+    ? `The whole change is COMMITTED on the current branch, stage by stage, since ${BUILD_BASE}. List it with \`git diff ${BUILD_BASE} --stat\` and \`git log --oneline ${BUILD_BASE}..HEAD\`; read it with \`git diff ${BUILD_BASE}\`; \`git status --short\` shows anything a stage has not committed yet.`
+    : `The whole change is UNCOMMITTED in the checkout this run started in. List it with \`git diff ${BUILD_BASE} --stat\` and \`git status --short\` (new files are untracked); read it with \`git diff ${BUILD_BASE}\`.`)
   : '')
+
+/**
+ * Commit everything the stage left in the checkout (outside .claude/, which
+ * holds the run's own state) with a message naming the run and the stage, and
+ * return {commit, tree, empty}. A stage that changed nothing is not committed;
+ * its commit is HEAD. With `checkSince`, also report whether anything outside
+ * the spec directory changed between that commit and the new HEAD — the
+ * verified-equals-delivered check. Hooks run and signing follows the
+ * repository's own configuration: a commit they refuse is recorded, the run
+ * continues with the change uncommitted, and the evidence is reported unbound.
+ */
+async function commitStage(stage, checkSince = null) {
+  if (!STAGE_COMMITS || !RUN) return null
+  const r = await sealedBridge('stage-commit', null, `const CFG = ${JSON.stringify({
+    root: repoRoot(), specDir: SPEC_DIR, since: checkSince,
+    message: `sdlc-feature(${RUN.runId}): ${stage}${initiative ? ` — ${String(initiative).replace(/\s+/g, ' ').slice(0, 72)}` : ''}`,
+  })}
+const { execFileSync } = require('child_process')
+const run = (...a) => execFileSync('git', a, { cwd: CFG.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const errText = e => String((e && e.stderr) || (e && e.message) || e).slice(0, 600)
+try { run('add', '-A', '--', '.', ':(exclude).claude') } catch (e) { return { error: 'git add failed: ' + errText(e) } }
+let empty = false
+try { run('diff', '--cached', '--quiet'); empty = true } catch (e) { if (e.status !== 1) return { error: 'git diff --cached failed: ' + errText(e) } }
+if (!empty) {
+  try { run('commit', '-q', '-m', CFG.message) } catch (e) { return { error: 'git commit was refused: ' + errText(e) } }
+}
+const commit = run('rev-parse', 'HEAD')
+const tree = run('rev-parse', 'HEAD^{tree}')
+let matches = null
+let changed = []
+if (CFG.since) {
+  const scope = ['--', '.', ':(exclude).claude'].concat(CFG.specDir ? [':(exclude)' + CFG.specDir] : [])
+  try {
+    changed = run.apply(null, ['diff', '--name-only', CFG.since, commit].concat(scope)).split('\\n').filter(Boolean)
+    matches = changed.length === 0
+  } catch (e) { matches = null }
+}
+return { commit, tree, empty, matches, changed: changed.slice(0, 50) }`, TIERS.transcribe.model)
+  if (!r || typeof r !== 'object') {
+    verification.errors.push(`${stage}: the commit step did not run`)
+    log(`stage commit after ${stage} did not run — the change stays uncommitted`)
+    return null
+  }
+  if (r.error) {
+    verification.errors.push(`${stage}: ${r.error}`)
+    log(`stage commit after ${stage} failed — ${r.error}`)
+    return null
+  }
+  const rec = { stage, commit: r.commit, tree: r.tree, empty: r.empty === true }
+  verification.commits.push(rec)
+  if (checkSince) {
+    verification.deliveredMatchesVerified = r.matches === true ? true : r.matches === false ? false : null
+    verification.changedAfterVerification = Array.isArray(r.changed) ? r.changed : []
+  }
+  log(`stage commit after ${stage}: ${r.empty ? 'nothing to commit' : 'committed'} — ${String(r.commit).slice(0, 12)}`)
+  return rec
+}
 // Who wrote a handed-on file, for the sentence a downstream agent reads.
 const HANDOFF_ORIGIN = {}
 const RENDER_CAP = 64 * 1024          // a rendered document is cut to this before it is written (16 KB cut a real 22 KB spec.md, HU 16 pilot)
@@ -1750,7 +1828,10 @@ try {
   }
   dirty = paths.filter(x => !(spec && x.startsWith(spec)) && !x.startsWith('.claude/'))
 } catch (e) { dirty = null }
-return { errors, files, intent, specText, head, dirty }`, TIERS.transcribe.model)
+// The branch stage commits land on; null when HEAD is detached.
+let branch = null
+try { branch = git('symbolic-ref', '--quiet', '--short', 'HEAD') || null } catch (e) { branch = null }
+return { errors, files, intent, specText, head, dirty, branch }`, TIERS.transcribe.model)
 }
 
 /** Criteria, surfaces, assumptions and questions back out of a spec.md in renderSpec's layout. */
@@ -2367,6 +2448,15 @@ async function runWorkflow() {
           reason: "a checkout build needs git: the base commit or the working-tree status could not be read. Run it in a git checkout, or with buildTree: 'worktrees'.",
         }
       }
+      if (willBuild && STAGE_COMMITS && !pre.branch) {
+        // A commit on a detached HEAD belongs to no branch: the next checkout
+        // leaves it behind, and the stage commits with it.
+        status = 'stopped'
+        return {
+          status: 'stopped',
+          reason: 'HEAD is detached, and this run commits each stage on the current branch. Check out the HU branch first, or run with commitStages: false to leave the change uncommitted.',
+        }
+      }
       if (willBuild && Array.isArray(pre.dirty) && pre.dirty.length) {
         status = 'stopped'
         const shown = pre.dirty.slice(0, 8).join(', ') + (pre.dirty.length > 8 ? `, and ${pre.dirty.length - 8} more` : '')
@@ -2693,7 +2783,7 @@ ${handoffRef('design.md', 'UX SPEC', asText(uxSpec))}${HANDOFF_FILES['mock.html'
   const checkoutRules = earlier => (IN_CHECKOUT
     ? `\n\nWHERE YOU BUILD: in the repository checkout this run started in, on its current branch — not a worktree. ${earlier.length
       ? `Earlier builders already changed this tree; build on their work and never revert it:\n${earlier.map(m => `- ${m.label}: ${(m.filesChanged || []).map(f => f.path).join(', ') || '(no files listed)'}`).join('\n')}\n`
-      : ''}Do not commit, switch branches, stash, reset or clean — the change stays uncommitted for review.${BUILD_BASE ? ` For diffRef, write: git diff ${BUILD_BASE}, plus the new untracked files: git status --short` : ''}`
+      : ''}Do not commit, switch branches, stash, reset or clean — ${STAGE_COMMITS ? 'this workflow commits each stage itself, after you finish' : 'the change stays uncommitted for review'}.${BUILD_BASE ? ` For diffRef, write: git diff ${BUILD_BASE}, plus the new untracked files: git status --short` : ''}`
     : '')
   const buildOne = (surface, earlier) => dispatch(
     withPolicy(`${BUILDERS[surface].brief}
@@ -2739,6 +2829,8 @@ Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code 
   // misses the others' uncommitted work.
   // `git diff` alone misses every NEW file — they are untracked (round 7, S5).
   if (IN_CHECKOUT && BUILD_BASE) for (const m of manifests) m.diffRef = `git diff ${BUILD_BASE}, plus the new untracked files: git status --short`
+  verification.base = BUILD_BASE
+  const buildCommit = await commitStage('Build')
 
   // Whitespace collapsed: a gap is one line of a BLOCKED entry, and a newline
   // inside it would end the entry early in the reducer (code review C1).
@@ -2842,7 +2934,7 @@ EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from
 - In "cases", give EVERY acceptance criterion at least one case: an id (CP-01, CP-02, ...), the criterion id, a title that says what is checked, the type (${CASE_TYPES.join(', ')}), the test (file › test name, or the exact command), the result (pass, fail or not-run) and the evidence path.
 - Choose the type the criterion needs: logic → unit; a UI component → component; several modules or the database together → integration; a user journey → e2e; how a screen looks → visual. A criterion you cannot check by execution here is type manual, result not-run: it is pending human QA, never "pass".
 - ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md. If the repository has ${QA_TEMPLATE}, follow it exactly — its case titles, headings and naming — and, when it describes a tracker draft (a container and its cases), also write ${evidenceDir}/tracker-draft.md from it, ready to paste. Never publish anything to a tracker yourself. Without that file, write one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
-- Evidence is committed with the spec: before saving any output, response or screenshot, redact tokens, credentials, secrets and personal data (names, phone numbers, emails) — or use test data that has none.
+${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the current branch. Name it in every case's execution result: evidence is bound to the commit it was produced on.\n` : ''}- Evidence is committed with the spec: before saving any output, response or screenshot, redact tokens, credentials, secrets and personal data (names, phone numbers, emails) — or use test data that has none.
 - If the repository has mutation testing set up (for example a Stryker configuration), run it on the changed files only and report it in "mutation". Each surviving mutant in changed code is a Should Fix finding: a test that does not fail when the code is broken does not protect it.
 - A criterion with no automated test where one was possible is a finding, not a case to skip.`)
 
@@ -2861,6 +2953,12 @@ EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from
   }
   const testReport = renderTestReport(testRaw, testFindings, reqs.criteria)
   await writeRendered('test-report.md', testReport)
+  // The tests the test stage added and its evidence, committed together: Review
+  // reads this tree, so this is the commit the verification ran on.
+  {
+    const c = await commitStage('Test')
+    if (c) { verification.verifiedCommit = c.commit; verification.verifiedStage = 'Test' }
+  }
   {
     const stop = missingInputs('Review', ['test-report.md'])
     if (stop) return stop
@@ -2938,7 +3036,7 @@ EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from
         dispatch(
           withPolicy(`REPAIR, round ${k} of ${MAX_REPAIR_ROUNDS}. Independent reviewers confirmed the blocking findings below against the change you built. Fix them.
 
-Work on YOUR ORIGINAL CHANGE, where it already lives — ${m.diffRef ? `reach it through: ${m.diffRef}` : 'the worktree or branch you built it in'}. Do not start from a fresh checkout: the change is not there, and a fix applied to the wrong tree fixes nothing.${IN_CHECKOUT ? ' It is uncommitted in the checkout this run started in, together with the other builders\' work: fix only what the findings name, never revert theirs, and do not commit, switch branches, stash, reset or clean.' : ''} Stay inside the findings' scope; anything else you notice goes in your summary as noticed-but-not-touched.
+Work on YOUR ORIGINAL CHANGE, where it already lives — ${m.diffRef ? `reach it through: ${m.diffRef}` : 'the worktree or branch you built it in'}. Do not start from a fresh checkout: the change is not there, and a fix applied to the wrong tree fixes nothing.${IN_CHECKOUT ? ` It is in the checkout this run started in${STAGE_COMMITS ? ', committed by this workflow after each stage' : ', uncommitted'}, together with the other builders' work: fix only what the findings name, never revert theirs, and do not commit, switch branches, stash, reset or clean${STAGE_COMMITS ? ' — this workflow commits your repair' : ''}.` : ''} Stay inside the findings' scope; anything else you notice goes in your summary as noticed-but-not-touched.
 
 A finding you believe is wrong is not yours to dismiss — say so in notAddressed with the evidence, and the independent lens that raised it will re-check. You do not certify this repair; the lens re-verifies it after you.
 
@@ -2971,6 +3069,12 @@ Report a BUILD MANIFEST of the repair, with the same rules as the build: every f
     if (!repairManifests.length) {
       repairRounds.rounds.push({ round: k, lenses: lensKeys, fixers: fixers.map(m => m.label), targeted: target.length, remaining: target.length, note: 'no builder produced a repair manifest' })
       break
+    }
+    // Re-verify reads the repaired tree: it is committed first, and becomes the
+    // commit the verification ran on.
+    {
+      const c = await commitStage(`Repair ${k}`)
+      if (c) { verification.verifiedCommit = c.commit; verification.verifiedStage = `Repair ${k}` }
     }
 
     const reverifyFailed = []
@@ -3139,6 +3243,12 @@ TEST STAGE: ${testDead.length ? `produced NO result (${testDead.join(', ')}) —
 
 REVIEW LENSES THAT DID NOT RUN: ${reviewDead.length ? reviewDead.join(', ') : '(none)'}
 
+CODE UNDER VERIFICATION: ${verification.verifiedCommit
+    ? `commit ${verification.verifiedCommit} (${verification.verifiedStage}) on the current branch — the evidence above was produced on it.`
+    : STAGE_COMMITS
+      ? `NOT BOUND TO A COMMIT — the stage commit failed (${verification.errors.join('; ').slice(0, 300) || 'no reason recorded'}), so the evidence cannot be tied to what will be delivered: classify it Claimed-not-verified.`
+      : 'the change is uncommitted (commitStages is off), so the evidence is not bound to a commit.'}
+
 PLAN GAPS — design decisions the build tier escalated instead of making. Each stays open until the plan answers it; a criterion a plan gap touches is not Confirmed:\n${planGaps.length ? planGaps.map(g => `[${g.builder}] ${g.gap}`).join('\n') : '(none)'}`),
           { agentType: 'sdlc-suite:release-manager', label: 'readiness', phase: 'Readiness', ...tier('readiness') },
         ),
@@ -3155,6 +3265,24 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
     return { agents: [{ label: 'readiness', result: readiness }, { label: 'docs', result: docs }] }
   })
 
+  // The final commit, and the check that what is delivered is what was
+  // verified: nothing outside the spec directory may change after the commit
+  // the last verification stage ran on.
+  if (STAGE_COMMITS) {
+    const fin = await commitStage('Readiness', verification.verifiedCommit)
+    verification.finalCommit = fin ? fin.commit : null
+    if (verification.deliveredMatchesVerified === false) {
+      keep([
+        'BLOCKED — verification.drift',
+        `  Action withheld: treating commit ${String(verification.finalCommit).slice(0, 12)} as verified`,
+        `  Why gated: files changed after the last verification (${verification.verifiedStage}, ${String(verification.verifiedCommit).slice(0, 12)}): ${verification.changedAfterVerification.join(', ').slice(0, 500)}`,
+        '  Prepared: every stage commit is listed in the outcome under verification.commits',
+        '  Unblocks: re-running Test and Review on the final commit, or reverting the later change',
+        '  Authorize by: not an authorization gate — what is delivered must be what was verified',
+      ].join('\n'))
+    }
+  }
+
   status = 'completed'
   return {
     initiative,
@@ -3166,6 +3294,9 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
     buildManifests: manifests,
     planGaps,
     verifyHandoff,
+    // Base, every stage commit, the commit verification ran on, the final one,
+    // and whether they agree outside the spec directory.
+    verification,
     // Which model and effort each stage ran on, as resolved — so a reader can
     // tell a Fable-planned run from one where args.tiers pinned nothing.
     tiers: TIERS,
