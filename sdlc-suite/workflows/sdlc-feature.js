@@ -785,6 +785,10 @@ async function dispatch(prompt, opts) {
       LEARNINGS_LOADED.push({ label, agentType: o.agentType || null, ids: lb.ids })
     }
   }
+  // A workflow may define extraInstructionFor(agentType) to append a standing
+  // instruction for some agent types; one that does not is unaffected.
+  const extra = typeof extraInstructionFor === 'function' ? extraInstructionFor(o.agentType) : ''
+  if (extra) full = `${full}\n\n---\n\n${extra}`
   const first = await agent(full, o)
   if (first !== null && first !== undefined) return first
   if (!RETRY_ENABLED || !retryThisCall) {
@@ -1510,6 +1514,23 @@ function handoffDir() {
 function handoffPath(name) {
   const d = handoffDir()
   return d && HANDOFF_NAME_RE.test(name) ? `${d}/${name}` : null
+}
+
+// WHERE A DECISION IS RECORDED. In spec mode the HU's documents live in the
+// spec directory, which the team versions and reviews. The HU 16 pilot's
+// architect followed its project-memory skill and wrote the ADR to
+// .claude/memory/decisions/ — local, unversioned, seen by no one else — and a
+// person had to move it by hand. The agents that make design decisions are told
+// where the record goes instead. dispatch() (runtime block) appends this.
+const DECIDING_AGENTS = new Set([
+  'sdlc-suite:solution-architect', 'sdlc-suite:ux-designer',
+  'sdlc-suite:software-engineer', 'sdlc-suite:ui-engineer', 'sdlc-suite:database-engineer',
+])
+function extraInstructionFor(agentType) {
+  if (!SPEC_DIR || !DECIDING_AGENTS.has(agentType)) return ''
+  const p = handoffPath('decisiones.md')
+  if (!p) return ''
+  return `DECISION RECORDS. This change's documents live in ${SPEC_DIR}/, which the team versions and reviews. Any decision record you write for it — an ADR, a design, data or interface decision, a trade-off you settled — goes in ${p}: add a section headed with the decision and your role, and create the file if it is absent. Do NOT write it under .claude/memory/: that directory is local and unversioned, so a decision recorded there is one the team never sees. For this run, this replaces your project-memory instruction to use .claude/memory/decisions/.`
 }
 
 /** Where intent.md is read from when a person wrote it; null when product-manager writes it. */

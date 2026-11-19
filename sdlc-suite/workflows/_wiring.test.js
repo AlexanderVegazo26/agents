@@ -2928,6 +2928,29 @@ async function main() {
     assert.strictEqual((r.calls.find(c => c.label === 'mock') || {}).opts.isolation, 'worktree', 'the worktree build lost the isolated mock')
   })
 
+  await test('in spec mode, decision records go to <specDir>/decisiones.md, never .claude/memory', async () => {
+    // HU 16 pilot: the architect followed its project-memory skill and wrote the
+    // ADR to .claude/memory/decisions/ (local, unversioned); a person moved it.
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents(),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const told = c => c.prompt.includes('DECISION RECORDS') && c.prompt.includes(`${SPEC}/decisiones.md`) && c.prompt.includes('Do NOT write it under .claude/memory/')
+    const deciders = r.calls.filter(c => ['architecture', 'ux-spec', 'mock'].includes(c.label) || /^build:/.test(c.label))
+    assert.ok(deciders.length >= 5, `expected architect, designer, mock and builders: ${deciders.map(c => c.label)}`)
+    for (const c of deciders) assert.ok(told(c), `${c.label} was not told where decision records go`)
+    const readers = r.calls.filter(c => /^(verify|refute):/.test(c.label) || c.label === 'requirements')
+    assert.ok(readers.length, 'no reviewing agents ran')
+    for (const c of readers) assert.ok(!c.prompt.includes('DECISION RECORDS'), `${c.label} makes no decisions but was told where to record them`)
+
+    // Outside spec mode there is no spec directory: project memory stays the home.
+    const plain = await runScript('sdlc-feature.js', {
+      cwd: gitSpecRepo().cwd, args: { initiative: 'HU-9', policy: POLICY_JSON }, onAgent: featureAgents(),
+    })
+    assert.ok(plain.calls.length && plain.calls.every(c => !c.prompt.includes('DECISION RECORDS')), 'a run without specDir redirected decision records')
+  })
+
   await test('a resume whose Build already ran diffs against the RECORDED base, not the moved HEAD', async () => {
     // Code review round 7, S1: a run stopped in Review, the person committed
     // something, and the resume pointed every lens at `git diff <new HEAD>`.

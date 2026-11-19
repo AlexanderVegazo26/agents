@@ -780,6 +780,10 @@ async function dispatch(prompt, opts) {
       LEARNINGS_LOADED.push({ label, agentType: o.agentType || null, ids: lb.ids })
     }
   }
+  // A workflow may define extraInstructionFor(agentType) to append a standing
+  // instruction for some agent types; one that does not is unaffected.
+  const extra = typeof extraInstructionFor === 'function' ? extraInstructionFor(o.agentType) : ''
+  if (extra) full = `${full}\n\n---\n\n${extra}`
   const first = await agent(full, o)
   if (first !== null && first !== undefined) return first
   if (!RETRY_ENABLED || !retryThisCall) {

@@ -145,6 +145,13 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   the untracked files), kept with the criteria, which no step cuts. The cut
   order itself is unchanged (file list first, then summaries), so the brief
   replay evals hold. Builders' `planGaps` are rendered in the brief.
+- **A decision record lands with the spec, not in local memory.** In the HU 16
+  pilot the architect followed its project-memory skill and wrote the ADR to
+  `.claude/memory/decisions/`, which is local and unversioned; a person moved it
+  by hand. In spec mode the agents that make design decisions (architect,
+  designer, the builders) are told to record them in
+  `<specDir>/decisiones.md`, never under `.claude/memory/`. Reviewers are not
+  told, and outside spec mode nothing changes.
 
 ### Added
 
