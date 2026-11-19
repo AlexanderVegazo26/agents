@@ -97,6 +97,15 @@ REPORT_ORDER = {
 
 # agent -> whole-word phrases a workflow brief or another agent relies on
 VOCABULARY = {
+    "boundary-prober": [
+        # OWASP API Security Top 10 (2023) categories the probe matrix must cover
+        "API1:2023", "Broken Object Level Authorization",
+        "API2:2023", "Broken Authentication",
+        "API3:2023", "Broken Object Property Level Authorization",
+        "API5:2023", "Broken Function Level Authorization",
+        # field-level probes: response over-exposure and mass assignment on writes
+        "over-exposure", "mass assignment",
+    ],
     "prototyper": [
         # /prototype relays these report lines verbatim, in this order
         "**Skills loaded**", "**Prototype evidence**", "**Hypothesis**",
