@@ -176,7 +176,7 @@ function runBridge(prompt, cwd) {
  * @param {boolean} [opts.noBridge]  make every bridge step fail, as if the
  *                                   modules could not be reached at all
  */
-async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBridge = null }) {
+async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBridge = null, bridgeDelayMs = 0 }) {
   // Under `--src <tree>`, a scenario that reaches the runtime through a policy
   // path would otherwise derive its runtimeDir from POLICY_JSON — i.e. always
   // `sdlc-suite/workflows` — so `--src .claude/workflows` exercised the
@@ -194,6 +194,12 @@ async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBri
 
   const calls = []
   const logs = []
+  // Concurrency per bridge label: with bridgeDelayMs each bridge step yields
+  // before it runs, so steps sent together overlap and steps sent one after
+  // another do not.
+  const inflight = {}
+  const maxInflight = {}
+  const bridgeEvents = []   // [label, 'start' | 'end'] in the order they happened
 
   const ctx = {
     __proto__: null,
@@ -213,8 +219,17 @@ async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBri
     calls.push({ prompt: String(prompt), label, opts: JSON.parse(JSON.stringify(o)) })
     if (label.startsWith('bridge:')) {
       if (noBridge) return { ok: false, error: 'bridge disabled for this scenario' }
-      const out = runBridge(String(prompt), cwd)
-      return tamperBridge ? tamperBridge(label, out, String(prompt)) : out
+      inflight[label] = (inflight[label] || 0) + 1
+      maxInflight[label] = Math.max(maxInflight[label] || 0, inflight[label])
+      bridgeEvents.push([label, 'start'])
+      try {
+        if (bridgeDelayMs) await new Promise(r => setTimeout(r, bridgeDelayMs))
+        const out = runBridge(String(prompt), cwd)
+        return tamperBridge ? tamperBridge(label, out, String(prompt)) : out
+      } finally {
+        inflight[label]--
+        bridgeEvents.push([label, 'end'])
+      }
     }
     return onAgent(String(prompt), o, cwd)
   }
@@ -244,7 +259,7 @@ async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBri
     // JSON-cloned: cross-realm objects have a different Object.prototype, which
     // makes deepStrictEqual fail for reasons that have nothing to do with the code.
     result: result === undefined ? undefined : JSON.parse(JSON.stringify(result)),
-    thrown, calls, logs,
+    thrown, calls, logs, maxInflight, bridgeEvents,
     nonBridgePrompts: calls.filter(c => !c.label.startsWith('bridge:')).map(c => c.prompt),
   }
 }
@@ -2095,7 +2110,7 @@ async function main() {
     assert.ok(!fs.existsSync(path.join(cwd, 'learnings')), 'the preview wrote into the repository')
     const off = await runScript('sdlc-feature.js', { cwd: tmpdir('distil'), args: { initiative: 'x', policy: POLICY_JSON, distil: false }, onAgent: featureAgents() })
     assert.strictEqual(off.result.learningCandidates, null)
-    assert.ok(!off.calls.some(c => c.label === 'bridge:distil'), 'distil ran though it was turned off')
+    assert.ok(!off.calls.some(c => /^bridge:/.test(c.label) && /distil\.py/.test(c.prompt)), 'distil ran though it was turned off')
   })
 
   await test('the test lens writes casos.md by the repository\'s QA template, and a tracker draft it never publishes', async () => {
@@ -2549,6 +2564,124 @@ async function main() {
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
     assert.ok(r.logs.some(l => /arrived damaged — written again once/.test(l)), r.logs.join('\n'))
     assert.strictEqual(r.result.outcomeRecorded, true, 'the run lost its record over one damaged part')
+  })
+
+  await test('the data parts of one bridge step are written concurrently, and every one is checked', async () => {
+    const cwd = tmpdir('concparts')
+    // Large enough that one step needs more parts than may be in flight at once.
+    const bigPlan = Array.from({ length: 2000 }, (_, i) =>
+      `PLAN-LINE ${i}: ${require('crypto').createHash('sha256').update(`c${i}`).digest('hex')}\n`).join('')
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan }), bridgeDelayMs: 5,
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const perStep = {}
+    for (const c of r.calls.filter(k => k.label === 'bridge:phase:part')) {
+      const f = (c.prompt.match(/--- BEGIN DATA ([^\n]+) ---/) || [])[1].replace(/\.in\d+$/, '')
+      perStep[f] = (perStep[f] || 0) + 1
+    }
+    assert.ok(Math.max(0, ...Object.values(perStep)) > 8, `no step needed more than 8 parts: ${JSON.stringify(Object.values(perStep))}`)
+    assert.ok((r.maxInflight['bridge:phase:part'] || 0) > 1, `data parts were written one after another (max in flight ${r.maxInflight['bridge:phase:part']})`)
+    assert.ok(r.maxInflight['bridge:phase:part'] <= 8, `more than 8 data parts in flight at once (${r.maxInflight['bridge:phase:part']})`)
+    // A part step that fails is never papered over by the others succeeding.
+    const cwd2 = tmpdir('concparts-lost')
+    let lost = 0
+    const r2 = await runScript('sdlc-feature.js', {
+      cwd: cwd2, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan }), bridgeDelayMs: 5,
+      tamperBridge: (label, out) => (label === 'bridge:phase:part' && lost++ === 1 ? { ok: false, error: 'could not write' } : out),
+    })
+    assert.ok(lost > 1, 'the scenario never lost a part')
+    assert.ok(r2.logs.some(l => /bridge:phase data part\(s\) \d+\/\d+ were not written — discarded/.test(l)), r2.logs.join('\n'))
+  })
+
+  await test('the policy and the learnings are loaded by two steps sent together', async () => {
+    const r = await runScript('sdlc-feature.js', { cwd: tmpdir('prerun'), args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents(), bridgeDelayMs: 5 })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const at = (label, kind) => r.bridgeEvents.findIndex(e => e[0] === label && e[1] === kind)
+    assert.ok(at('bridge:policy', 'start') >= 0 && at('bridge:learnings', 'start') >= 0, JSON.stringify(r.bridgeEvents.slice(0, 6)))
+    assert.ok(at('bridge:learnings', 'start') < at('bridge:policy', 'end'), 'the learnings step waited for the policy step')
+    // Still two steps: learnings never ride on the policy bridge.
+    const pol = r.calls.find(c => c.label === 'bridge:policy').prompt
+    assert.ok(!/_learnings\.js/.test(pol), 'the policy step loads learnings')
+    assert.strictEqual(r.result.degraded, false)
+  })
+
+  await test('a recorded run ends in one bridge step: gates reduced, outcome written, preview taken', async () => {
+    const cwd = tmpdir('onestepclose')
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const ends = r.calls.filter(c => /^bridge:(close|blocked-gates|distil)$/.test(c.label)).map(c => c.label)
+    assert.deepStrictEqual(ends, ['bridge:close'], 'the end of the run took more than one step')
+    assert.strictEqual(r.result.outcomeRecorded, true)
+    assert.strictEqual(r.result.blockedGatesComplete, true)
+    // The gates the reducer found are in the outcome on disk, not only in the return value.
+    const outcome = readJson(path.join(runDirs(cwd)[0], 'outcome.json'))
+    const reduced = r.result.blockedGates.filter(g => !/^(breaker|runtime|run|reporting)\./.test(g.gate))
+    assert.ok(reduced.length, 'the scenario produced no BLOCKED entry to reduce')
+    for (const g of reduced) assert.ok(outcome.blockedGates.some(o => o.gate === g.gate), `${g.gate} is missing from outcome.json`)
+    if (fs.existsSync(path.join(SRC, '..', 'tools', 'distil.py'))) {
+      assert.ok(/read 1 outcome\(s\)/.test(String(r.result.learningCandidates)), 'the preview did not read the outcome written in the same step')
+    }
+  })
+
+  await test('when the one end-of-run step fails, the separate steps still record the run and its gates', async () => {
+    const cwd = tmpdir('closefallback')
+    let failedOnce = false
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents(),
+      tamperBridge: (label, out, prompt) => {
+        if (label === 'bridge:close' && !failedOnce && /collectBlockedGates/.test(prompt)) { failedOnce = true; return { ok: false, error: 'transcriber refused' } }
+        return out
+      },
+    })
+    // The harness runs the step before the tamper sees its output, so this is
+    // the "it ran, but its relay was lost" case: the fallback closes a second
+    // time, overwriting outcome.json with the same gates.
+    assert.ok(failedOnce, 'the scenario never failed the end-of-run step')
+    assert.ok(r.logs.some(l => /end-of-run step did not run/.test(l)), r.logs.join('\n'))
+    assert.ok(r.calls.some(c => c.label === 'bridge:blocked-gates'), 'no separate reducer step ran')
+    assert.strictEqual(r.result.outcomeRecorded, true, 'the run lost its record')
+    assert.strictEqual(r.result.blockedGatesComplete, true)
+    const outcome = readJson(path.join(runDirs(cwd)[0], 'outcome.json'))
+    assert.deepStrictEqual(outcome.blockedGates.map(g => g.gate).sort(), r.result.blockedGates.map(g => g.gate).sort())
+    assert.strictEqual(r.result.learningCandidates, null)
+    assert.ok(r.logs.some(l => /learning preview .* did not run — the end-of-run step that carries it failed/.test(l)), r.logs.join('\n'))
+  })
+
+  await test('a reducer that throws inside the end-of-run step is reported as uncollected, never []', async () => {
+    // A runtime copy whose reducer throws; everything else is the real module.
+    // Named `workflows`: the runtime refuses a runtimeDir that is not one.
+    const rt = path.join(tmpdir('throwingreducer'), 'workflows')
+    fs.mkdirSync(rt)
+    for (const f of fs.readdirSync(__dirname).filter(f => /^_[a-z]+\.js$/.test(f))) fs.copyFileSync(path.join(__dirname, f), path.join(rt, f))
+    fs.appendFileSync(path.join(rt, '_policy.js'), "\nmodule.exports.collectBlockedGates = () => { throw new Error('reducer broke') }\n")
+    const cwd = tmpdir('reducerthrows')
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'x', policy: POLICY_JSON, runtimeDir: rt }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.outcomeRecorded, true, 'the run lost its record')
+    assert.strictEqual(r.result.blockedGatesComplete, false)
+    assert.ok(r.result.blockedGates.some(g => g.gate === 'reporting.blockedGatesUncollected'), JSON.stringify(r.result.blockedGates.map(g => g.gate)))
+    const outcome = readJson(path.join(runDirs(cwd)[0], 'outcome.json'))
+    assert.ok(outcome.blockedGates.some(g => g.gate === 'reporting.blockedGatesUncollected'), 'outcome.json reads as if no gate was hit')
+    // Caught inside the one step — not by the fallback's separate reducer (code review).
+    assert.ok(!r.calls.some(c => c.label === 'bridge:blocked-gates'), 'the one step did not handle its own reducer failure')
+  })
+
+  await test('an end-of-run step that throws takes the fallback, and its gates are still recorded', async () => {
+    const cwd = tmpdir('closethrows')
+    let threw = false
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents(),
+      tamperBridge: (label, out, prompt) => {
+        if (label === 'bridge:close' && !threw && /collectBlockedGates/.test(prompt)) { threw = true; throw new Error('host transport error') }
+        return out
+      },
+    })
+    assert.ok(threw, 'the scenario never made the step throw')
+    assert.ok(r.logs.some(l => /the end-of-run step failed: host transport error/.test(l)), r.logs.join('\n'))
+    assert.strictEqual(r.result.outcomeRecorded, true, 'a throw skipped the fallback')
+    assert.strictEqual(r.result.blockedGatesComplete, true)
+    const outcome = readJson(path.join(runDirs(cwd)[0], 'outcome.json'))
+    assert.ok(outcome.blockedGates.some(g => g.gate === 'act.deploy'), JSON.stringify(outcome.blockedGates.map(g => g.gate)))
   })
 
   await test('a refused old-layout resume leaves the old record untouched', async () => {

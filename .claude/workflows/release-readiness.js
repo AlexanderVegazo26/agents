@@ -212,6 +212,25 @@ ${text}
   return true
 }
 
+/**
+ * Write the data parts at `indexes` concurrently; returns the indexes that were
+ * NOT written. A part whose step threw counts as not written.
+ */
+// At most this many at once: a payload near the relay limit would otherwise
+// start dozens of transcriber calls together, and a host that caps or
+// rate-limits them would fail a step the old one-at-a-time loop finished.
+const PART_FANOUT = 8
+
+async function writeParts(op, partFiles, indexes, model) {
+  const missing = []
+  for (let i = 0; i < indexes.length; i += PART_FANOUT) {
+    const batch = indexes.slice(i, i + PART_FANOUT)
+    const wrote = await parallel(batch.map(k => () => transcribeData(`bridge:${op}:part`, partFiles[k].file, partFiles[k].text, model)))
+    batch.forEach((k, j) => { if (!(wrote && wrote[j] === true)) missing.push(k) })
+  }
+  return missing
+}
+
 /** One mechanical step: write `script` to `file`, run it, relay its stdout. */
 async function transcribe(label, file, script, model) {
   const out = await agent(
@@ -283,11 +302,13 @@ async function bridge(op, source, model, data) {
         const text = dataHex.slice(i, i + PART)
         partFiles.push({ file: `${file}.in${k}`, sha: sha256Hex(utf8Bytes(text)), text })
       }
-      for (let k = 0; k < partFiles.length; k++) {
-        if (!(await transcribeData(`bridge:${op}:part`, partFiles[k].file, partFiles[k].text, m))) {
-          log(`bridge:${op} data part ${k + 1}/${partFiles.length} was not written — discarded`)
-          return null
-        }
+      // All at once: each part is its own file with its own hash, so nothing
+      // orders them, and one after another they were the largest share of a
+      // run's bridge time (36 of 60 transcriber calls in a measured toy run).
+      const missing = await writeParts(op, partFiles, partFiles.map((_, k) => k), m)
+      if (missing.length) {
+        log(`bridge:${op} data part(s) ${missing.map(k => k + 1).join(', ')}/${partFiles.length} were not written — discarded`)
+        return null
       }
       dataExpr = 'PARTS.map(p => fs.readFileSync(p.file, \'utf8\').trim()).join(\'\')'
     }
@@ -376,9 +397,7 @@ realWrite(JSON.stringify({ sealed: HEXOUT.slice(0, ${PART}), total: HEXOUT.lengt
   if (env && Array.isArray(env.rewrite) && partFiles.length) {
     const again = env.rewrite.filter(i => Number.isInteger(i) && i >= 0 && i < partFiles.length)
     log(`bridge:${op} data part(s) ${again.map(i => i + 1).join(', ')} arrived damaged — written again once`)
-    for (const i of again) {
-      if (!(await transcribeData(`bridge:${op}:part`, partFiles[i].file, partFiles[i].text, m))) return null
-    }
+    if ((await writeParts(op, partFiles, again, m)).length) return null
     env = await transcribe(`bridge:${op}`, file, loader, m)
     if (env && Array.isArray(env.rewrite)) {
       log(`bridge:${op} data still damaged after one rewrite — discarded, never used`)
@@ -655,15 +674,40 @@ const DEGRADED_TABLE = [
   'deliberate lockdown — it is an unresolved policy, and the difference matters.',
 ].join('\n')
 
-const POLICY = await (async () => {
+async function loadPolicyStep() {
   const r = await bridge('policy', `${REQUIRE_HEAD}const p = require(path.join(DIR, '_policy.js'))
 const r = p.loadPolicy({ explicitPath: ${JSON.stringify(POLICY_PATH)}, defaultPath: ${JSON.stringify(POLICY_DEFAULT_PATH)} })
 const actGranted = Object.keys(r.gates.act).filter(k => r.gates.act[k] === true)
 process.stdout.write(JSON.stringify({ gateTable: p.gateTableForPrompt(r), source: r.source, degraded: r.degraded, errors: r.errors, actGranted: actGranted }))`)
-  return r && typeof r.gateTable === 'string' && r.gateTable
-    ? r
-    : { gateTable: DEGRADED_TABLE, source: null, degraded: true, errors: ['the policy bridge did not run'], actGranted: [] }
-})()
+  return r && typeof r.gateTable === 'string' && r.gateTable ? r : null
+}
+
+// Learnings travel on their OWN bridge step, never on the policy one. The
+// policy bridge's output is the gate table every later agent is handed; carrying
+// repository-authored free text through the same ungated transcriber, in the
+// same JSON, would let a learning's text reach the one agent that controls it.
+// A learnings failure therefore cannot touch the policy, and vice versa.
+async function loadLearningsStep() {
+  const r = await bridge('learnings', `${REQUIRE_HEAD}const l = require(path.join(DIR, '_learnings.js'))
+const got = l.loadLearnings({ dirs: l.defaultDirs({ cwd: process.cwd(), runtimeDir: DIR }), cwd: process.cwd() })
+// Repo-local lessons: signals recurring in THIS repo's recent runs, unratified,
+// handed back on the next run with no human gate because they never leave it.
+const repo = ${JSON.stringify(args?.repoLessons !== false)} ? l.loadRepoLessons({ cwd: process.cwd() }) : { entries: [], runsRead: 0 }
+const all = got.entries.concat(repo.entries)
+process.stdout.write(JSON.stringify({ byAgent: l.promptBlocksByAgent(all), sources: got.sources, skipped: got.skipped, repoRunsRead: repo.runsRead, repoLessons: repo.entries.length }))`)
+  return r && r.byAgent && typeof r.byAgent === 'object' ? { ...r, error: null } : null
+}
+
+// Two separate steps, sent together: neither reads the other, so the run waits
+// for one transcriber round instead of two. A step that failed or threw reads
+// as not run — the policy then degrades to every gate denied.
+const [POLICY_STEP, LEARNING_STEP] = await parallel([loadPolicyStep, loadLearningsStep])
+const POLICY = POLICY_STEP ||
+  { gateTable: DEGRADED_TABLE, source: null, degraded: true, errors: ['the policy bridge did not run'], actGranted: [] }
+const LEARNING_SET = LEARNING_STEP || {
+  byAgent: {}, sources: [], skipped: [],
+  error: RUNTIME_DIR ? 'the learnings bridge did not run' : 'the runtime modules are unreachable',
+}
 
 if (POLICY.degraded) {
   log(`AUTONOMY POLICY DEGRADED — ${POLICY.errors.join('; ') || 'no policy file resolved'}. Every gate reads not-authorized.`)
@@ -674,25 +718,6 @@ if (Array.isArray(POLICY.actGranted) && POLICY.actGranted.length) {
   log(`act.* gates GRANTED by ${POLICY.source}: ${POLICY.actGranted.join(', ')}`)
 }
 
-// Learnings travel on their OWN bridge step, never on the policy one. The
-// policy bridge's output is the gate table every later agent is handed; carrying
-// repository-authored free text through the same ungated transcriber, in the
-// same JSON, would let a learning's text reach the one agent that controls it.
-// A learnings failure therefore cannot touch the policy, and vice versa.
-const LEARNING_SET = await (async () => {
-  const r = await bridge('learnings', `${REQUIRE_HEAD}const l = require(path.join(DIR, '_learnings.js'))
-const got = l.loadLearnings({ dirs: l.defaultDirs({ cwd: process.cwd(), runtimeDir: DIR }), cwd: process.cwd() })
-// Repo-local lessons: signals recurring in THIS repo's recent runs, unratified,
-// handed back on the next run with no human gate because they never leave it.
-const repo = ${JSON.stringify(args?.repoLessons !== false)} ? l.loadRepoLessons({ cwd: process.cwd() }) : { entries: [], runsRead: 0 }
-const all = got.entries.concat(repo.entries)
-process.stdout.write(JSON.stringify({ byAgent: l.promptBlocksByAgent(all), sources: got.sources, skipped: got.skipped, repoRunsRead: repo.runsRead, repoLessons: repo.entries.length }))`)
-  if (r && r.byAgent && typeof r.byAgent === 'object') return { ...r, error: null }
-  return {
-    byAgent: {}, sources: [], skipped: [],
-    error: RUNTIME_DIR ? 'the learnings bridge did not run' : 'the runtime modules are unreachable',
-  }
-})()
 
 /**
  * Prefix the resolved gate table to an agent prompt.
@@ -1057,35 +1082,40 @@ function agentResult(artifact, label) {
  * CHG-16 — `blockedGates` is a REDUCER over the phase artifacts, not a string
  * telling the reader to go and collect the entries themselves.
  */
-async function collectBlockedGates() {
+function blockedCandidates() {
   // Pure prefilter, not a reimplementation of the reducer: every entry the
   // regex can match contains the literal token BLOCKED, so dropping values that
   // do not cannot change the result. It only keeps the bridge payload small.
-  const candidates = OUTPUTS.filter(v => {
+  return OUTPUTS.filter(v => {
     try { return JSON.stringify(v ?? '').includes('BLOCKED') } catch (e) { return true }
   })
+}
+
+// An empty array would read as "no gate was hit", which is the exact
+// disappearance the reducer exists to prevent. A reducer that could not run is
+// reported as this gate instead.
+function uncollectedGate(count) {
+  return {
+    gate: 'reporting.blockedGatesUncollected',
+    actionWithheld: 'collecting the BLOCKED entries this run produced',
+    whyGated: `${count} phase output(s) contain a BLOCKED marker but the reducer could not be run, so they were not parsed`,
+    prepared: 'the raw phase outputs are in the run directory when recording was available',
+    unblocks: 'read the phase artifacts directly, or re-run with the runtime modules reachable',
+    authorizeBy: 'not an authorization gate — a reporting failure',
+  }
+}
+
+async function collectBlockedGates() {
+  const candidates = blockedCandidates()
   if (!candidates.length) return { gates: [], complete: true }
   const r = await bridge('blocked-gates', `${REQUIRE_HEAD}const p = require(path.join(DIR, '_policy.js'))
 process.stdout.write(JSON.stringify(p.collectBlockedGates(input.candidates)))`, undefined, { candidates })
   if (Array.isArray(r)) return { gates: r, complete: true }
-  // An empty array here would read as "no gate was hit", which is the exact
-  // disappearance the reducer exists to prevent. Report the failure as a gate.
-  return {
-    complete: false,
-    gates: [{
-      gate: 'reporting.blockedGatesUncollected',
-      actionWithheld: 'collecting the BLOCKED entries this run produced',
-      whyGated: `${candidates.length} phase output(s) contain a BLOCKED marker but the reducer could not be run, so they were not parsed`,
-      prepared: 'the raw phase outputs are in the run directory when recording was available',
-      unblocks: 'read the phase artifacts directly, or re-run with the runtime modules reachable',
-      authorizeBy: 'not an authorization gate — a reporting failure',
-    }],
-  }
+  return { complete: false, gates: [uncollectedGate(candidates.length)] }
 }
 
-async function closeRun(summary) {
-  if (!RUN) return null
-  return bridge('close', `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
+// Reopen the run in a fresh process, as it was. Shared by both close steps.
+const closeHead = () => `${REQUIRE_HEAD}const s = require(path.join(DIR, '_state.js'))
 const run = s.openRun({ workflow: ${JSON.stringify(WORKFLOW)}, cwd: process.cwd(), resumeFrom: ${JSON.stringify(RUN.runId)} })
 // A fresh process makes the recorder's own clock start now; the run's real
 // start is already in the manifest.
@@ -1094,10 +1124,84 @@ run._startMs = Date.parse(run.manifest.startedAt)
 // actually replayed from cache were — reporting the rest would be a false claim
 // inside the record whose whole job is to be trustworthy afterwards.
 run.resumedPhases = new Set(${JSON.stringify(REPLAYED)})
-// Only an acknowledgement crosses back: outcome.json is on disk, and echoing
+`
+
+/** Write outcome.json with `summary` as given — the fallback close step. */
+async function closeRun(summary) {
+  if (!RUN) return null
+  return bridge('close', `${closeHead()}// Only an acknowledgement crosses back: outcome.json is on disk, and echoing
 // the whole outcome made this the largest relay of a run (round 3, M1).
 const outcome = run.close(input.summary)
 process.stdout.write(JSON.stringify({ ok: true, status: outcome && outcome.status }))`, undefined, { summary })
+}
+
+// The learning preview (distil.py, dry run), as the body of a function in the
+// end-of-run step. It runs after outcome.json is written, so it reads this run.
+const DISTIL_PREVIEW = `const { spawnSync } = require('child_process')
+const tool = path.join(DIR, '..', 'tools', 'distil.py')
+if (!fs.existsSync(tool)) {
+  return { ok: false, text: 'distil.py not found at ' + tool + ' (this runtime directory ships no tools/)' }
+}
+// Each interpreter in turn: a missing one, the Windows Store alias (exit
+// 9009) or one that prints nothing is not an answer — try the next. Run from
+// the tool's own directory, never the repository's: a bare "python" would
+// otherwise resolve a python.exe committed at the repository root. -B: no
+// __pycache__ written beside the tool.
+const tries = process.platform === 'win32'
+  ? [['python', ['-B']], ['python3', ['-B']], ['py', ['-3', '-B']]]
+  : [['python3', ['-B']], ['python', ['-B']]]
+// One 60-second budget for all the tries together: this shares a transcriber
+// call with the close, and three full timeouts would outlast its shell.
+const until = Date.now() + 60000
+for (const [py, flags] of tries) {
+  const left = until - Date.now()
+  if (left < 1000) return { ok: false, text: 'distil.py did not answer within 60 s' }
+  const r = spawnSync(py, [...flags, tool, '--root', process.cwd()], { cwd: path.dirname(tool), encoding: 'utf8', timeout: left })
+  if (r.error || r.status === 9009 || !String(r.stdout || '').trim()) continue
+  // distil.py: 0 = done; 1 = something quarantined; 2 = something dropped.
+  // All three are a real dry run. Anything else is a failure, not a preview.
+  return [0, 1, 2].includes(r.status)
+    ? { ok: true, text: String(r.stdout).slice(-4000) }
+    : { ok: false, text: ('distil.py exited ' + r.status + ': ' + String(r.stderr || r.stdout || '')).slice(-1500) }
+}
+return { ok: false, text: 'no Python interpreter answered (tried ' + tries.map(t => t[0]).join(', ') + ')' }`
+
+/**
+ * The end of a recorded run as ONE bridge step: reduce the blocked gates, write
+ * outcome.json with them, and — when asked — preview the learning candidates.
+ * These were three transcriber calls, one after another, at the end of every
+ * run. Returns { gates, gatesComplete, status, preview }, or null when the step
+ * did not run; the caller then falls back to the separate steps.
+ */
+async function finishRecord(summary, wantPreview) {
+  if (!RUN) return null
+  const candidates = blockedCandidates()
+  const r = await bridge('close', `${closeHead()}const fs = require('fs')
+const p = require(path.join(DIR, '_policy.js'))
+// The gates first, because the outcome records them. A reducer that throws is
+// reported as the uncollected gate, never as [].
+let gates = []
+let gatesComplete = true
+if (input.candidates.length) {
+  try { gates = p.collectBlockedGates(input.candidates) } catch (e) { gates = null }
+  if (!Array.isArray(gates)) { gates = [input.uncollected]; gatesComplete = false }
+}
+input.summary.blockedGates = gates.concat(input.summary.blockedGates)
+const outcome = run.close(input.summary)
+// Optional, so it can never cost the run its record (code review round 9).
+let preview = null
+${wantPreview ? `try {
+  preview = (function () {
+${DISTIL_PREVIEW}
+  })()
+} catch (e) {
+  preview = { ok: false, text: 'the learning preview crashed: ' + String((e && e.message) || e).slice(0, 500) }
+}` : '// No learning preview for this run.'}
+// Only an acknowledgement, the gates and the preview cross back: outcome.json
+// is on disk, and echoing it made this the largest relay of a run (round 3, M1).
+process.stdout.write(JSON.stringify({ ok: true, status: outcome && outcome.status, gates: gates, gatesComplete: gatesComplete, preview: preview }))`,
+  undefined, { summary, candidates, uncollected: uncollectedGate(candidates.length) })
+  return r && r.ok === true && Array.isArray(r.gates) && typeof r.gatesComplete === 'boolean' ? r : null
 }
 
 /**
@@ -1186,13 +1290,19 @@ async function finishRun(body, extras = () => ({})) {
   let outcome = null
   let x = {}
   try { x = extras() || {} } catch (e) { log(`could not collect the run's own record: ${(e && e.message) || e}`) }
+  // Learning per ticket (review of the HU 16 pilot). Lessons from this
+  // repository's recent runs already reach the next run unreviewed
+  // (repoLessons); a SHARED lesson needs a person. So a completed feature run
+  // previews what `distil.py` would propose — a dry run that writes nothing —
+  // and hands it to that person. `"distil": false` turns it off.
+  const wantPreview = WORKFLOW === 'sdlc-feature' && status === 'completed' && !(args && typeof args === 'object' && args.distil === false)
+  let preview = null
   try {
-    blocked = await collectBlockedGates()
-    outcome = await closeRun({
+    const summary = {
       status,
       findings: x.findings || { confirmed: 0, refuted: 0, byLens: {} },
       refutations: x.refutations || [],
-      blockedGates: [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(true)],
+      blockedGates: [...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(true)],
       error: thrown ? String((thrown && thrown.message) || thrown) : null,
       learningsLoaded: LEARNINGS_LOADED,
       repoLessonsLoaded: repoLessonsLoaded(),
@@ -1202,57 +1312,40 @@ async function finishRun(body, extras = () => ({})) {
       actGranted: POLICY.actGranted || [],
       retries: RETRIES,
       repairRounds: x.repairRounds || null,
-    })
+    }
+    // A step that threw (a host transport error) is a step that did not run:
+    // it takes the same fallback as one that returned nothing (code review).
+    let done = null
+    try { done = await finishRecord(summary, wantPreview) } catch (e) {
+      log(`the end-of-run step failed: ${String((e && e.message) || e).slice(0, 300)}`)
+    }
+    if (done) {
+      blocked = { gates: done.gates, complete: done.gatesComplete }
+      outcome = done
+      preview = done.preview
+    } else {
+      // The one step did not run, or there is no run directory: the separate
+      // steps, as before — costlier, and only on this path. No preview here.
+      if (RUN) log('the end-of-run step did not run — collecting the blocked gates and writing the outcome separately')
+      blocked = await collectBlockedGates()
+      outcome = await closeRun({ ...summary, blockedGates: [...blocked.gates, ...summary.blockedGates] })
+      if (outcome && wantPreview) log('the learning preview (distil.py, dry run) did not run — the end-of-run step that carries it failed')
+    }
   } catch (e) {
     // Never let a failure to WRITE the record replace the failure that caused it.
     log(`could not complete the outcome record: ${(e && e.message) || e}`)
+    // Gates that were never collected are said to be uncollected, never [].
+    if (!blocked.complete && !blocked.gates.length) {
+      const n = blockedCandidates().length
+      if (n) blocked = { gates: [uncollectedGate(n)], complete: false }
+    }
   }
 
   if (thrown) throw thrown
 
-  // Learning per ticket (review of the HU 16 pilot). Lessons from this
-  // repository's recent runs already reach the next run unreviewed
-  // (repoLessons); a SHARED lesson needs a person. So a completed feature run
-  // previews what `distil.py` would propose — a dry run that writes nothing —
-  // and hands it to that person. `"distil": false` turns it off.
   let learningCandidates = null
-  if (outcome && WORKFLOW === 'sdlc-feature' && status === 'completed' && !(args && typeof args === 'object' && args.distil === false)) {
-    // Optional, so it can never cost the run its result (code review round 9).
-    try {
-      const r = await bridge('distil', `${REQUIRE_HEAD}const fs = require('fs')
-const { spawnSync } = require('child_process')
-const tool = path.join(DIR, '..', 'tools', 'distil.py')
-let out = null
-if (!fs.existsSync(tool)) {
-  out = { ok: false, text: 'distil.py not found at ' + tool + ' (this runtime directory ships no tools/)' }
-} else {
-  // Each interpreter in turn: a missing one, the Windows Store alias (exit
-  // 9009) or one that prints nothing is not an answer — try the next. Run from
-  // the tool's own directory, never the repository's: a bare "python" would
-  // otherwise resolve a python.exe committed at the repository root. -B: no
-  // __pycache__ written beside the tool.
-  const tries = process.platform === 'win32'
-    ? [['python', ['-B']], ['python3', ['-B']], ['py', ['-3', '-B']]]
-    : [['python3', ['-B']], ['python', ['-B']]]
-  for (const [py, flags] of tries) {
-    const r = spawnSync(py, [...flags, tool, '--root', process.cwd()], { cwd: path.dirname(tool), encoding: 'utf8', timeout: 60000 })
-    if (r.error || r.status === 9009 || !String(r.stdout || '').trim()) continue
-    // distil.py: 0 = done; 1 = something quarantined; 2 = something dropped.
-    // All three are a real dry run. Anything else is a failure, not a preview.
-    out = [0, 1, 2].includes(r.status)
-      ? { ok: true, text: String(r.stdout).slice(-4000) }
-      : { ok: false, text: ('distil.py exited ' + r.status + ': ' + String(r.stderr || r.stdout || '')).slice(-1500) }
-    break
-  }
-  if (!out) out = { ok: false, text: 'no Python interpreter answered (tried ' + tries.map(t => t[0]).join(', ') + ')' }
-}
-process.stdout.write(JSON.stringify(out))`)
-      if (r && r.ok === true && typeof r.text === 'string') learningCandidates = r.text
-      else log(`the learning preview (distil.py, dry run) did not run${r && typeof r.text === 'string' ? ` — ${r.text.slice(0, 300)}` : ''}`)
-    } catch (e) {
-      log(`the learning preview (distil.py, dry run) failed: ${(e && e.message) || e}`)
-    }
-  }
+  if (preview && preview.ok === true && typeof preview.text === 'string') learningCandidates = preview.text
+  else if (preview) log(`the learning preview (distil.py, dry run) did not run${typeof preview.text === 'string' ? ` — ${preview.text.slice(0, 300)}` : ''}`)
 
   const allGates =[...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
   return {

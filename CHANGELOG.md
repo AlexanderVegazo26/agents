@@ -11,6 +11,22 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Changed
 
+- **Fewer sequential bridge rounds per run, in all seven workflows.** In a
+  measured toy run, bridge steps took ~35 of 66 minutes: 60 transcriber calls,
+  36 of them data parts written one after another. Three changes, none of which
+  weakens a check:
+  - The data parts of one bridge step are written **concurrently**, each still
+    hash-checked by the loader; a damaged one is rewritten once, as before.
+  - The **policy and learnings steps run concurrently**. They stay two separate
+    steps, so learnings text never travels through the step that produces the
+    gate table.
+  - The **end of a recorded run is one step**: the blocked-gate reducer, the
+    `outcome.json` close and the `distil.py` dry-run preview, which were three
+    calls in a row. If that step does not run, the old separate steps run
+    instead, and the learning preview is skipped with a log line. A reducer that
+    throws inside it is recorded as `reporting.blockedGatesUncollected`, never as
+    no gates.
+
 - **`/sdlc-feature` now pins a model and an effort per stage.** Opus/high plans,
   designs and reviews (security included), Sonnet/medium builds and tests, and
   Haiku runs the mechanical bridge steps. Fable is opt-in per stage for changes
