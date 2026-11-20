@@ -49,6 +49,12 @@ ROOT = Path(__file__).resolve().parent.parent
 PY = "{python}"
 NODE = "{node}"
 DEFAULT_TIMEOUT = 300
+# The wiring suite runs every bridge step as a real `node` process, and spawns
+# are almost all of its time. With the tiered sdlc-feature it spawns ~2,100
+# (from ~440): measured at 1,054 s alone on a Windows laptop, where 300 s cut it
+# off at test 121 of 197 with nothing failed. A timeout here means "hung", not
+# "slow", so the wiring checks get room instead of a false failure.
+WIRING_TIMEOUT = 1800
 
 # Test files by name. Anything matching that no check below runs is an error.
 TEST_FILE = re.compile(r"(^|/)(test_[^/]*\.py|[^/]*\.test\.m?js)$")
@@ -73,9 +79,9 @@ class Check:
         return self.covers or [a for a in self.argv if TEST_FILE.search(a)]
 
 
-def _suite(path: str, why: str) -> Check:
+def _suite(path: str, why: str, timeout: int = DEFAULT_TIMEOUT) -> Check:
     runner = NODE if path.endswith((".js", ".mjs")) else PY
-    return Check(Path(path).name, [runner, path], why)
+    return Check(Path(path).name, [runner, path], why, timeout=timeout)
 
 
 # The order is CI's old step order. The "why" of each check is printed with its
@@ -98,11 +104,12 @@ CHECKS: list[Check] = [
           "`export const meta = {` defers the parse. syncheck compiles via the host's own path."),
     Check("wiring-sdlc-suite",
           [NODE, "sdlc-suite/workflows/_wiring.test.js", "--src", "sdlc-suite/workflows"],
-          "Runtime wiring of the hand-edited workflow tree."),
+          "Runtime wiring of the hand-edited workflow tree.", timeout=WIRING_TIMEOUT),
     Check("wiring-claude",
           [NODE, "sdlc-suite/workflows/_wiring.test.js", "--src", ".claude/workflows"],
           "The suite once reported 60/60 green while .claude/workflows carried none of the "
-          "CHG-16..22 wiring for six commits, because only the default tree was checked."),
+          "CHG-16..22 wiring for six commits, because only the default tree was checked.",
+          timeout=WIRING_TIMEOUT),
     # The shared workflow modules' suites. No framework; the exit code is the
     # result. Each was shown to fail before the code it covers existed.
     _suite("sdlc-suite/workflows/_brief.test.js", "Workflow brief module."),
@@ -110,11 +117,16 @@ CHECKS: list[Check] = [
     _suite("sdlc-suite/workflows/_learnings.test.js", "Learnings loader module."),
     _suite("sdlc-suite/workflows/_policy.test.js", "Autonomy policy bridge module."),
     _suite("sdlc-suite/workflows/_state.test.js", "Run state module."),
+    _suite("sdlc-suite/workflows/_seal.test.js",
+           "Bridge seal helpers (SHA-256, UTF-8, hex, XOR keystream, LZW) against Node's crypto and Buffer."),
+    _suite("sdlc-suite/workflows/_detect.test.js",
+           "sdlc-maintain's detector: CI allowlist, trust anchor, redaction, exit codes."),
     _suite("commandcode-suite/workflows/_runner.test.js",
            "commandcode-suite worktree isolation and sdlc-feature end to end against a fake cmdc. "
            "Before 2026-11-13 the build worktree was force-removed with nothing preserved and the "
            "verifiers ran in the caller's unchanged tree; this suite went red on that code."),
-    _suite("sdlc-suite/workflows/_wiring.test.js", "Runtime wiring, default tree."),
+    _suite("sdlc-suite/workflows/_wiring.test.js", "Runtime wiring, default tree.",
+           timeout=WIRING_TIMEOUT),
     _suite("sdlc-suite/evals/replay.test.js",
            "Replay evals (cases.v1.json): model/CLI output through the code that turns it into run "
            "decisions (blocked gates, failure class + retry, learning neutralising). Seen red by six "

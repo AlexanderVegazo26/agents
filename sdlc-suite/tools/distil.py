@@ -872,6 +872,11 @@ def do_distil(root: Path, emit: bool, denylist, out) -> int:
         if ident:
             print("  GAP {n}: {k} run(s) -- {v}".format(
                 n=name, k=len(ident), v=", ".join(ident[:5])), file=out)
+    # Name each candidate, so a dry run is a preview a person can act on, not
+    # only a count. Only candidates the redactor PASSED reach this list, and the
+    # title is the same redacted, single-line text --emit would write.
+    for cand in written:
+        print("  CANDIDATE {i} ({k}): {t}".format(i=cand["id"], k=cand["kind"], t=cand["title"]), file=out)
     for sig, summary in quarantined:
         print("  QUARANTINED {s}: {m}".format(s=sig, m=summary), file=out)
     for summary in dropped_reasons:

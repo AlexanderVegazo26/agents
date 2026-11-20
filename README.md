@@ -7,15 +7,15 @@ A software-development-lifecycle (SDLC) agent suite: specialist agents, the skil
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 25 | 65 | 6 | — |
-| `sdlc-suite/` | 25 | 65 | 6 | 11 |
+| `.claude/` | 25 | 65 | 7 | — |
+| `sdlc-suite/` | 25 | 65 | 7 | 12 |
 | `commandcode-suite/` | 25 | 65 | 6 | 6 |
 | `.kimi-code/` | 25 | 71 | 6 | — |
 | `.copilot/` | 25 | 65 | — | — |
 | `.codex/` | 25 | 65 | — | — |
 | `.agents/` | — | 65 | — | — |
-| `.pi/` | — | — | — | 11 |
-| `.hermes/` | — | — | — | 10 |
+| `.pi/` | — | — | — | 12 |
+| `.hermes/` | — | — | — | 11 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
@@ -56,6 +56,8 @@ hermes skills trust "$PWD"
 ```
 
 The scripts in `sdlc-suite/workflows/` carry the run record, retry and learning loop. Claude Code runs them, and pi and Hermes run the same files through their `workflow` tool. The Command Code and Kimi Code workflow ports are written by hand and have none of that, as their READMEs state. Codex and Copilot ship agents and skills but no workflows. [`.kimi-code/GLOBAL-SETUP.md`](.kimi-code/GLOBAL-SETUP.md) section 6 still lists the superseded per-tree scripts; regenerate with `generate_trees.py` instead (see below).
+
+**Those three places currently disagree, on purpose.** `/sdlc-feature` was rebuilt as "plan expensive, execute cheap": Plan → Design → Build → Test → Review → Readiness, with per-stage model tiers and handoff files. `/sdlc-maintain`, the stage-6 detector → diagnosis → incident record, was added. Both changes landed only in `sdlc-suite/` and therefore in `.claude/`, pi and Hermes. `commandcode-suite/` and `.kimi-code/` keep their hand-ported copy of the *previous* `sdlc-feature` (Requirements → Design → Build → Verify → Readiness) and have no `sdlc-maintain`. This divergence is known and accepted. Don't read the two trees' shared workflow names as parity. Details are in [`sdlc-suite/README.md`](sdlc-suite/README.md#workflows).
 
 ## Prerequisites
 

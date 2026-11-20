@@ -74,6 +74,10 @@ const BUILD_MANIFEST_SCHEMA = {
       },
       description: 'Criteria deliberately NOT addressed, and why. Making the gap explicit is what stops it being discovered as a defect later.',
     },
+    planGaps: {
+      type: 'array', items: { type: 'string' },
+      description: 'Decisions the plan left open that you needed and did NOT make yourself — an interface, a data shape, a behavior. Escalated back to planning rather than improvised at build tier.',
+    },
   },
 }
 
@@ -131,6 +135,10 @@ function renderManifest(m, { includeFiles = true, clamped = null } = {}) {
     lines.push('\nDeliberately NOT addressed:')
     for (const n of m.notAddressed) lines.push(`  - ${n.id}: ${n.why}`)
   }
+  if (Array.isArray(m.planGaps) && m.planGaps.length) {
+    lines.push('\nPlan gaps escalated (decisions the builder did NOT make):')
+    for (const g of m.planGaps) lines.push(`  - ${g}`)
+  }
   return lines.join('\n')
 }
 
@@ -142,6 +150,8 @@ function renderManifest(m, { includeFiles = true, clamped = null } = {}) {
  * @param {string} opts.lens               key into LENS_BUDGETS
  * @param {string} [opts.criteria]         the acceptance criteria text, always kept
  * @param {number} [opts.budget]           override, in characters
+ * @param {string} [opts.changeRef]        how to see the WHOLE change (e.g. a git
+ *                                         command), always kept with the criteria
  * @returns {{text: string, chars: number, truncated: boolean, omittedFiles: string[]}}
  *
  * Trimming order is deliberate. The file LIST is dropped before any summary is
@@ -149,9 +159,16 @@ function renderManifest(m, { includeFiles = true, clamped = null } = {}) {
  * builder's reasoning from anywhere. The criteria are never trimmed: they are
  * what every finding is traced against.
  */
-function buildBrief({ manifests = [], lens, criteria = '', budget }) {
+function buildBrief({ manifests = [], lens, criteria = '', budget, changeRef = '' }) {
   const cap = budget ?? LENS_BUDGETS[lens] ?? DEFAULT_BUDGET
-  const head = criteria ? `## Acceptance criteria\n${criteria}\n\n## Implementation\n` : ''
+  // `changeRef` is the route to the WHOLE change (in spec mode: a git diff
+  // against the recorded base, plus the untracked files). It sits in the head,
+  // which is never cut, so a lens whose file list was omitted can always get it
+  // back — Glob alone cannot when the change spans more than one tree.
+  const route = changeRef ? `## The whole change\n${changeRef}\n\n` : ''
+  const head = criteria || route
+    ? `${criteria ? `## Acceptance criteria\n${criteria}\n\n` : ''}${route}## Implementation\n`
+    : ''
 
   let omitted = []
   const clamped = []

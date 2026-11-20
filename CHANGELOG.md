@@ -9,8 +9,359 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **`/sdlc-feature`'s test stage no longer sees the builders' conclusions.**
+  Its brief has the acceptance criteria, the changed files and how to read the
+  diff. The builders' summaries, `criteriaAddressed`, `notAddressed` and
+  `planGaps` are withheld, in the budgeted brief, in the fallback brief, and in
+  every repair round's re-verification. In a checkout build its route to the
+  change is `git diff <base> -- . ':(exclude)<specDir>/decisiones.md'`, because
+  the builders record their rationale in that file. When a builder disputes a
+  finding in `notAddressed`, re-verification still sees that dispute, so a
+  false positive does not come back every round. QA forms its own view by
+  executing; the review lenses still get the whole manifest, because they judge
+  the reasoning too.
+- **Readiness gives two verdicts.** `release-manager` answers with a schema:
+  `technical` (is the code ready — tests, evidence, findings, the commit the
+  evidence is bound to) and `product` (does it do what the HU asks — criteria,
+  open product-owner questions, contradictions, plan gaps), each `go`, `no-go`
+  or `conditional` with its reasons, plus the full `report`. The return value
+  carries them in a new `readiness` field, and `humanDecisionRequired` opens
+  with one decision for each. `readinessRecommendation` stays prose: it is the
+  `report`. A missing or malformed verdict is reported as missing, never
+  guessed.
+- **Bridge data parts are named as data.** They were written as
+  `<step>.cjs.in<k>`, and on a measured run a transcriber refused one as "an
+  opaque blob meant to become a .cjs script". They are now
+  `<step>.data-<k>.hex`, and the data step says that the part is never
+  executed or loaded as code.
+
+- **`/sdlc-feature`'s write confinement now fails closed.** The check every
+  spec-mode handoff runs before writing treated a path it could not resolve
+  (`realpath` failing) as inside the repository. It is now treated as outside,
+  and the write is refused. A directory that does not exist yet is judged by its
+  deepest existing ancestor, so first writes into a new `evidencia/` directory
+  still work.
+
+- **Fewer sequential bridge rounds per run, in all seven workflows.** In a
+  measured toy run, bridge steps took ~35 of 66 minutes: 60 transcriber calls,
+  36 of them data parts written one after another. Three changes, none of which
+  weakens a check:
+  - The data parts of one bridge step are written **concurrently**, each still
+    hash-checked by the loader; a damaged one is rewritten once, as before.
+  - The **policy and learnings steps run concurrently**. They stay two separate
+    steps, so learnings text never travels through the step that produces the
+    gate table.
+  - The **end of a recorded run is one step**: the blocked-gate reducer, the
+    `outcome.json` close and the `distil.py` dry-run preview, which were three
+    calls in a row. If that step does not run, the old separate steps run
+    instead, and the learning preview is skipped with a log line. A reducer that
+    throws inside it is recorded as `reporting.blockedGatesUncollected`, never as
+    no gates.
+
+- **`/sdlc-feature` now pins a model and an effort per stage.** Opus/high plans,
+  designs and reviews (security included), Sonnet/medium builds and tests, and
+  Haiku runs the mechanical bridge steps. Fable is opt-in per stage for changes
+  where a planning or security mistake is expensive:
+  `"tiers": { "plan": { "model": "fable" }, "security": { "model": "fable" } }`.
+  `"tiers": "inherit"` pins nothing. An unknown stage, model or effort is logged and
+  ignored, never passed through. The return value's `tiers` shows what a run
+  resolved. Under the pi and Hermes runners, `opts.model` is ignored and only
+  low/medium/high efforts are mapped, so those pins fall back to the session
+  model.
+- **Action required for in-flight runs: `/sdlc-feature` refuses to resume a run
+  recorded by the older phase layout** (one with a `Requirements` or `Verify`
+  phase). Replaying part of it against a new plan would check one build against
+  another run's criteria, so the run stops with `status: "stopped"` and no
+  agent runs. Start a fresh run instead. The refusal happens before the old
+  record is written to, so its attempt count and any breaker trip are left as
+  they were.
+- **Every bridge step in every workflow is now sealed** — all seven, not only
+  `/sdlc-feature`'s handoff writes. The script crosses as hex with its SHA-256,
+  and the loader refuses to run it if the hash differs; its output comes back
+  as hex with `sha256(nonce ‖ output)`, and output that fails the check is
+  discarded. This is tamper-evidence, not authentication: the nonce is in the
+  transcriber's own prompt, so a steered transcriber could compute a valid
+  seal. The protection against steering is that the transcriber never sees the
+  payload in readable form.
+  - **Every bridge runs on Haiku** at low effort, unless `"tiers": "inherit"`
+    is passed. The policy, learnings and run-recording bridges used to run on
+    the session model.
+  - **Relays are chunked.** The host's Bash tool cuts output at about 30,000
+    characters, so no relay carries more than 12,000 bytes (24,000 hex
+    characters). A larger script is written in parts, and a larger output is
+    read back in chunks under one SHA-256. A relay is capped at 64 part or
+    read steps (768,000 bytes each way), each one a transcriber call; a larger
+    script is not sent and a larger output is discarded, both logged, so it
+    fails visibly instead of running hundreds of calls. The step that closes a
+    run relays only an acknowledgement, not the whole outcome.
+  - **A lost phase record no longer disables the breaker.** When the bridge
+    that records a phase doesn't run, or its output fails the seal, the
+    workflow counts that phase's failed agents itself. Three or more trip the
+    breaker and stop the run with a `breaker.unrecorded` gate; fewer leave a
+    `runtime.phaseUnrecorded` gate, since a resume can't replay that phase.
+- **`/sdlc-feature` is rebuilt as "plan expensive, execute cheap".** The
+  recorded phases are now Plan → Design → Build → Test → Review → Readiness,
+  and Cross-check, Repair and Re-verify are unchanged. *Requirements* and
+  *Verify* are gone.
+  - **Plan** (Fable / high): `product-manager` writes `intent.md`,
+    `product-analyst` writes `spec.md`, and `solution-architect` writes
+    `plan.md`.
+  - **Design** (Opus / xhigh): a `ux-designer` spec plus a `ui-engineer`
+    static HTML mock. Runs only when a frontend surface is touched.
+  - **Build** (Sonnet / medium): the builders execute `plan.md`.
+  - **Test**: `qa-engineer` on Sonnet, asked to run its loops through
+    `qa-runner` on Haiku. That is a request in the prompt, not a pin.
+  - **Review**: `code-reviewer` and `performance-engineer` on Opus / high, and
+    `security-engineer` on Fable. All are handed `test-report.md`.
+
+  Each stage's file lands in `<runDir>/handoff/` (or the spec directory, below).
+  An agent that authors a document — `intent.md`, `plan.md`, `design.md`,
+  `mock.html` — writes it itself with its Write tool; a sealed bridge then
+  confirms the file and records its SHA-256 in the phase artifact. Only if the
+  file is absent is it written from the returned text, and only when that text
+  is at most 16,384 characters; `mock.html` is confirm-only. `spec.md` and
+  `test-report.md` are rendered by the workflow and written by a sealed bridge
+  on every pass, replay included. A file is handed on by path only when it is
+  confirmed on disk; otherwise the text is passed inline. On a resume, an
+  authored file that no longer hashes to what its phase recorded is not handed
+  on; to build from an edited `plan.md`, use plan approval in spec mode
+  (below). Builders return a new optional `planGaps` field in
+  `BUILD_MANIFEST_SCHEMA` for decisions the plan left open.
+  These escalate as a `BLOCKED — plan.insufficient` gate and appear in
+  `humanDecisionRequired` instead of being improvised at build tier. The return
+  value adds `intent`, `plan`, `planGaps`, `tiers` and `handoff`.
+  - The run **stops** if `solution-architect` returns no plan, rather than
+    letting the build tier design unreviewed.
+  - A Test stage that returns nothing records a `BLOCKED — test.noEvidence`
+    gate, and its dead lens counts toward Review's breaker threshold without
+    being recorded a second time: it appears once in `failures.jsonl`, under
+    Test. So the three-failure threshold that applied to the old single Verify
+    phase still stops the run before Readiness. A trip that counted Test's
+    failure also fails the Test phase, so a resume re-runs `qa-engineer`
+    instead of replaying its empty result.
+  - A Review lens that returns nothing, below the breaker threshold, records a
+    new `BLOCKED — review.incomplete` gate naming the lens, so a review that
+    lost a lens no longer looks complete.
+  - The Design stage's `ui-engineer` mock runs in a worktree.
+- **Not ported:** `commandcode-suite/` and `.kimi-code/` keep their hand-ported
+  copy of the previous `sdlc-feature` and have no `sdlc-maintain`. This is a
+  known, accepted divergence, and their READMEs now say so.
+
+### Fixed
+
+- **Bridge scripts are `.cjs`.** In a repository whose `package.json` declares
+  `"type": "module"`, Node loaded each `.js` bridge as ESM, `require` was
+  undefined, and every workflow stopped at its first step (found on the first
+  live run against a real repository).
+- **A rendered `spec.md` is no longer cut at 16 KB.** The cap is 64 KB; a real
+  28-criterion spec came out at 22 KB and was cut.
+- **A resume cannot build a plan that paused for approval.** The Plan record
+  carries `pauseRequired`, and a resume honours it even when the new
+  invocation drops `specDir` or passes `pauseAfterPlan: false`.
+- **A sub-heading inside `## Acceptance criteria` no longer drops the criteria
+  below it** when an approved `spec.md` is read back.
+- **A document path that is itself a link is refused** — at the preflight
+  (which now also covers `test-report.md`) and again at the moment of writing.
+- **The `next` step of a paused run keeps a `policy` the caller passed.**
+- **Spec mode builds in one tree.** Builders take turns in the checkout the run
+  started in (data, backend, frontend), each told what the earlier ones changed,
+  and repairs run there too. On the first live run the per-builder worktrees
+  diverged, were never joined, and came from the default branch rather than the
+  HU branch. A build refuses to start while anything outside the spec directory
+  and `.claude/` is uncommitted, or when git cannot be read; a resume diffs
+  against the base its Build recorded, and the diff route names new untracked
+  files too. `"buildTree": "worktrees"` keeps the old
+  behaviour, which stays the default outside spec mode.
+  The Design mock runs in the checkout too: in a worktree it never reached its
+  absolute path on two live runs and the worktree was left behind.
+- **Large bridge data is written by write-only steps and compressed.** A
+  transcriber refused to execute a script carrying a 40 KB hex block, and the run
+  lost its Build record and its `outcome.json`. Data over 4,000 hex characters
+  is now saved by DATA steps that only write a file, each checked against its
+  hash and written again once if damaged; data and output are LZW-compressed
+  before scrambling; parts are 12,000 hex characters.
+- **Readiness is told which lenses ran.** It reported that security never ran
+  when security had run and every finding of it had been refuted. Its prompt now
+  carries a coverage line per lens: ran or not, findings raised, confirmed,
+  refuted, and whether its brief was partial.
+- **A lens brief always carries the route to the whole change.** In the HU 16
+  pilot, code review, security and performance never read two of the files the
+  change was about: the brief had dropped the file list, and the per-builder
+  worktrees had diverged, so Glob could not bring the files back. In spec mode
+  the brief now opens with how to see the whole change (`git diff <base>` plus
+  the untracked files), kept with the criteria, which no step cuts. The cut
+  order itself is unchanged (file list first, then summaries), so the brief
+  replay evals hold. Builders' `planGaps` are rendered in the brief.
+- **A decision record lands with the spec, not in local memory.** In the HU 16
+  pilot the architect followed its project-memory skill and wrote the ADR to
+  `.claude/memory/decisions/`, which is local and unversioned; a person moved it
+  by hand. In spec mode the agents that make design decisions (architect,
+  designer, the builders) are told to record them in
+  `<specDir>/decisiones.md`, never under `.claude/memory/`. Reviewers are not
+  told, and outside spec mode nothing changes.
+
 ### Added
 
+- **Commit per stage, evidence bound to a commit.** A spec-mode build in the
+  checkout is now committed by the workflow after Build, after Test (its tests
+  and evidence), after each Repair and at the end, each as
+  `sdlc-feature(<runId>): <stage>` on the current branch, with the repository's
+  own hooks and signing. The test stage is told the commit it tests, readiness
+  the commit verification ran on, and the outcome's `verification` records the
+  chain and whether anything outside the spec directory changed after the last
+  verification (a `verification.drift` blocked gate when it did). A detached
+  HEAD stops a committing build; a refused commit leaves the evidence unbound
+  and says so. `"commitStages": false` keeps the old uncommitted behaviour.
+- **Evidence a person can approve from.** `/sdlc-feature`'s Test stage returns
+  one case per acceptance criterion — id, criterion, title, type (unit,
+  component, integration, e2e, visual, mutation, manual), test, result and
+  evidence path — saves the evidence under `<handoff>/evidencia/` with a
+  `casos.md`, and runs mutation testing on the changed files when the
+  repository has it set up (surviving mutants are Should Fix findings).
+  `test-report.md` opens with a traceability table and one line — proven,
+  failing, pending human QA, mutation score — which readiness also receives.
+- **The team's QA case format, and learning per run.** When the repository has
+  `specs/qa-case-template.md` (or `"qaTemplate"` names one), the Test stage
+  writes `casos.md` by it and a `tracker-draft.md` it describes, and never
+  publishes to a tracker. A completed `/sdlc-feature` run returns
+  `learningCandidates`: a dry run of `tools/distil.py` over the repository's
+  runs, naming each candidate, for a person to keep or drop (`"distil": false`
+  turns it off). Error text is never relayed as candidates; a runtime without
+  `tools/` reports that it has none. A bad `qaTemplate` path stops the run.
+- **Contradictions found while planning.** The analyst compares the intent
+  with the repository's specs, docs and code and lists every disagreement,
+  both sides quoted, in `spec.md` (`## Contradictions`, read back on
+  approval). They lead `humanDecisionRequired` at the pause, and readiness
+  treats a criterion they touch as not Confirmed.
+
+- **`/sdlc-feature` spec mode: `args.specDir`, `args.intentPath`,
+  `args.strict`.** `"specDir": "specs/features/HU-22"` keeps the handoff files
+  in the repository beside the change. A person's `intent.md` in that
+  directory is the intent: `product-manager` does not run, and Plan does not
+  start without it. `spec.md`, `plan.md`, `design.md`, `mock.html` and
+  `test-report.md` are written there instead of the run directory.
+  `"intentPath"` uses an existing intent file, also skipping
+  `product-manager`, without moving the other files. Spec mode is strict, and
+  `"strict": true` turns strictness on without a spec directory: a stage whose
+  input file is not confirmed on disk does not start, and the run stops naming
+  the file. Both paths must be plain repository-relative paths (no `..`, drive
+  or leading slash), and all three options need a run directory; without one
+  the run stops. The return value's `handoff` adds `specDir`, `strict` and
+  `approvedPlan`.
+  - **The spec directory is confined.** No segment of its path may start
+    with `.` or be `node_modules`, in any case and at any depth (so neither
+    `.Git/hooks` nor `pkg/.claude/commands` gets through), and a preflight
+    resolves it by real path before anything is planned: a symbolic link or
+    junction on the way, or a path resolving outside the repository, stops the
+    run. Confinement is checked again at every write. A file an earlier run
+    left there is never taken as this run's output.
+  - **Plan approval: `args.pauseAfterPlan`, `args.approvedPlan`,
+    `args.replan`.** In spec mode the run stops after Plan by default, with
+    status `awaiting-plan-approval` and a `next` line. A person reviews,
+    edits and commits `spec.md` and `plan.md`, then starts a **fresh** run
+    with the args `next` gives: the same args plus `"approvedPlan": true`
+    (which needs `specDir`), without `resume`, `pauseAfterPlan`, `replan` or
+    the plugin paths — re-pass an explicit `policy` if the first run had one.
+    That run starts at Design from the committed files: no planner runs, and
+    `spec.md` is not re-rendered; `ux-designer` and the builders are told the
+    `plan.md` was "written or approved by a person". Both files must be
+    committed and unchanged, or the run stops. "Committed" is decided from
+    the bytes on disk, hashed by the preflight itself rather than through
+    git's filters, so a `.gitattributes` `ident` or clean filter cannot fold
+    an edit back onto the committed blob; a CRLF checkout of an LF file still
+    counts. `"pauseAfterPlan": false` runs straight through.
+  - **Approval is never a resume.** Resuming the paused run with
+    `approvedPlan` is refused, and resuming it with its original args is
+    refused too, since it would build a plan nobody approved. On a resume
+    the Plan the run recorded decides the mode, not the new flags: a resumed
+    approved run builds only what it approved and stops if `spec.md` or
+    `plan.md` changed since, and a resume never pauses again.
+  - **The approved `spec.md` is read exactly.** One criterion per line,
+    `- **AC-1** — text` under `## Acceptance criteria`; an en dash, hyphen or
+    colon, `*`/`+` bullets, numbered items, checkboxes and `**AC-1:**` are
+    accepted too, and an indented line continues the criterion above it. A
+    line under the heading that is not a criterion, a duplicated id, or a
+    leftover `[truncated at N characters]` marker stops the run before
+    anything is recorded, quoting the line. `## Surfaces` decides which
+    builders run.
+  - **A run never overwrites an uncommitted edit.** A fresh run that would
+    plan refuses to start while `spec.md`, `plan.md`, `design.md` or
+    `mock.html` has uncommitted changes; with `approvedPlan`, `design.md` and
+    `mock.html` are guarded. `"replan": true` overwrites on purpose. Before
+    Build, every file Plan and Design recorded is re-checked against its
+    recorded hash, fresh run or resume, and a changed one is not handed on.
+- **`/sdlc-maintain`, stage 6.** `_detect.js` is a deterministic detector with
+  no model. It checks the latest conclusive GitHub Actions run per workflow
+  (via `gh`), the configured health commands and log patterns, or takes a
+  reported incident. Its config is `.claude/maintain.json`; with no file, only
+  CI on `main` is checked. Only on a signal do two agents run:
+  `site-reliability` diagnoses read-only (Opus / max), then
+  `incident-commander` writes `incident.md` and an `intent.md` (Opus / high).
+  The `intent.md` is returned as `nextInitiative` for a person to feed to
+  `/sdlc-feature`. The workflow recommends only; it never mitigates, rolls
+  back or deploys. Verdicts are `healthy`, `no-signal-with-gaps`,
+  `config-error` (`.claude/maintain.json` is broken or malformed, so nothing
+  was checked), `unknown`, `incident` and `incident-unrecorded` (diagnosed,
+  but no usable incident record came back; the run is `incomplete` and offers
+  no build).
+  - **It needs run recording.** Without a run directory the verdict is
+    `unknown`, nothing is checked, and the run is `incomplete`; the reason
+    points at the detector CLI for a model-free check.
+  - **Commit and merge `.claude/maintain.json` to arm health commands.** They
+    run through a shell, so they run only when the config file's bytes equal
+    its committed version at `HEAD` **and** its version on the repository's
+    default branch, read from `refs/remotes/origin/HEAD` — a reference the
+    config cannot choose, unlike its own `ci.branch`. A config that is
+    untracked, edited locally (even one hidden with `assume-unchanged`), or
+    changed on a PR branch checked out for review has its commands listed as a
+    gap and not run. The detector computes the blob id from the bytes on disk
+    itself, not with `git hash-object`, so a `.gitattributes` `ident` or clean
+    filter cannot fold an edited config back onto the committed blob; a CRLF
+    checkout of an LF config still matches.
+  - **With no `origin/HEAD`, no health command is armed** — a repository with
+    no remote, or a CI job that cloned a single branch. Pass
+    `"trustHead": true` in `args` (CLI: `--trust-head`) only when the checkout
+    is the default branch; the config then has to match `HEAD` alone.
+    Otherwise `git remote set-head origin --auto` creates the reference.
+  - What a command runs is not checked: a committed
+    `npm test` executes whatever the working tree's `package.json` and tests
+    hold, so arming a health command is like adding a CI step. They run
+    without secret-shaped environment variables — tokens, secrets, passwords
+    (including `PASS`, `PGPASS`, `*_PWD`), keys, credentials, auth, DSNs,
+    cookies, JWTs, webhooks, database URLs, connection strings, `*_URI`,
+    Redis/Mongo/AMQP/Postgres/MySQL URLs, `NETRC`, `SERVICE_ROLE`,
+    kube/ssh/docker/AWS-profile config — while `PWD`, `OLDPWD` and
+    `GIT_AUTHOR_NAME`/`_EMAIL`/`_DATE` are always kept. This is a name-pattern
+    list, so a secret under an innocent name still passes. Known limit: on
+    Windows, a timed-out command's child processes may outlive it.
+  - CI counts only `push`, `schedule`, `workflow_dispatch` and `merge_group`
+    runs whose head branch is exactly the configured branch, or for
+    `merge_group` its merge-queue branch (`gh-readonly-queue/<branch>/…`) — an
+    allowlist, so pull-request, issue-comment and workflow-run runs, which
+    outsiders can start or title, cannot turn it red. A run that concluded
+    `cancelled`, `skipped`, `neutral`, `stale` or `action_required` is passed
+    over for the workflow's latest conclusive run. Finding no qualifying run
+    is a gap. A configured log that does not exist
+    is a gap, and `--config` must resolve inside the repository.
+  - A malformed config — a section of the wrong type, or a key the detector
+    does not read — is a config error (CLI exit 2), and a config that enables
+    nothing is a gap (exit 3). Neither is reported healthy.
+  - The full signals go to `<runDir>/handoff/signals.json`; the bridge relays
+    only a sealed summary. On a resume, `signals.json` must still hash to what
+    Detect recorded, or the run stops. `intent.md` opens with a banner saying
+    it was derived from untrusted signals, and an `incident` result names
+    `untrustedFields` (`diagnosis`, `incident`, `nextInitiative`,
+    `humanDecisionRequired[0]`): model text derived from untrusted signals,
+    to be relayed as quoted data and never acted on.
+  - A healthy run spends no diagnosing or recording model, but it is not
+    model-free: every mechanical bridge step runs on Haiku.
+  - `node sdlc-suite/workflows/_detect.js` runs on its own, with no model, and
+    exits 0 (every source checked, none signalled), 1 (signal), 2 (broken
+    config) or 3 (no signal, but some source could not be checked; not
+    healthy).
+- **`video-editor` agent 1.0.0 and `video-editing` skill 1.1.0** for recorded
 - **Routing-pin replay evals, `evals/routing-cases.v1.json` + `evals/routing.test.js`.**
   Each case is a representative task for one agent, the response recorded on its
   pinned tier and effort, and deterministic graders: `qa-runner` on haiku reports a

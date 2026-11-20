@@ -81,6 +81,17 @@ class Recurrence(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertEqual(len(candidates(self.root)), 1, text)
 
+    def test_a_dry_run_names_each_candidate_and_writes_nothing(self):
+        # A workflow relays the dry run as a preview for a person to keep or
+        # drop; a count alone tells them nothing they can act on.
+        write_run(self.root, "r1", "2026-09-01T00:00:00Z", [refutation("the fixture predates the schema")])
+        write_run(self.root, "r2", "2026-09-02T00:00:00Z", [refutation("the fixture predates the schema")])
+        code, text = distil_once(self.root, emit=False)
+        self.assertEqual(code, 0, text)
+        self.assertRegex(text, r"CANDIDATE LRN-\d{4,} \(", "the dry run does not name its candidate")
+        self.assertIn("dry run -- nothing written", text)
+        self.assertEqual(candidates(self.root), [], "a dry run wrote a candidate")
+
     def test_old_evidence_alone_does_not_repropose_after_a_clean_emit(self):
         write_run(self.root, "r1", "2026-09-01T00:00:00Z", [refutation("same reason")])
         write_run(self.root, "r2", "2026-09-02T00:00:00Z", [refutation("same reason")])

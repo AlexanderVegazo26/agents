@@ -67,7 +67,7 @@ mode it prints nothing when healthy and always exits 0.
 
 **The workflow runtime block.** A Workflow-tool script runs in a sandbox with no
 `require`, so the ~500-line runtime (policy bridge, run recorder, retry, breaker,
-learnings loader, outcome record) is pasted into all six workflows between
+learnings loader, outcome record) is pasted into every workflow script between
 `// >>> RUNTIME BLOCK` markers. Edit `sdlc-suite/workflows/_runtime.block.js`
 and run `runtime_block.py --write`; never edit a workflow's copy. Before this
 check existed, one copy had silently lost a security guard the other five had.
