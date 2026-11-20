@@ -1776,11 +1776,20 @@ const confinedForWrite = (root, p) => {
   // The file itself: writeFileSync follows a link, so a document swapped for
   // a link after the preflight would carry the write out (code review round 5).
   try { if (fs.lstatSync(path.resolve(p)).isSymbolicLink()) return false } catch (e) { /* absent: fine */ }
+  // Fail closed (Alexander's review of PR #6): a path that cannot be resolved
+  // is not confined. Before the first write the target's directory may not
+  // exist yet, so the deepest directory that does exist is resolved instead.
   try {
     const realRoot = fs.realpathSync(R)
-    const realDir = fs.realpathSync(path.dirname(path.resolve(p)))
+    let dir = path.dirname(path.resolve(p))
+    while (!fs.existsSync(dir)) {
+      const up = path.dirname(dir)
+      if (up === dir) return false
+      dir = up
+    }
+    const realDir = fs.realpathSync(dir)
     return realDir === realRoot || realDir.startsWith(realRoot + path.sep)
-  } catch (e) { return true }
+  } catch (e) { return false }
 }
 const out = {}
 const shaOf = p => { try { const b = fs.readFileSync(p); return b.length ? crypto.createHash('sha256').update(b).digest('hex') : null } catch (e) { return null } }
@@ -2039,11 +2048,20 @@ const confinedForWrite = (root, p) => {
   // The file itself: writeFileSync follows a link, so a document swapped for
   // a link after the preflight would carry the write out (code review round 5).
   try { if (fs.lstatSync(path.resolve(p)).isSymbolicLink()) return false } catch (e) { /* absent: fine */ }
+  // Fail closed (Alexander's review of PR #6): a path that cannot be resolved
+  // is not confined. Before the first write the target's directory may not
+  // exist yet, so the deepest directory that does exist is resolved instead.
   try {
     const realRoot = fs.realpathSync(R)
-    const realDir = fs.realpathSync(path.dirname(path.resolve(p)))
+    let dir = path.dirname(path.resolve(p))
+    while (!fs.existsSync(dir)) {
+      const up = path.dirname(dir)
+      if (up === dir) return false
+      dir = up
+    }
+    const realDir = fs.realpathSync(dir)
     return realDir === realRoot || realDir.startsWith(realRoot + path.sep)
-  } catch (e) { return true }
+  } catch (e) { return false }
 }
 // Confined before any directory is created and again before writing; written
 // to a temporary file and renamed over the target, so neither a link swapped

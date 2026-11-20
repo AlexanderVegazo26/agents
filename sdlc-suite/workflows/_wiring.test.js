@@ -2399,6 +2399,34 @@ async function main() {
     assert.ok(/"approvedPlan":true/.test(r.result.next) && /"specDir":"specs\/features\/HU-9"/.test(r.result.next), r.result.next)
   })
 
+  await test('the write confinement fails closed: a path it cannot resolve is not confined', async () => {
+    // Alexander's review of PR #6. The check ships inside each handoff step's
+    // script, so it is taken from what a spec-mode run actually sends.
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents() })
+    const checks = new Set()
+    for (const c of r.calls.filter(k => k.label === 'bridge:handoff')) {
+      const m = c.prompt.match(/const confinedForWrite = \(root, p\) => \{\n[\s\S]*?\n\}\n/)
+      if (m) checks.add(m[0])
+    }
+    assert.strictEqual(checks.size >= 1, true, 'no handoff step carried the confinement check')
+    const root = path.resolve(cwd)
+    const target = path.join(root, SPEC, 'evidencia', 'CP-01', 'out.txt')
+    const absent = () => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e }
+    for (const src of checks) {
+      const make = fsStub => new Function('fs', 'path', `${src}; return confinedForWrite`)(fsStub, path)
+      // Path resolution fails: not confined.
+      const broken = make({ lstatSync: absent, existsSync: () => true, realpathSync: () => { throw new Error('EACCES') } })
+      assert.strictEqual(broken(root, target), false, 'a realpath failure was treated as confined')
+      // A directory that does not exist yet is judged by its deepest existing ancestor.
+      const fresh = make({ lstatSync: absent, existsSync: d => d === root, realpathSync: d => d })
+      assert.strictEqual(fresh(root, target), true, 'a first write into a new directory was refused')
+      // That ancestor resolving outside the repository is not confined.
+      const outside = make({ lstatSync: absent, existsSync: () => true, realpathSync: d => (d === root ? root : path.join(path.dirname(root), 'elsewhere')) })
+      assert.strictEqual(outside(root, target), false, 'a directory resolving outside the repository was confined')
+    }
+  })
+
   await test('approvedPlan builds from the person\'s COMMITTED edit — no planner runs, spec.md is not rewritten', async () => {
     const { cwd, d } = gitSpecRepo()
     await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents() })

@@ -11,6 +11,13 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Changed
 
+- **`/sdlc-feature`'s write confinement now fails closed.** The check every
+  spec-mode handoff runs before writing treated a path it could not resolve
+  (`realpath` failing) as inside the repository. It is now treated as outside,
+  and the write is refused. A directory that does not exist yet is judged by its
+  deepest existing ancestor, so first writes into a new `evidencia/` directory
+  still work.
+
 - **Fewer sequential bridge rounds per run, in all seven workflows.** In a
   measured toy run, bridge steps took ~35 of 66 minutes: 60 transcriber calls,
   36 of them data parts written one after another. Three changes, none of which
