@@ -11,6 +11,32 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Changed
 
+- **`/sdlc-feature`'s test stage no longer sees the builders' conclusions.**
+  Its brief has the acceptance criteria, the changed files and how to read the
+  diff. The builders' summaries, `criteriaAddressed`, `notAddressed` and
+  `planGaps` are withheld, in the budgeted brief, in the fallback brief, and in
+  every repair round's re-verification. In a checkout build its route to the
+  change is `git diff <base> -- . ':(exclude)<specDir>/decisiones.md'`, because
+  the builders record their rationale in that file. When a builder disputes a
+  finding in `notAddressed`, re-verification still sees that dispute, so a
+  false positive does not come back every round. QA forms its own view by
+  executing; the review lenses still get the whole manifest, because they judge
+  the reasoning too.
+- **Readiness gives two verdicts.** `release-manager` answers with a schema:
+  `technical` (is the code ready — tests, evidence, findings, the commit the
+  evidence is bound to) and `product` (does it do what the HU asks — criteria,
+  open product-owner questions, contradictions, plan gaps), each `go`, `no-go`
+  or `conditional` with its reasons, plus the full `report`. The return value
+  carries them in a new `readiness` field, and `humanDecisionRequired` opens
+  with one decision for each. `readinessRecommendation` stays prose: it is the
+  `report`. A missing or malformed verdict is reported as missing, never
+  guessed.
+- **Bridge data parts are named as data.** They were written as
+  `<step>.cjs.in<k>`, and on a measured run a transcriber refused one as "an
+  opaque blob meant to become a .cjs script". They are now
+  `<step>.data-<k>.hex`, and the data step says that the part is never
+  executed or loaded as code.
+
 - **`/sdlc-feature`'s write confinement now fails closed.** The check every
   spec-mode handoff runs before writing treated a path it could not resolve
   (`realpath` failing) as inside the repository. It is now treated as outside,

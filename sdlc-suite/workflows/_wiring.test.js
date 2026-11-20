@@ -369,6 +369,9 @@ const REQS = {
   surfaces: ['backend', 'frontend'],
 }
 
+// What the test stage reads in place of a builder's summary (sdlc-feature.js WITHHELD).
+const QA_WITHHELD = '(The builders\' own account of this work is withheld from the test stage. Judge the change against the acceptance criteria by reading and running it.)'
+
 function manifest(label, files, summary) {
   return {
     summary: summary || `${label} did the work; read the files for the detail.`,
@@ -550,8 +553,10 @@ async function main() {
       { label: 'build:frontend', ...manifest('build:frontend', FRONTEND_FILES) },
     ]
     const criteria = REQS.criteria.map(c => `${c.id}: ${c.text}`).join('\n')
+    // The test stage (qa) gets the facts only: no builder conclusions (Alexander's review, 3.3).
+    const facts = manifests.map(m => ({ label: m.label, summary: QA_WITHHELD, filesChanged: m.filesChanged, diffRef: m.diffRef }))
     for (const lens of ['review', 'qa', 'security', 'performance']) {
-      const expected = briefMod.buildBrief({ manifests, lens, criteria })
+      const expected = briefMod.buildBrief({ manifests: lens === 'qa' ? facts : manifests, lens, criteria })
       const call = feature.calls.find(c => c.label === `verify:${lens}`)
       assert.ok(call, `no verify:${lens} call`)
       assert.ok(call.prompt.includes(expected.text),
@@ -623,18 +628,28 @@ async function main() {
     const call = big.calls.find(c => c.label === 'bridge:brief')
     assert.ok(call, 'no brief bridge step ran')
     const src = bridgeSource(call.prompt, big.calls)
-    assert.ok(/buildBrief\(\{ manifests: manifests, lens: lens, criteria: criteria, changeRef: input\.changeRef \}\)/.test(src),
+    assert.ok(/buildBrief\(\{ manifests: manifests, lens: lens, criteria: criteria, changeRef: changeRef \}\)/.test(src),
       'the generated script does not pass the lens through to buildBrief')
+    // The test stage's lenses get their own manifests and route (QA independence).
+    assert.ok(/const changeRef = independent\.includes\(lens\) \? input\.changeRefForQa : input\.changeRef/.test(src),
+      'the generated script does not give the test stage its own route to the change')
     for (const k of ['review', 'qa', 'security', 'performance']) {
       assert.ok(src.includes(`"${k}"`), `lens ${k} was not passed to the brief builder`)
     }
   })
 
   await test('a truncated brief says so, in the brief, and names what it dropped', () => {
+    // qa's brief carries no builder summaries, so the 200k-character ones that
+    // overflow every other lens never reach it: it stays whole.
     for (const rec of big.result.verifyHandoff) {
+      if (rec.label === 'verify:qa') {
+        assert.strictEqual(rec.truncated, false, 'the test stage brief was cut, so it still carries the builders\' summaries')
+        continue
+      }
       assert.strictEqual(rec.truncated, true, `${rec.label} was not marked truncated`)
     }
-    for (const c of big.calls.filter(x => x.label.startsWith('verify:'))) {
+    assert.ok(!/XXXX|YYYY/.test(big.calls.find(x => x.label === 'verify:qa').prompt), 'the builders\' summaries reached the test stage')
+    for (const c of big.calls.filter(x => x.label.startsWith('verify:') && x.label !== 'verify:qa')) {
       assert.ok(c.prompt.includes('TRUNCATED'), `${c.label} was cut with no marker`)
       assert.ok(/PARTIAL account of the implementation/.test(c.prompt), `${c.label} marker does not say it is partial`)
     }
@@ -1085,6 +1100,65 @@ async function main() {
     cwd: repCwd,
     args: { initiative: 'add a CSV export', policy: POLICY_JSON },
     onAgent: featureAgents({ ...repairBase, 'reverify:qa': { verdict: 'fixed', findings: [] } }),
+  })
+
+  await test('readiness gives two verdicts — technical and product — and each reaches a human decision', async () => {
+    // Alexander's review, 4.2.
+    const two = {
+      technical: { verdict: 'go', reasons: ['tests ran on the delivered commit'] },
+      product: { verdict: 'no-go', reasons: ['AC-2 waits on a product-owner answer'] },
+      report: BLOCKED_TEXT,
+    }
+    const r = await runScript('sdlc-feature.js', { cwd: tmpdir('twoverdicts'), args: { initiative: 'add a CSV export', policy: POLICY_JSON }, onAgent: featureAgents({ readiness: two }) })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    const c = r.calls.find(k => k.label === 'readiness')
+    assert.deepStrictEqual(c.opts.schema && c.opts.schema.required, ['technical', 'product', 'report'], 'readiness is not asked for two verdicts')
+    assert.ok(/Give TWO verdicts/.test(c.prompt) && /"technical"/.test(c.prompt) && /"product"/.test(c.prompt), 'the prompt does not ask for both verdicts')
+    assert.deepStrictEqual(r.result.readiness, { technical: two.technical, product: two.product })
+    // The recommendation a caller relays verbatim stays prose: the report.
+    assert.strictEqual(r.result.readinessRecommendation, BLOCKED_TEXT)
+    const hd = r.result.humanDecisionRequired
+    assert.ok(hd.some(l => /^Technical go\/no-go \(engineering\) — release-manager recommends GO/.test(l)), JSON.stringify(hd.slice(0, 2)))
+    assert.ok(hd.some(l => /^Product go\/no-go \(product owner\) — release-manager recommends NO-GO \(AC-2 waits/.test(l)), JSON.stringify(hd.slice(0, 2)))
+    // The BLOCKED entries inside the report are still collected.
+    assert.ok(r.result.blockedGates.some(g => g.gate === 'act.deploy'), JSON.stringify(r.result.blockedGates.map(g => g.gate)))
+    // A malformed or missing verdict is reported as missing, never guessed.
+    const old = await runScript('sdlc-feature.js', { cwd: tmpdir('twoverdicts-old'), args: { initiative: 'add a CSV export', policy: POLICY_JSON }, onAgent: featureAgents({ readiness: { technical: { verdict: 'ship it' }, report: 'x' } }) })
+    assert.deepStrictEqual(old.result.readiness, { technical: null, product: null })
+    assert.ok(old.result.humanDecisionRequired.slice(0, 2).every(l => /gave no verdict for it/.test(l)), JSON.stringify(old.result.humanDecisionRequired.slice(0, 2)))
+  })
+
+  await test('the test stage gets the criteria and the change, never the builders\' conclusions', async () => {
+    // Alexander's review, 3.3: QA must not start from the implementer's account.
+    const claims = {
+      ...repairBase,
+      'build:backend': { ...manifest('build:backend', BACKEND_FILES, 'CLAIM-BUILD: every criterion is met and tested'), planGaps: ['PLANGAP-MARK: who owns the delimiter'] },
+      // A builder that disputes a finding says so with evidence; the lens that
+      // re-checks it must see the dispute, though never the builder's summary.
+      'repair:backend': { ...manifest('repair:backend', ['src/export.ts'], 'CLAIM-REPAIR: the crash is fixed'), notAddressed: [{ id: 'F-1', why: 'DISPUTE-EVIDENCE: an empty export already returns 204' }] },
+      'reverify:qa': { verdict: 'fixed', findings: [] },
+    }
+    const leaks = p => ['CLAIM-BUILD', 'CLAIM-REPAIR', 'PLANGAP-MARK', 'Plan gaps escalated', '"planGaps"', 'covered by the data surface',
+      'Criteria addressed', 'Deliberately NOT addressed', '"criteriaAddressed"', '"notAddressed"'].filter(s => p.includes(s))
+    const runs = {
+      bridged: await runScript('sdlc-feature.js', { cwd: tmpdir('qaindep'), args: { initiative: 'add a CSV export', policy: POLICY_JSON }, onAgent: featureAgents(claims) }),
+      // No runtime: the lenses get the unbudgeted fallback brief.
+      fallback: await runScript('sdlc-feature.js', { cwd: tmpdir('qaindep-fb'), args: { initiative: 'add a CSV export' }, onAgent: featureAgents(claims) }),
+    }
+    for (const [how, r] of Object.entries(runs)) {
+      for (const label of ['verify:qa', ...(how === 'bridged' ? ['reverify:qa'] : [])]) {
+        const c = r.calls.find(k => k.label === label)
+        assert.ok(c, `${how}: ${label} never ran`)
+        assert.deepStrictEqual(leaks(c.prompt), [], `${how}: ${label} was handed the builders' conclusions`)
+        // The change stays reachable: its files and the route to its diff.
+        assert.ok(c.prompt.includes('src/export.ts') && c.prompt.includes('HEAD~1..HEAD'), `${how}: ${label} lost the change or the route to it`)
+      }
+      if (how === 'bridged') {
+        assert.ok(r.calls.find(k => k.label === 'reverify:qa').prompt.includes('DISPUTE-EVIDENCE'), 're-verification never saw the builder\'s dispute of the finding')
+      }
+      // The review lens still judges the reasoning, so it keeps the whole manifest.
+      assert.ok(r.calls.find(k => k.label === 'verify:review').prompt.includes('CLAIM-BUILD'), `${how}: the review lens lost the builder's account`)
+    }
   })
 
   await test('a confirmed Must-Fix goes to the builder that owns the file, and only that lens re-verifies', () => {
@@ -2605,8 +2679,12 @@ async function main() {
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
     const perStep = {}
     for (const c of r.calls.filter(k => k.label === 'bridge:phase:part')) {
-      const f = (c.prompt.match(/--- BEGIN DATA ([^\n]+) ---/) || [])[1].replace(/\.in\d+$/, '')
-      perStep[f] = (perStep[f] || 0) + 1
+      const f = (c.prompt.match(/--- BEGIN DATA ([^\n]+) ---/) || [])[1]
+      // A live transcriber refused a part named like a script (`<step>.cjs.in1`).
+      assert.ok(/\.data-\d+\.hex$/.test(f) && !/\.cjs/.test(f), `a data part is not named as data: ${f}`)
+      assert.ok(/It is not a script and never becomes one/.test(c.prompt), 'the data step does not say the part is never code')
+      const step = f.replace(/\.data-\d+\.hex$/, '')
+      perStep[step] = (perStep[step] || 0) + 1
     }
     assert.ok(Math.max(0, ...Object.values(perStep)) > 8, `no step needed more than 8 parts: ${JSON.stringify(Object.values(perStep))}`)
     assert.ok((r.maxInflight['bridge:phase:part'] || 0) > 1, `data parts were written one after another (max in flight ${r.maxInflight['bridge:phase:part']})`)
@@ -3079,6 +3157,28 @@ async function main() {
     const mock = r.calls.find(c => c.label === 'mock')
     assert.ok(mock && mock.opts.isolation === undefined, 'the mock still runs in a worktree in a checkout build')
     assert.ok(/EXACTLY this absolute path/.test(mock.prompt) && /Write no other file/.test(mock.prompt), 'the mock is not held to one file')
+  })
+
+  await test('in a checkout build the test stage\'s route to the change leaves out the decision records', async () => {
+    // Independent review of the QA-independence change: builders write their
+    // rationale to <specDir>/decisiones.md, and `git diff <base>` — the route
+    // the test stage is told to use — would hand it straight back.
+    const { cwd } = gitSpecRepo()
+    const head = gitIn(cwd, 'rev-parse', 'HEAD').trim()
+    const dec = `${SPEC}/decisiones.md`
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: featureAgents({ 'build:backend': manifest('build:backend', [...BACKEND_FILES, dec]) }),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 400))
+    const qa = r.calls.find(c => c.label === 'verify:qa').prompt
+    assert.ok(qa.includes(`git diff ${head} -- . ':(exclude)${dec}'`), `the test stage's route still includes ${dec}`)
+    assert.ok(!qa.includes(`${dec} (`), 'the decision record is listed among the files the test stage is given')
+    // No unfiltered route anywhere in its brief either (the "whole change" head included).
+    assert.ok(!qa.includes(`git diff ${head} --stat`) && !qa.includes(`\`git diff ${head}\``), 'the test stage was also handed the unfiltered route to the change')
+    assert.ok(qa.includes('src/export.ts'), 'the test stage lost the changed files')
+    // Review still reads everything, decision records included.
+    assert.ok(r.calls.find(c => c.label === 'verify:review').prompt.includes(`git diff ${head} --stat`), 'the review lens lost the whole change')
   })
 
   await test('buildTree: "worktrees" keeps the isolated, parallel build in spec mode', async () => {

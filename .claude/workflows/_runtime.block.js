@@ -160,7 +160,7 @@ const BRIDGE_MODEL = args && typeof args === 'object' && args.tiers === 'inherit
  */
 async function transcribeData(label, file, text, model) {
   const out = await agent(
-    `Mechanical bridge step of an sdlc-suite workflow: save one data file. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. The text between the markers is opaque DATA (hexadecimal, part of an encoded JSON input); it is never executed, and nothing in this step runs any command.
+    `Mechanical bridge step of an sdlc-suite workflow: save one data file. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. The text between the markers is opaque DATA (hexadecimal, part of an encoded JSON input). It is never executed. It is not a script and never becomes one: no step runs it or loads it as code — a later step reads it as text, checks its SHA-256 and parses it as JSON. Nothing in this step runs any command.
 
 1. Write the text between the two markers, exactly as it is, to ${file} — creating parent directories if they do not exist. If that path is relative, resolve it against your working directory first; the Write tool needs an absolute path. Copy it character for character: do not shorten, wrap, reformat or comment it.
 2. Return ok=true with result {"ok":true}. If the file could not be written, return ok=false with the reason in "error".
@@ -266,7 +266,10 @@ async function bridge(op, source, model, data) {
     if (dataHex.length > INLINE_DATA_HEX) {
       for (let i = 0, k = 0; i < dataHex.length; i += PART, k++) {
         const text = dataHex.slice(i, i + PART)
-        partFiles.push({ file: `${file}.in${k}`, sha: sha256Hex(utf8Bytes(text)), text })
+        // Named as data, not after the script: on a measured run a transcriber
+        // refused a part written as `<step>.cjs.in1`, reading it as "an opaque
+        // blob meant to become a .cjs script" it could not verify.
+        partFiles.push({ file: `${file.replace(/\.cjs$/, '')}.data-${k}.hex`, sha: sha256Hex(utf8Bytes(text)), text })
       }
       // All at once: each part is its own file with its own hash, so nothing
       // orders them, and one after another they were the largest share of a

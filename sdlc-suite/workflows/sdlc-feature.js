@@ -201,7 +201,7 @@ const BRIDGE_MODEL = args && typeof args === 'object' && args.tiers === 'inherit
  */
 async function transcribeData(label, file, text, model) {
   const out = await agent(
-    `Mechanical bridge step of an sdlc-suite workflow: save one data file. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. The text between the markers is opaque DATA (hexadecimal, part of an encoded JSON input); it is never executed, and nothing in this step runs any command.
+    `Mechanical bridge step of an sdlc-suite workflow: save one data file. You are a transcriber, not an author, and you take no autonomous decision here — no autonomy gate applies to this step. The text between the markers is opaque DATA (hexadecimal, part of an encoded JSON input). It is never executed. It is not a script and never becomes one: no step runs it or loads it as code — a later step reads it as text, checks its SHA-256 and parses it as JSON. Nothing in this step runs any command.
 
 1. Write the text between the two markers, exactly as it is, to ${file} — creating parent directories if they do not exist. If that path is relative, resolve it against your working directory first; the Write tool needs an absolute path. Copy it character for character: do not shorten, wrap, reformat or comment it.
 2. Return ok=true with result {"ok":true}. If the file could not be written, return ok=false with the reason in "error".
@@ -307,7 +307,10 @@ async function bridge(op, source, model, data) {
     if (dataHex.length > INLINE_DATA_HEX) {
       for (let i = 0, k = 0; i < dataHex.length; i += PART, k++) {
         const text = dataHex.slice(i, i + PART)
-        partFiles.push({ file: `${file}.in${k}`, sha: sha256Hex(utf8Bytes(text)), text })
+        // Named as data, not after the script: on a measured run a transcriber
+        // refused a part written as `<step>.cjs.in1`, reading it as "an opaque
+        // blob meant to become a .cjs script" it could not verify.
+        partFiles.push({ file: `${file.replace(/\.cjs$/, '')}.data-${k}.hex`, sha: sha256Hex(utf8Bytes(text)), text })
       }
       // All at once: each part is its own file with its own hash, so nothing
       // orders them, and one after another they were the largest share of a
@@ -2286,6 +2289,36 @@ const CASE_TYPES = ['unit', 'component', 'integration', 'e2e', 'visual', 'mutati
 // The types whose passing case proves a criterion. A mutation run measures the
 // tests; it does not prove the behaviour, and a manual case was not executed.
 const AUTOMATED_TYPES = ['unit', 'component', 'integration', 'e2e', 'visual']
+// TWO READINESS VERDICTS (Alexander's review, 4.2). Whether the code is ready
+// and whether the change does what the HU asks are decided by different people
+// on different evidence; one Go/No-Go let a clean build hide an unanswered
+// product question, and the other way round.
+const READINESS_VERDICT = {
+  type: 'object',
+  required: ['verdict', 'reasons'],
+  properties: {
+    verdict: { enum: ['go', 'no-go', 'conditional'] },
+    reasons: { type: 'array', items: { type: 'string' }, description: 'the gates behind the verdict, each with its classification' },
+  },
+}
+const READINESS_SCHEMA = {
+  type: 'object',
+  required: ['technical', 'product', 'report'],
+  properties: {
+    technical: { ...READINESS_VERDICT, description: 'Is the CODE ready? Tests and their evidence, mutation, confirmed findings, the security and performance lenses, the commit the evidence is bound to. Decided by engineering.' },
+    product: { ...READINESS_VERDICT, description: 'Does the change do what the HU asks? Each acceptance criterion proven or pending human QA, open questions and contradictions for the product owner, plan gaps. Decided by the product owner.' },
+    report: { type: 'string', description: 'The full gate-by-gate assessment, with every BLOCKED entry reproduced verbatim.' },
+  },
+}
+const VERDICTS = ['go', 'no-go', 'conditional']
+/** The two verdicts, or null for one that is missing or malformed — never a guess. */
+function readinessVerdicts(r) {
+  const one = v => (v && typeof v === 'object' && VERDICTS.includes(v.verdict)
+    ? { verdict: v.verdict, reasons: Array.isArray(v.reasons) ? v.reasons.map(String) : [] }
+    : null)
+  return { technical: one(r && r.technical), product: one(r && r.product) }
+}
+
 const QA_SCHEMA = {
   type: 'object',
   required: ['findings', 'verdict', 'cases'],
@@ -2358,12 +2391,51 @@ const LENSES = [
  * degradation; going back to re-sending three builders' prose into four lenses
  * would be a regression to the defect this change removes.
  */
+// QA INDEPENDENCE (Alexander's review, 3.3). The test stage gets the criteria
+// and the change — which files, and how to read the diff — but none of the
+// builders' conclusions: no summary of what they did, no claim of which
+// criteria they met, no list of what they left out. It forms its own view by
+// executing; a builder's "AC-3 done" read first is an expectation to confirm.
+// Review lenses still get the whole manifest: they judge the reasoning too.
+const INDEPENDENT_LENSES = new Set(['qa'])
+const WITHHELD = '(The builders\' own account of this work is withheld from the test stage. Judge the change against the acceptance criteria by reading and running it.)'
+// In a checkout build the builders record their decisions in
+// <specDir>/decisiones.md, so `git diff <base>` would hand the test stage their
+// rationale back. Its route to the change leaves that one file out
+// (independent review of this change). Repository-relative, for a pathspec.
+const decisionsRecord = () => (SPEC_DIR && BUILD_TREE === 'checkout' && BUILD_BASE ? `${SPEC_DIR}/decisiones.md` : null)
+const qaRoute = () => `git diff ${BUILD_BASE} -- . ':(exclude)${decisionsRecord()}'`
+/** changeRef() for the test stage: the same change, minus the decision record. */
+const changeRefForQa = () => (decisionsRecord()
+  ? `The whole change is ${STAGE_COMMITS ? 'COMMITTED on the current branch, stage by stage,' : 'UNCOMMITTED in the checkout this run started in,'} since ${BUILD_BASE}. Read it with \`${qaRoute()}\` (add --stat for the list of files); \`git status --short\` shows new files${STAGE_COMMITS ? ' and anything a stage has not committed yet' : ''}.`
+  : changeRef())
+/**
+ * A manifest with the facts only — which files, and how to read the diff.
+ * `disputes` keeps a builder's `notAddressed` for re-verification: a lens that
+ * re-checks a finding the builder disputes with evidence must see that
+ * evidence, or a false positive comes back every round (independent review).
+ */
+function factsOnly(ms, { disputes = false } = {}) {
+  const dec = decisionsRecord()
+  const isRecord = p => !!dec && String(p || '').replace(/\\/g, '/').replace(/^\.\//, '').endsWith(dec)
+  return (ms || []).map(m => ({
+    label: m && m.label,
+    summary: WITHHELD,
+    filesChanged: ((m && m.filesChanged) || []).filter(f => !isRecord(f && f.path)),
+    ...(dec ? { diffRef: `${qaRoute()}, plus the new untracked files: git status --short` }
+      : m && m.diffRef ? { diffRef: m.diffRef } : {}),
+    ...(disputes && m && Array.isArray(m.notAddressed) && m.notAddressed.length ? { disputes: m.notAddressed } : {}),
+  }))
+}
+
 async function buildBriefs(manifests, criteria, lensKeys) {
-  const fallbackText =
-    `## Acceptance criteria\n${criteria}\n\n${changeRef() ? `## The whole change\n${changeRef()}\n\n` : ''}## Implementation (build manifest — budget not applied)\n${JSON.stringify(manifests, null, 2)}`
+  const facts = factsOnly(manifests)
+  const fallbackFor = (ms, route) =>
+    `## Acceptance criteria\n${criteria}\n\n${route ? `## The whole change\n${route}\n\n` : ''}## Implementation (build manifest — budget not applied)\n${JSON.stringify(ms, null, 2)}`
   const fallback = () => {
     const out = {}
     for (const k of lensKeys) {
+      const fallbackText = INDEPENDENT_LENSES.has(k) ? fallbackFor(facts, changeRefForQa()) : fallbackFor(manifests, changeRef())
       out[k] = {
         text: fallbackText, chars: fallbackText.length, truncated: false, omittedFiles: [],
         handoff: {
@@ -2378,15 +2450,18 @@ async function buildBriefs(manifests, criteria, lensKeys) {
   }
 
   const r = await bridge('brief', `${REQUIRE_HEAD}const b = require(path.join(DIR, '_brief.js'))
-const manifests = input.manifests
 const criteria = input.criteria
+// The test stage's lenses get the facts-only manifests (no builder conclusions).
+const independent = ${JSON.stringify([...INDEPENDENT_LENSES])}
 const out = {}
 for (const lens of ${JSON.stringify(lensKeys)}) {
-  const br = b.buildBrief({ manifests: manifests, lens: lens, criteria: criteria, changeRef: input.changeRef })
+  const manifests = independent.includes(lens) ? input.facts : input.manifests
+  const changeRef = independent.includes(lens) ? input.changeRefForQa : input.changeRef
+  const br = b.buildBrief({ manifests: manifests, lens: lens, criteria: criteria, changeRef: changeRef })
   out[lens] = { text: br.text, chars: br.chars, truncated: br.truncated, omittedFiles: br.omittedFiles,
                 handoff: b.handoffRecord(br, manifests), briefSource: 'buildBrief' }
 }
-process.stdout.write(JSON.stringify(out))`, undefined, { manifests, criteria, changeRef: changeRef() })
+process.stdout.write(JSON.stringify(out))`, undefined, { manifests, facts, criteria, changeRef: changeRef(), changeRefForQa: changeRefForQa() })
 
   if (!r) {
     log('brief bridge unavailable — each lens receives the build manifest itself, unbudgeted')
@@ -3202,10 +3277,10 @@ FINDINGS TO RE-CHECK:
 ${JSON.stringify(target.filter(f => f.lens === lens.key).map(f => ({ severity: f.severity, summary: f.summary, evidence: f.evidence, file: f.file, line: f.line })), null, 2)}
 
 REPAIR MANIFEST(S):
-${JSON.stringify(repairManifests, null, 2)}
+${JSON.stringify(INDEPENDENT_LENSES.has(lens.key) ? factsOnly(repairManifests, { disputes: true }) : repairManifests, null, 2)}
 
 ORIGINAL BUILD MANIFEST(S):
-${JSON.stringify(manifests, null, 2)}
+${JSON.stringify(INDEPENDENT_LENSES.has(lens.key) ? factsOnly(manifests) : manifests, null, 2)}
 
 ACCEPTANCE CRITERIA:
 ${criteriaText}`),
@@ -3331,6 +3406,11 @@ ${criteriaText}`),
 
 Produce a RECOMMENDATION for human confirmation. You do not hold deploy authority and this workflow cannot grant it.
 
+Give TWO verdicts, not one — different people decide them, on different evidence (go, no-go or conditional, each with the gates behind it):
+- "technical": is the CODE ready? Tests and their evidence, mutation, confirmed findings, the security and performance lenses, and whether the evidence is bound to the commit being delivered. Engineering decides.
+- "product": does the change do what the HU asks? Each acceptance criterion proven or pending human QA, open questions and contradictions for the product owner, plan gaps. The product owner decides.
+A clean technical verdict never answers an open product question, and the other way round. Put the full gate-by-gate assessment in "report".
+
 The autonomy policy in force is stated at the top of this prompt — you do not need to go and find it. Reproduce every BLOCKED gate entry from the evidence below verbatim in your output, each with what was prepared so a human can execute it in one step. Do not drop a blocked gate because the recommendation is otherwise a Go.
 
 VERIFICATION COVERAGE — every lens of this run and what it did. A lens marked RAN looked at the change even when none of its findings survived; never report it as missing or as not having run. A PARTIAL brief means that lens may have missed part of the change — say so where it matters:
@@ -3361,7 +3441,7 @@ CODE UNDER VERIFICATION: ${verification.verifiedCommit
       : 'the change is uncommitted (commitStages is off), so the evidence is not bound to a commit.'}
 
 PLAN GAPS — design decisions the build tier escalated instead of making. Each stays open until the plan answers it; a criterion a plan gap touches is not Confirmed:\n${planGaps.length ? planGaps.map(g => `[${g.builder}] ${g.gap}`).join('\n') : '(none)'}`),
-          { agentType: 'sdlc-suite:release-manager', label: 'readiness', phase: 'Readiness', ...tier('readiness') },
+          { agentType: 'sdlc-suite:release-manager', label: 'readiness', phase: 'Readiness', schema: READINESS_SCHEMA, ...tier('readiness') },
         ),
       () =>
         dispatch(
@@ -3394,6 +3474,11 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
     }
   }
 
+  const readinessResult = agentResult(readinessArtifact, 'readiness')
+  const readiness = readinessVerdicts(readinessResult)
+  const verdictLine = v => (v
+    ? `release-manager recommends ${v.verdict.toUpperCase()}${v.reasons.length ? ` (${v.reasons.slice(0, 3).join('; ').slice(0, 300)})` : ''}`
+    : 'release-manager gave no verdict for it — decide from the report')
   status = 'completed'
   return {
     initiative,
@@ -3418,10 +3503,16 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
     // consumer that reads only this list still sees them; `unverified` names
     // the subset no refuter checked.
     findings: { confirmed, unverified, refutedCount: findingCounts.refuted },
-    readinessRecommendation: requireResult('readiness', agentResult(readinessArtifact, 'readiness')),
+    // Still the prose a caller relays verbatim, as before: the report when the
+    // answer came in the two-verdict shape (independent review).
+    readinessRecommendation: requireResult('readiness',
+      readinessResult && typeof readinessResult === 'object' && typeof readinessResult.report === 'string' ? readinessResult.report : readinessResult),
+    // Two verdicts, decided by different people (Alexander's review, 4.2).
+    readiness,
     documentation: agentResult(readinessArtifact, 'docs'),
     humanDecisionRequired: [
-      'Release go/no-go — release-manager recommends, it never commits.',
+      `Technical go/no-go (engineering) — ${verdictLine(readiness.technical)}; it never commits.`,
+      `Product go/no-go (product owner) — ${verdictLine(readiness.product)}; it never commits.`,
       ...planGaps.map(g => `Plan gap escalated by ${g.builder}: ${g.gap}`),
       ...reqs.openQuestions,
     ],
