@@ -1499,8 +1499,8 @@ function tier(key) {
 //
 // WHERE. By default <runDir>/handoff/. With `args.specDir` — a repository-
 // relative directory such as "specs/features/HU-22" — they are durable, in the
-// repository beside the change they describe: the layout the Hay Mesa loop
-// uses, where a person (or the ClickUp ticket) writes intent.md and Plan adds
+// repository beside the change they describe: a spec-per-story layout, where
+// a person (or the tracker ticket) writes intent.md and Plan adds
 // spec.md and plan.md next to it. `args.intentPath` names an existing intent
 // file without moving the rest.
 //
@@ -1547,8 +1547,8 @@ const SPEC_DIR_ARG = repoRelPath(args && typeof args === 'object' ? args.specDir
 const INTENT_ARG = repoRelPath(args && typeof args === 'object' ? args.intentPath : null, 'intentPath')
 const SPEC_DIR = SPEC_DIR_ARG.value
 // The team's own QA case format, when the repository has one: the Test stage
-// writes casos.md by it, and a tracker draft if it describes one (Jean's review
-// of the HU 16 pilot: evidence in the shape the team already reviews in its
+// writes casos.md by it, and a tracker draft if it describes one (a review
+// of the first real pilot: evidence in the shape the team already reviews in its
 // tracker). Repository-relative; `args.qaTemplate` overrides the default.
 const QA_TEMPLATE_ARG = repoRelPath(args && typeof args === 'object' ? args.qaTemplate : null, 'qaTemplate')
 // A bad path stops the run like a bad specDir does (below): silently using
@@ -1582,8 +1582,8 @@ const BUILD_TREE = (() => {
   return want
 })()
 let BUILD_BASE = null   // the commit a checkout build diffs against, from the spec preflight
-// COMMIT PER STAGE (jeanbot's follow-up to the adversarial review: "commit base
-// y commit por etapa, evidencia sobre el commit final"). In a checkout build the
+// COMMIT PER STAGE (a follow-up to the adversarial review: a base commit, one
+// commit per stage, evidence bound to the final commit). In a checkout build the
 // workflow itself commits after Build, after Test, after each Repair and at the
 // end, on the branch the run started on — so every stage's output has a commit,
 // the evidence names the commit it was produced on, and the run can show that

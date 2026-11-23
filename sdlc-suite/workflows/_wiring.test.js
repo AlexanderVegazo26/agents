@@ -2350,7 +2350,7 @@ async function main() {
     assert.ok(r2.logs.some(l => /plan\.md CHANGED since phase "Plan"/.test(l)), r2.logs.join('\n'))
   })
 
-  // --- spec mode: the Hay Mesa layout --------------------------------------
+  // --- spec mode: the spec-per-story layout ---------------------------------
   function specRepo(intent) {
     // Not a git checkout: these runs build in worktrees (a checkout build needs git).
     const cwd = tmpdir('spec')
@@ -2509,7 +2509,7 @@ async function main() {
     // any re-render over the approved file shows up as a byte difference.
     const spec0 = fs.readFileSync(path.join(d, 'spec.md'), 'utf8')
     fs.writeFileSync(path.join(d, 'spec.md'), spec0
-      .replace('# spec.md', '# spec.md\n\nPO NOTE: approved by Lissette on Tuesday — keep the CSV header.')
+      .replace('# spec.md', '# spec.md\n\nPO NOTE: approved by the product owner on Tuesday — keep the CSV header.')
       .replace('## Surfaces', '- **AC-3** – HUMAN-ADDED criterion\n  continued on a second line\n- **AC-4**: colon form\n\n## Surfaces'))
     gitIn(cwd, 'add', '-A')
     gitIn(cwd, 'commit', '-q', '-m', 'approve plan')
@@ -3216,7 +3216,7 @@ async function main() {
   })
 
   // Commit per stage, evidence bound to the commit it was produced on, and
-  // delivered == verified (jeanbot's follow-up to the adversarial review).
+  // delivered == verified (a follow-up to the adversarial review).
   const writeIn = (cwd, rel, text) => { fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true }); fs.writeFileSync(path.join(cwd, rel), text) }
   const stageAgents = (cwd, extra = {}) => featureAgents({
     'build:backend': () => { writeIn(cwd, 'src/export.ts', 'export const csv = 1\n'); return manifest('build:backend', BACKEND_FILES) },
