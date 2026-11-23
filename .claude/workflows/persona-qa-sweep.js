@@ -707,7 +707,10 @@ process.stdout.write(JSON.stringify({ byAgent: l.promptBlocksByAgent(all), sourc
 // Two separate steps, sent together: neither reads the other, so the run waits
 // for one transcriber round instead of two. A step that failed or threw reads
 // as not run — the policy then degrades to every gate denied.
-const [POLICY_STEP, LEARNING_STEP] = await parallel([loadPolicyStep, loadLearningsStep])
+// Written `await (async () => ...)()`, the form the rest of this block uses at
+// top level: syncheck.mjs compiles this file on its own as a plain script,
+// where `await (` still parses and `await parallel(` does not.
+const [POLICY_STEP, LEARNING_STEP] = await (async () => parallel([loadPolicyStep, loadLearningsStep]))()
 const POLICY = POLICY_STEP ||
   { gateTable: DEGRADED_TABLE, source: null, degraded: true, errors: ['the policy bridge did not run'], actGranted: [] }
 const LEARNING_SET = LEARNING_STEP || {
