@@ -251,18 +251,23 @@ test('an OPAQUE bearer token is redacted (the header form that used to leak)', (
   assert.ok(!s.includes('abcdefgh12345678XYZ'), s)
 })
 
+// Fixture secrets are assembled at runtime (J), so the repository's own secret
+// scan (gitleaks, default rules) does not flag this file. Same convention as
+// scripts/test_gitleaks_rules.py. The strings the redactor sees are unchanged.
+const J = (...parts) => parts.join('')
+
 test('common secret shapes are redacted', () => {
   const cases = {
-    'token=abc123def456': 'abc123def456',
+    [J('token=', 'abc123def456')]: 'abc123def456',
     'Authorization: Basic dXNlcjpwYXNzd29yZA==': 'dXNlcjpwYXNzd29yZA',
     '{"password": "hunter2hunter2", "api_key": "zzzzzzzzzzzz"}': 'hunter2hunter2',
     '{"api_key":"zzzzzzzzzzzz9"}': 'zzzzzzzzzzzz9',
-    'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENG': 'wJalrXUtnFEMIK7MDENG',
-    'key id ASIAABCDEFGHIJKLMNOP': 'ASIAABCDEFGHIJKLMNOP',
+    [J('AWS_SECRET_ACCESS_KEY=', 'wJalrXUtnFEMIK7MDENG')]: 'wJalrXUtnFEMIK7MDENG',
+    [J('key id ', 'ASIA', 'ABCDEFGHIJKLMNOP')]: J('ASIA', 'ABCDEFGHIJKLMNOP'),
     'postgres://admin:s3cretpass@db:5432/x': 's3cretpass',
-    'stripe sk_live_abcdefghijklmnop1234': 'sk_live_abcdefghijklmnop1234',
-    'google AIzaSyA-1234567890abcdefghijklmnopqrstu': 'AIzaSyA-1234567890abcdefghijklmnopqrstu',
-    'gitlab glpat-abcdefghijklmnopqrst': 'glpat-abcdefghijklmnopqrst',
+    [J('stripe ', 'sk_', 'live_abcdefghijklmnop1234')]: J('sk_', 'live_abcdefghijklmnop1234'),
+    [J('google ', 'AIza', 'SyA-1234567890abcdefghijklmnopqrstu')]: J('AIza', 'SyA-1234567890abcdefghijklmnopqrstu'),
+    [J('gitlab ', 'glpat', '-abcdefghijklmnopqrst')]: J('glpat', '-abcdefghijklmnopqrst'),
     ['ghp_' + 'a'.repeat(36)]: 'ghp_aaaa',
     'DefaultEndpointsProtocol=https;AccountKey=abc/def+ghi==;': 'abc/def+ghi',
     'mysql --password hunter22 -u root': 'hunter22',
@@ -277,7 +282,7 @@ test('common secret shapes are redacted', () => {
 })
 
 test('every string field of a signal is redacted, not only evidence', () => {
-  const r = d.checkHealth(process.cwd(), [{ name: 'curl -H "Authorization: Bearer opaqueTOKEN123456"', command: `${NODE} -e "process.exit(1)"`, timeoutSec: 30 }])
+  const r = d.checkHealth(process.cwd(), [{ name: J('curl -H "Authorization: ', 'Bearer opaqueTOKEN123456"'), command: `${NODE} -e "process.exit(1)"`, timeoutSec: 30 }])
   assert.ok(!JSON.stringify(r).includes('opaqueTOKEN123456'), JSON.stringify(r))
 })
 
@@ -473,10 +478,10 @@ test('round-2 secret shapes are redacted', () => {
     'SG.abcdefghijklmnop1234.abcdefghijklmnopqrstuvwxyz12': 'abcdefghijklmnop1234',
     'hf_abcdefghijklmnopqrstuvwxyz123456': 'hf_abcdef',
     'https://x.blob.core.windows.net/y?sv=1&sig=SECRETSIG123&se=2': 'SECRETSIG123',
-    'curl -u admin:s3cret http://x': 's3cret',
+    [J('curl -u ', 'admin:s3cret http://x')]: 's3cret',
     'mysql -pHUNTER2 -u root': 'HUNTER2',
     'Bearer: tok123456789': 'tok123456789',
-    'secret_key_base abcdef123456': 'abcdef123456',
+    [J('secret_', 'key_base ', 'abcdef', '123456')]: J('abcdef', '123456'),
     'Authorization: Token abc123def': 'abc123def',
   }
   for (const [input, secret] of Object.entries(cases)) {
