@@ -14,7 +14,8 @@
 # ----------------------
 # One entry per line. Matching is case-insensitive and by SUBSTRING, so
 # `example-employer` also catches `example-employer-api` and
-# `ExampleEmployerPortal`. A candidate containing any entry is DROPPED, not
+# `Example-Employer-Portal`. It does NOT catch `ExampleEmployerPortal`: the
+# hyphen is part of the entry. Add each spelling you need as its own line. A candidate containing any entry is DROPPED, not
 # quarantined: these are strings you have declared private, and there is no
 # benign reason for one to appear in a cross-project heuristic.
 #
@@ -25,9 +26,11 @@
 #
 # What NOT to put here
 # --------------------
-# Absolute home paths, email addresses, private IPs, internal hostnames, ticket
-# identifiers and high-entropy strings are already covered by the compiled regex
-# classes in `sdlc-suite/tools/redact.py`. Those are not configurable on
+# Absolute home paths (including /root), email addresses, private IPs, internal
+# hostnames, ticket identifiers, high-entropy strings and credential shapes (AWS
+# key ids and secret keys, Slack and Stripe tokens, hex keys, `PASSWORD=`-style
+# assignments, PEM private-key headers) are already covered by the compiled
+# regex classes in `sdlc-suite/tools/redact.py`. Those are not configurable on
 # purpose, so that no edit to a file can weaken them. This list is only for
 # literal names a regex cannot know about.
 #

@@ -136,6 +136,16 @@ made have to agree.
   Several consecutive defects passed green suites for exactly this reason. When
   a callback gains a consumer, the harness has to model the consumer too.
 
+
+## 7. Pick the cook by the stage
+
+Each agent pins a model tier and an effort level in its frontmatter, chosen by
+the lifecycle stage it serves and the cost of a mistake there. Plan expensive,
+execute cheap; the cook that writes never tastes. The map and the rules for
+changing a pin are in [`MODEL-ROUTING.md`](MODEL-ROUTING.md). A caller that
+overrides a pin downward for planning, security, auth or payments work is
+skipping a gate (§4).
+
 ---
 
 *The specific incidents these rules were learned from — exact defect counts,

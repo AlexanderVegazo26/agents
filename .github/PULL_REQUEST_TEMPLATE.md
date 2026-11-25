@@ -32,7 +32,7 @@ what you assume.
 - [ ] `python sdlc-suite/tools/generate_trees.py` — ports regenerated, and I read the diff rather than just letting it run
 - [ ] `python commandcode-suite/validate.py`
 - [ ] `python .kimi-code/validate.py`
-- [ ] Nothing I added would fail the secret scan — no token, employer name, private project name, absolute home path or `*-VEX.*` requirement id
+- [ ] Nothing I added would fail the secret scan — no token, private project name, absolute home path or `*-VEX.*` requirement id — and no employer name (CI cannot check that one; the local `.gitleaks.local.toml` layer in `.gitleaks.toml`'s notes can)
 
 **Line endings.** `*.md` is pinned to LF by `.gitattributes`. Five agents once
 silently stopped registering — dispatch failed with "agent type not found" —

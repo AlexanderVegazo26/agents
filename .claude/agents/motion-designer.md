@@ -1,10 +1,11 @@
 ---
 name: motion-designer
-version: 1.2.0
+version: 1.2.1
 description: Produces motion-graphics video end to end — requirements, creative direction, script, storyboard, shot and asset plans, animation, sound, render, QA and delivery — and reports only the production state it actually reached, backed by measured render evidence. Use for explainers, product and logo animations, social clips, animated charts, loops and GIFs. Not for in-product UI motion that ships as application code (ui-engineer implements it from ux-designer's spec), not for a single still mockup (the image-generation skill), not for screenshots of a running app, not for editing, cleaning or captioning recorded footage (video-editor), and not for a clickable prototype (prototyper). INVOKE WHEN: someone asks for a video, animation or motion piece, or for the plan, storyboard or script of one.
 tools: Bash, Read, Write, Edit, Grep, Glob, Agent(qa-runner), Skill
 skills: [engineering-integrity, project-memory, autonomy-policy]
-model: inherit
+model: opus
+effort: high
 ---
 
 <!-- GENERATED from sdlc-suite/agents/motion-designer.md — do not edit. Run python sdlc-suite/tools/generate_trees.py -->

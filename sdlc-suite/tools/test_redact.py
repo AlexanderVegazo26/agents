@@ -184,6 +184,71 @@ class Tier2Classes(unittest.TestCase):
         self.assertEqual(names, [])
 
 
+class CredentialShapes(unittest.TestCase):
+    """Credential classes added 2026-11-13. Each fixture PUBLISHED against the
+    previous class set: too short, split by `/`, or all lowercase for
+    `high_entropy`. Fixtures are assembled from pieces so this file does not
+    itself carry a secret-shaped literal for gitleaks to find."""
+
+    def assertQuarantinedAs(self, text, cls):
+        outcome, names = one_class(text)
+        self.assertEqual(outcome, "quarantined", "published: " + cls)
+        self.assertIn(cls, names)
+
+    def test_aws_access_key_id(self):
+        self.assertQuarantinedAs("key " + "AS" + "IA" + "Z3XQ7PLM2RT4VN8W in env", "aws_access_key_id")
+
+    def test_aws_secret_key_with_slashes(self):
+        self.assertQuarantinedAs("then " + "Hq8/vT2kLm9Zp" + "Xr4+Wn7Yb3Cd5Fg6Jh1Ks0QaAb3" + " leaked", "aws_secret_key")
+
+    def test_slack_bot_token(self):
+        self.assertQuarantinedAs("posted with " + "xo" + "xp-" + "2222222222-3333333333-abcdefabcdef", "slack_token")
+
+    def test_slack_webhook(self):
+        self.assertQuarantinedAs("hooks.slack.com/services/" + "T000/B000/abcdefghijklmnop", "slack_token")
+
+    def test_stripe_key(self):
+        self.assertQuarantinedAs("charged with " + "rk" + "_test_" + "abcdefghijklmnopqrstu", "stripe_key")
+
+    def test_lowercase_hex_key(self):
+        self.assertQuarantinedAs("hmac " + "0123456789abcdef" + "0123456789abcdef" + " used", "hex_key")
+
+    def test_password_env_line(self):
+        self.assertQuarantinedAs("PASS" + "WORD=" + "hunter2hunter2", "credential_assignment")
+
+    def test_api_key_env_line_lowercase(self):
+        self.assertQuarantinedAs("api" + "_key = " + "shortbutreal", "credential_assignment")
+
+    def test_yaml_password(self):
+        self.assertQuarantinedAs("pass" + "word: " + "'opensesame'", "credential_assignment")
+
+    def test_pem_header(self):
+        self.assertQuarantinedAs("-----BEGIN " + "OPENSSH PRIVATE KEY-----", "private_key_block")
+
+    def test_pgp_private_block(self):
+        self.assertQuarantinedAs("-----BEGIN " + "PGP PRIVATE KEY BLOCK-----", "private_key_block")
+
+    def test_root_home_path(self):
+        self.assertQuarantinedAs("read /root/.aws/credentials", "abs_home_path")
+
+    def test_bare_root_home(self):
+        self.assertQuarantinedAs("cd /root and retry", "abs_home_path")
+
+    def test_root_lookalikes_publish(self):
+        outcome, names = one_class("see src/root/index.js and /rootfs, the project root")
+        self.assertEqual(outcome, "published", str(names))
+
+    def test_prose_about_credentials_publishes(self):
+        outcome, names = one_class(
+            "The token budget ran out before review; a password policy was out of scope."
+        )
+        self.assertEqual(outcome, "published", str(names))
+
+    def test_a_long_lowercase_word_is_not_hex(self):
+        outcome, names = one_class("deadbeefdeadbeefdeadbeefdeadbeef has no digit")
+        self.assertNotIn("hex_key", names)
+
+
 class DenylistLoading(unittest.TestCase):
     def test_missing_file_yields_empty_list_and_warns_loudly(self):
         # Silence would be the dangerous outcome: tier 1 inert with no signal is

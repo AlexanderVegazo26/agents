@@ -71,14 +71,15 @@
 #    with `redact.py`, so a defect in the redactor does not disable both. It is
 #    worth having whichever way the exception resolves.
 #
-# Two more preconditions, each of which fails AFTER the branch is pushed and so
-# leaves an orphaned branch behind — the "red for a reason unrelated to the
-# commit" case that trains people to ignore a job:
+# One more precondition, which fails AFTER the branch is pushed and so leaves
+# an orphaned branch behind — the "red for a reason unrelated to the commit"
+# case that trains people to ignore a job:
 #
 #   * The repository setting "Allow GitHub Actions to create and approve pull
 #     requests" must be on, or `gh pr create` returns an unhelpful 403.
-#   * The `learnings` label must exist in the repository. `gh pr create
-#     --label` on a missing label is an error, not a warning.
+#
+# The `learnings` label `gh pr create --label` needs used to be a second one;
+# the job now creates it if it is missing, before it pushes.
 
 name: distil
 
@@ -111,15 +112,15 @@ jobs:
       # Third-party actions are pinned to a full commit SHA, not a tag: a tag is
       # mutable and a moved tag is a silent supply-chain change. These are the
       # same SHAs `ci.yml` already uses; the tag each corresponded to on
-      # 2026-09-02 is in the trailing comment. Re-resolve before bumping, do not
+      # 2026-10-30 is in the trailing comment. Re-resolve before bumping, do not
       # trust the comment.
       - name: Check out the working tree
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.15'
 
       # The fixture suite runs BEFORE the distiller, on every invocation, and a
       # failure stops the job. This is not belt-and-braces: the redactor is the
@@ -220,8 +221,8 @@ jobs:
           # Pinned version plus the published SHA-256 of that exact asset,
           # copied from `ci.yml`. A release asset can be replaced; the checksum
           # is what makes this safe, not the version pin.
-          GITLEAKS_VERSION: '8.28.0'
-          GITLEAKS_SHA256: 'a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb'
+          GITLEAKS_VERSION: '8.30.1'
+          GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
         run: |
           set -euo pipefail
           url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -255,6 +256,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
+          # The label `gh pr create --label` needs. Created here, before the
+          # push, rather than assumed: on a missing label `gh pr create` is an
+          # error, and failing after the push orphans the branch. `|| true`
+          # because "already exists" is the normal case.
+          gh label create learnings \
+            --description 'Proposed by the learning loop; merging is the ratification' \
+            --color 0E8A16 >/dev/null 2>&1 || true
 
           branch="learnings/$(date -u +%Y%m%d-%H%M%S)"
           git switch -c "$branch"

@@ -60,6 +60,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 from html.parser import HTMLParser
 
@@ -194,7 +195,12 @@ def count_diff(d: dict) -> str:
 
 def fetch(url: str, headers: dict | None, timeout: int, max_bytes: int) -> tuple[bytes, str]:
     req = urllib.request.Request(url, headers=headers or {"User-Agent": "hermes-proactive/0.1"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (watch URLs are user-configured)
+    try:
+        r = urllib.request.urlopen(req, timeout=timeout)  # noqa: S310 (watch URLs are user-configured)
+    except urllib.error.HTTPError as ex:
+        ex.close()  # it holds the response socket; the caller only needs the status line
+        raise
+    with r:
         ctype = r.headers.get("content-type", "")
         return r.read(max_bytes + 1)[:max_bytes], ctype
 
@@ -436,6 +442,12 @@ def main() -> int:
     ra = sub.add_parser("run-all")
     ra.add_argument("--notify", action="store_true")
     ra.add_argument("--mode", choices=("state", "transitions"), default="transitions")
+
+    # --dry-run also works after the subcommand (`run-all --notify --dry-run`); SUPPRESS keeps
+    # a --dry-run given before the subcommand from being reset to False.
+    for p in sub.choices.values():
+        p.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,
+                       help="print instead of sending Telegram")
 
     args = ap.parse_args()
     os.makedirs(WATCH_DIR, exist_ok=True)

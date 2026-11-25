@@ -2,13 +2,19 @@
 """Common utilities for Kimi Code workflow scripts.
 
 NO WORKTREE ISOLATION HERE. The commandcode-suite port isolates each build
-agent in its own detached git worktree (`withWorktree` in
+agent in its own git worktree on its own branch, then verifies the merged
+branches in a further worktree (`withWorktree` / `mergeBranches` in
 ../../commandcode-suite/workflows/_runner.js); this port has no equivalent,
 and none of the workflows here asks for one. So the three build agents that
 `sdlc-feature.py` launches concurrently through `parallel()` all write to the
 caller's single working tree at the same time. A whole-tree git operation by
 one builder acts on another's in-flight edits, and a shared check can go red
 for reasons belonging to a different agent.
+
+What this port does NOT share is the defect the commandcode port had until
+2026-11-13 (a build worktree deleted with its work, then an unchanged tree
+verified): builders and verifiers here all use the caller's tree, so the
+verifiers see whatever the builders wrote.
 
 This is a known, accepted gap rather than an oversight — recorded here so it
 is not rediscovered as a surprise. Closing it means adding the helper AND

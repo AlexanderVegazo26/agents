@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -67,6 +68,7 @@ class MonitorTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -151,6 +153,14 @@ class MonitorTest(unittest.TestCase):
         line = cm.run_watch(w)                                 # 3rd hit succeeds -> recovery
         self.assertIn("recovered", line)
 
+    def test_http_error_releases_its_socket(self):
+        # a watch polling a failing URL every tick must not leak one socket per tick
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            cm.fetch(self.base + "/missing", None, 5, 1000)
+        self.assertEqual(caught.exception.code, 404, f"fetch {self.base}/missing")
+        self.assertTrue(caught.exception.fp is None or caught.exception.fp.closed,
+                        f"HTTPError for /missing still holds an open response: {caught.exception.fp!r}")
+
     def test_state_mode_emits_stable_lines(self):
         w = self.watch("s", "/text", "text_contains", "outage")
         l1 = cm.run_watch(w, mode="state")
@@ -163,6 +173,28 @@ class MonitorTest(unittest.TestCase):
             json.dump(w, f)
         names = [x["name"] for x in cm.list_watches()]
         self.assertIn("x", names)
+
+    def test_dry_run_reaches_run_watch_before_or_after_the_subcommand(self):
+        import contextlib
+        import io
+        with open(os.path.join(cm.WATCH_DIR, "x.json"), "w") as f:
+            json.dump(self.watch("x", "/text", "changed"), f)
+        calls = []
+        old_run = cm.run_watch
+        cm.run_watch = lambda w, **kw: calls.append((w["name"], kw)) and None
+        self.addCleanup(setattr, cm, "run_watch", old_run)
+        cases = (["--dry-run", "run-all", "--notify"], ["run-all", "--notify", "--dry-run"],
+                 ["check", "x", "--notify", "--dry-run"], ["run-all", "--notify"])
+        for argv in cases:
+            old_argv, sys.argv = sys.argv, ["condition_monitor.py", *argv]
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    rc = cm.main()
+            finally:
+                sys.argv = old_argv
+            self.assertEqual(rc, 0, f"{argv} exit code")
+        self.assertEqual([kw["dry_run"] for _, kw in calls], [True, True, True, False],
+                         f"dry_run passed to run_watch() for {cases}; calls={calls}")
 
 
 if __name__ == "__main__":

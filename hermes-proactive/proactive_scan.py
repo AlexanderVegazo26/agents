@@ -32,7 +32,7 @@ on every scan — that recurring nudge loop is the point.
 
 CLI:
   run [--notify] [--source S]...    scan + print/emit new findings
-  list                              pending (un-acked) findings
+  list                              known finding ids (acked ones marked)
   ack <finding-id>                  silence permanently
   add-feed <url> [--name N]         register an RSS source
   test <source>                     dump raw findings, no state changes
@@ -158,24 +158,43 @@ def hashlib_md5(s: str) -> str:
     return hashlib.md5(s.encode()).hexdigest()[:10]  # noqa: S324 - dedup id, not crypto
 
 
+_ATOM = "{http://www.w3.org/2005/Atom}"
+_RSS1 = "{http://purl.org/rss/1.0/}"
+
+
+def _feed_entries(root: ET.Element) -> list[tuple[str, str]]:
+    """(title, link) per entry of an RSS 2.0, RSS 1.0 (RDF) or Atom feed."""
+    out = []
+    for ns in ("", _RSS1):
+        for item in root.iter(ns + "item"):
+            out.append(((item.findtext(ns + "title") or "").strip(),
+                        (item.findtext(ns + "link") or "").strip()))
+    for entry in root.iter(_ATOM + "entry"):
+        links = entry.findall(_ATOM + "link")
+        alt = [x for x in links if x.get("rel", "alternate") == "alternate"]
+        out.append(((entry.findtext(_ATOM + "title") or "").strip(),
+                    ((alt or [ET.Element("link")])[0].get("href") or "").strip()))
+    return out
+
+
 def src_rss(state: dict) -> list[dict]:
     out = []
     feeds = []
     if os.path.exists(FEEDS):
-        feeds = json.load(open(FEEDS))
+        with open(FEEDS) as f:
+            feeds = json.load(f)
     seen = state.setdefault("rss_seen", {})
     now = time.time()
     for feed in feeds:
         try:
             req = urllib.request.Request(feed["url"], headers={"User-Agent": "hermes-proactive/0.1"})
-            root = ET.fromstring(urllib.request.urlopen(req, timeout=20).read(500_000))  # noqa: S310
+            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
+                root = ET.fromstring(resp.read(500_000))
         except Exception:  # noqa: BLE001 - a dead feed shouldn't kill the scan
             out.append({"id": f"rss-dead-{hashlib_md5(feed['url'])}", "severity": "warn",
                         "source": "rss", "suggestion": f"RSS feed unreachable: {feed.get('name') or feed['url']}"})
             continue
-        for item in root.iter("item"):
-            link = (item.findtext("link") or "").strip()
-            title = (item.findtext("title") or "").strip()
+        for title, link in _feed_entries(root):
             if not link or link in seen:
                 continue
             seen[link] = now
@@ -197,7 +216,10 @@ def src_disk() -> list[dict]:
             continue
         pct = (st.f_blocks - st.f_bfree) / max(st.f_blocks, 1) * 100
         if pct >= DISK_THRESHOLD_PCT:
-            out.append({"id": f"disk-{path.strip('/') or 'root'}-{(int(pct))}", "severity": "warn" if pct < 95 else "action",
+            # id = path + severity band, not the percent: 91% -> 92% is the same
+            # finding (TTL/ack apply); crossing into "action" alerts again
+            severity = "warn" if pct < 95 else "action"
+            out.append({"id": f"disk-{path.strip('/') or 'root'}-{severity}", "severity": severity,
                         "source": "disk",
                         "suggestion": f"{path}: {pct:.0f}% full — clean up before something breaks"})
     return out
@@ -314,9 +336,17 @@ def decide_idea(st: dict, prefix: str, choice: str) -> str:
 def load_state() -> dict:
     try:
         with open(STATE) as f:
-            return json.load(f)
+            st = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return {"delivered": {}, "acked": []}
+        st = {}
+    if not isinstance(st, dict):
+        st = {}
+    # older or hand-edited state files may lack a key; ack/list/run index both
+    if not isinstance(st.get("delivered"), dict):
+        st["delivered"] = {}
+    if not isinstance(st.get("acked"), list):
+        st["acked"] = []
+    return st
 
 
 def save_state(st: dict) -> None:
@@ -369,12 +399,25 @@ def main() -> int:
     idd.add_argument("idea_id")
     idd.add_argument("choice", choices=("start", "hide"))
 
+    # --dry-run also works after the subcommand (`run --notify --dry-run`); SUPPRESS keeps
+    # a --dry-run given before the subcommand from being reset to False.
+    for p in sub.choices.values():
+        p.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,
+                       help="print the notification instead of sending it")
+
     args = ap.parse_args()
     st = load_state()
 
     if args.cmd == "add-feed":
-        feeds = json.load(open(FEEDS)) if os.path.exists(FEEDS) else []
+        feeds = []
+        if os.path.exists(FEEDS):
+            with open(FEEDS) as f:
+                feeds = json.load(f)
+        if any(fd.get("url") == args.url for fd in feeds):
+            print(f"feed already registered ({len(feeds)} total)")
+            return 0
         feeds.append({"url": args.url, "name": args.name or args.url})
+        os.makedirs(os.path.dirname(FEEDS), exist_ok=True)
         with open(FEEDS, "w") as f:
             json.dump(feeds, f, indent=1)
         print(f"feed added ({len(feeds)} total)")
@@ -416,7 +459,8 @@ def main() -> int:
                 print(f"  [{mark}] {i}")
             return 0
 
-        names = args.source or sorted(SOURCES)
+        # `test` takes one positional source; `run --source` is an append list
+        names = [args.source] if args.cmd == "test" else (args.source or sorted(SOURCES))
         findings = []
         for n in names:
             try:

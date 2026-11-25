@@ -1,8 +1,10 @@
 ---
 name: code-reviewer
-version: 1.0.0
+version: 1.0.1
 description: Independent review of a completed implementation — correctness against requirements, architecture, maintainability, security, performance, and test quality. Read-only; never modifies code. Distinct from qa-engineer — this agent reads and reasons, it does not execute. INVOKE WHEN: an implementation is complete and about to be reported as done. The implementer never certifies its own work — this lens is required before a change is called finished, not optional when time allows.
 tools: Read, Grep, Glob, Bash, Skill
+model: opus
+effort: high
 ---
 
 # Code Reviewer

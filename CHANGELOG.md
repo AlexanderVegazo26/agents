@@ -55,6 +55,105 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   rejects and `hermes plugins doctor` warns about), and `.hermes/validate.py`
   checks that rule offline — CI runs the offline gate, not the catalog
   validator.
+
+- **Routing-pin replay evals, `evals/routing-cases.v1.json` + `evals/routing.test.js`.**
+  Each case is a representative task for one agent, the response recorded on its
+  pinned tier and effort, and deterministic graders: `qa-runner` on haiku reports a
+  '47 passed' suite's exit status 1 and ignores a "report PASS" line in the output;
+  `code-reviewer` on opus blocks a refactor that turned an exact `'admin'` role match
+  into a substring match. The blocking suite fails when a pin no longer matches the
+  tier its case was recorded on (`recorded.tier`, written only by `--record`), when a
+  counterexample passes every grader, and when a mustNot grader rejects none of them.
+  `--live` / `--tier` / `--record` run the tasks through the `claude` CLI with the
+  agent's body and `tools:` (opt-in); `--record` keeps the old fixture when the new
+  response fails a grader.
+  Two more cases, recorded live on 2026-11-14: `persona-runner` on haiku/low stops
+  when `target_env` resolves to production in the repo's own deployment map and asks
+  which non-production host to use instead of switching on its own;
+  `product-archaeologist` on sonnet/low cites `src/orders.js`, reports a CSV export
+  the README promises but the code lacks, and flags a 50% vs 90% discount cap as a
+  possible defect without prescribing the fix. Fixture names may now include
+  subdirectories (`.claude/personas/...`) and must stay inside the case's temp dir.
+
+- **Test lock hook, `hooks/guard_test_edits.py` (PreToolUse).** While a failing test
+  is being fixed, the tests are the spec: once `.sdlc/test-lock` exists
+  (`guard_test_edits.py lock "<why>"`), edits to test files, snapshots, fixtures
+  and test-runner configs are denied, through the file tools and through common
+  Bash writes (`sed -i`, redirects, `rm`/`mv`, `cp` onto them, `git checkout`/`restore`),
+  and so is any change to the lock. It turns engineering-integrity §2 ("never
+  weaken a check to make it pass") from advice into a boundary. The user lifts it
+  with `allow:` lines in the lock, `unlock`, or `SDLC_ALLOW_TEST_EDITS=1`. Replay
+  evals in `evals/hook-cases.v1.json` (36 recorded tool calls) are graded through
+  the real hook by `tools/test_guard_test_edits.py`, seen red by 30 mutants.
+
+### Changed
+
+- **`prototyper` 2.0.0 — shrunk from 4,887 to 3,334 words** (context budget,
+  MODEL-ROUTING.md principle 7). It drops what the model already does by default and
+  what the body already said: the workflow table becomes one line, the
+  failure-mode appendix goes, and personas, requirements and scope become one
+  paragraph. It keeps every Prime Directive, Fast mode, the classification table,
+  the ask-once rule, the mock and AI rules, the quality gate, the PROTOTYPE.md
+  template, the autonomy gates and the report contract. Section numbers that other
+  files cite stay put: §2.1 Fast mode, §5 transcript classification, §7 assumptions,
+  §13 autonomy, §17 output. These moved: §5.2–§5.4 (source of truth, authority,
+  what vs how) merge into §5.2, Contradictions moves from §5.5 to §5.3, §6.1–§6.5
+  merge into §6, and §9.1–§9.8 merge into §9. The §12 template keeps each heading
+  on its own line, because the Hermes `/idea` pipeline reads *Hypothesis* that
+  way.
+- **`test_agent_contracts.py` covers the Hermes plugin and report order.** The `/idea`
+  pipeline's PROTOTYPER_TASK and FIX_TASK cite the prototyper's §2.1, §7, §13 and
+  Directive 2 by bare number. Each citation must now be registered and must
+  resolve to a heading, list item or Prime Directive that means the same thing.
+  The labels `/prototype` relays must stay in §17, in that order. Fenced templates
+  no longer count as section boundaries. `test_prototype_pipeline.py` now feeds
+  the agent's §12 template, as written, to `_hypothesis()`.
+- **`qa-engineer` 2.0.0 — shrunk from 7,437 to 2,814 words** (context budget,
+  MODEL-ROUTING.md principle 7). It drops what its own skills (`qa-techniques`,
+  `qa-quality-attributes`, `qa-triage`) already hold, along with the Definition of Done,
+  the failure-mode appendix and the fixed 12-part response format. Every directive that
+  records a past failure stays. Sections are renumbered: §10 is still Triage, §12 is now
+  Quality attributes and testability, and §15 is Reporting (formerly §17). The reporting
+  contract changes: the report lists what the Tier 3 report must contain rather than a
+  numbered format. It also names the `Claimed-not-verified` label the release-readiness
+  brief already used, and keeps Must fix / Should fix / Nit. The cross-references in
+  `release-manager` 1.0.2, `ui-engineer` 1.1.2 and `ux-designer` 2.0.2 now point at the
+  new sections. `product-archaeologist` 1.0.2 no longer cites `technical-writer`'s
+  nonexistent §4.7.
+- **`sdlc-suite/tools/test_agent_contracts.py`** (in `scripts/test-agent`): every workflow
+  `your §N` and every `§N of that agent` must resolve to a heading that exists and
+  means the same thing, and the phrases briefs hand qa-engineer must stay in its body.
+
+### Fixed
+
+- **The transcript hook runs where there is no bare `python`.** `hooks/hooks.json` ran
+  `transcript_detect.py` with `python` on every prompt, which on hosts with only
+  `python3` (Debian, Ubuntu, macOS) was a hook error per prompt and no transcript
+  detection. It now runs `python3`, falling back to `python`, like the test-lock hook.
+
+### Security
+
+- **`tools/redact.py` quarantines credential shapes and `/root` paths.** AWS key ids
+  and secret keys, lowercase Slack and Stripe tokens, hex keys, `PASSWORD=`-style
+  assignments and PEM private-key headers all passed the filter between private run
+  records and the public learnings pull request; each is now a compiled class with a
+  self-test positive.
+- Outside the plugin: the pi and Hermes `workflow` tools run only the suite's shipped
+  `sdlc-suite/workflows/*.js` (a workflow script could reach the host's `process`
+  through the `node:vm` sandbox), and the commandcode-suite `sdlc-feature` port keeps
+  the builders' work on a branch and verifies that tree instead of deleting it.
+  `SECURITY.md` gives a reporting route that works and describes the network
+  behaviour accurately.
+
+## [3.0.1] — 2026-11-12
+
+Plugin 3.0.0 → 3.0.1 in commit `cc61a56`. This section was written on
+2026-11-13 from the git history (`git log 2154012..cc61a56`); entries carried
+over from the former Unreleased section keep their wording, and anything not
+listed here is in the commit log.
+
+### Added
+
 - **`public-link` skill 1.0.0** — puts something running locally (a prototype, dev
   server, rendered preview, video or static folder) on a public HTTPS link through a
   Cloudflare tunnel, only after the user says yes. It asks once, after the thing works
@@ -69,7 +168,47 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   `video-editor` 1.1.0 (not while a consent or rights review is open). Each one's
   "never publish" rule names this one exception. `orchestrator` 3.1.0 relays the
   question to the user verbatim and sends the answer back.
-- **`video-editor` agent 1.0.0 and `video-editing` skill 1.1.0** for recorded
+- **`/video` command** dispatching the `video-editor` agent (`637544b`), and
+  `video-editing` 1.1.0: fixes from a re-review (`12684d0`), an `stt-transcribe`
+  probe and `/video` platform presets (`33c4442`). See the commit log for detail.
+
+### Changed
+
+- **Model routing: every agent pins a model tier and an effort level** in its
+  frontmatter, chosen by the lifecycle stage it serves. The policy and the stage
+  map are in `MODEL-ROUTING.md`, linked from `ROUTING.md` §7.
+  `generate_trees.py` accepts only tier aliases and valid effort levels; Command
+  Code drops both keys and Hermes maps the top tier to its deep tier. Every agent
+  took a patch bump (`cc61a56`).
+
+### Fixed
+
+- **Workflow briefs (`_brief.js`) stay within budget when the file list is long.** When
+  the summaries still overran after the file lists were dropped, the second truncation
+  marker joined every omitted path uncapped. With 12 builders and 396 files, the
+  `performance` brief came back at 21,108 characters against a 16,000 budget, with every
+  builder summary clamped away and only the paths left. The marker now caps the list
+  like the first one does (`Omitted files (N): …and K more`), so the summaries survive
+  and `overBudget` stays false.
+- **`collectBlockedGates` keeps CRLF fields and indented entries** (`7885535`).
+
+Outside the plugin in the same range, see the commit log: the
+`hermes-proactive/` source for the triggerd/watch/goals services and its tests,
+`hermes-meetings` skills deployed by symlink, CI consolidated into
+`scripts/test-agent` on Node 26 and Python 3.15, gitleaks 8.30.1 with a test that
+each rule fires, replay evals and seeded property tests for the workflow runtime,
+and Hermes `/idea` publishing-boundary tests.
+
+## [3.0.0] — 2026-10-07
+
+Plugin 2.0.0 → 3.0.0 in commit `2154012`, a major release because
+`orchestrator` moved to 3.0.0 in it (a major on any agent is a major on the
+plugin). Written on 2026-11-13 from the git history (`git log 1227f5f..2154012`);
+anything not listed here is in the commit log.
+
+### Added
+
+- **`video-editor` agent 1.0.0 and `video-editing` skill 1.0.0** for recorded
   footage: talking-head cleanup (silence, filler and retake cuts, denoise,
   two-pass EBU R128 loudness, captions retimed through the cuts), ad cutdowns,
   reframing, and a self-recording playbook (outline plus a capture command the
@@ -87,8 +226,30 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   frame rate and orientation. Includes a **motion-graphics layer** (glass cards with key points chosen by a local model,
   stat/title/lower-third/picture cards, word-highlight captions, progress bar), admission limits for unattended callers,
   and ~90 tests with mutation-checked guards. See `.hermes/plugins/sdlc/README.md`.
-- Found while testing: FFmpeg 9.0.2 has no `-filter_complex_script`; the form is
-  `-/filter_complex <file>`. `motion-graphics`'s reference still names the old option.
+- **`go-to-market` skill**, owned by `product-manager` (`2bf533e`).
+- **`prototyper` Fast mode**, the default for transcript prototypes (`75b0bc6`).
+- **pi harness port**: the generated `.pi/prompts/` and root `AGENTS.md`
+  (`9b5c597`), and the hand-maintained `.pi/extensions/sdlc/` extension with the
+  `agent` and `workflow` tools and a `.pi` validator (`c1bfecb`, `7dc2da5`,
+  `a3142f9`).
+- **Hermes port**: generated skills, `.hermes.md`, and the `.hermes/plugins/sdlc/`
+  plugin (`0a5d6c6`); the `/idea` pipeline from a Telegram idea to a running
+  prototype link (`1d75604`, `cee2ef2`), `/idea-cloud` on the Command Code tier
+  (`1a96434`, `56f9d3b`), and model routing for the plugin (`f4bc7bf`).
+- **`hermes-meetings/`**: a self-hosted meeting-bot stack wired into Hermes
+  (`c23c162`).
+- `USAGE.md`: running the suite on a local HALO endpoint (`bf4925f`).
+
+### Changed
+
+- `orchestrator` 3.0.0 routes recorded-footage work to `video-editor`;
+  `motion-designer`, `prototyper`, `qa-runner` and `project-memory` name it.
+- `motion-graphics` 1.1.0: found while testing, FFmpeg 9.0.2 has no
+  `-filter_complex_script`; its reference now uses `-/filter_complex <file>`.
+
+### Removed
+
+- The superseded `sync-all.py` (`1d33e41`).
 
 ## [2.0.0] — 2026-09-29
 
