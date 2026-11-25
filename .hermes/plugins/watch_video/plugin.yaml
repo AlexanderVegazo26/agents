@@ -1,0 +1,6 @@
+name: watch_video
+version: "0.1.0"
+description: "Have Google's Gemini watch a video (frames and audio) and report cuts, on-screen text, pacing and hook: `watch_video` tool and the `watch-video` skill. Public YouTube links or files under the Hermes video folders. Needs GEMINI_API_KEY."
+author: "sdlc-suite"
+provides_tools:
+  - watch_video

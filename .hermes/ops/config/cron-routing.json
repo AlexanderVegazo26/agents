@@ -1,0 +1,378 @@
+[
+  {
+    "name": "ceo-daily-brief",
+    "schedule_display": "0 8 * * *",
+    "enabled": true,
+    "no_agent": true,
+    "script": "ceo_brief_claude.sh",
+    "skills": [],
+    "model": "deepseek/deepseek-v4-pro",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": null
+  },
+  {
+    "name": "competitor-radar",
+    "schedule_display": "0 8 * * 1",
+    "enabled": true,
+    "no_agent": false,
+    "script": "competitor_check.sh",
+    "skills": [
+      "competitor-news-monitor"
+    ],
+    "model": "deepseek/deepseek-v4-pro",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "moonshotai/kimi-k3"
+      },
+      {
+        "provider": "custom:cc-bridge",
+        "model": "qwen/qwen3.8-max"
+      },
+      {
+        "provider": "custom:llamastash",
+        "model": "Ornith-1.5-35B-Q8_0"
+      }
+    ]
+  },
+  {
+    "name": "engineering-radar",
+    "schedule_display": "0 9 * * 1",
+    "enabled": true,
+    "no_agent": true,
+    "script": "engineering_radar_claude.sh",
+    "skills": [
+      "github"
+    ],
+    "model": "deepseek/deepseek-v4-pro",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": null
+  },
+  {
+    "name": "sales-followup",
+    "schedule_display": "0 9 * * 1-5",
+    "enabled": true,
+    "no_agent": true,
+    "script": "sales_followup.py",
+    "skills": [],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": null
+  },
+  {
+    "name": "ai-radar",
+    "schedule_display": "0 7 * * 1-5",
+    "enabled": true,
+    "no_agent": false,
+    "script": "ai_news_fetch.py",
+    "skills": [],
+    "model": "deepseek/deepseek-v4-pro",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "moonshotai/kimi-k3"
+      },
+      {
+        "provider": "custom:cc-bridge",
+        "model": "qwen/qwen3.8-max"
+      },
+      {
+        "provider": "custom:llamastash",
+        "model": "Ornith-1.5-35B-Q8_0"
+      }
+    ]
+  },
+  {
+    "name": "video-script-weekly",
+    "schedule_display": "0 9 * * 3",
+    "enabled": true,
+    "no_agent": true,
+    "script": "video_script.py",
+    "skills": [],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": null
+  },
+  {
+    "name": "pr-reviewer",
+    "schedule_display": "0 * * * *",
+    "enabled": true,
+    "no_agent": false,
+    "script": "pr_context.sh",
+    "skills": [],
+    "model": "moonshotai/kimi-k2.7-code",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "deepseek/deepseek-v4-pro"
+      },
+      {
+        "provider": "custom:cc-bridge",
+        "model": "qwen/qwen3.8-max"
+      },
+      {
+        "provider": "custom:llamastash",
+        "model": "Ornith-1.5-35B-Q8_0"
+      }
+    ]
+  },
+  {
+    "name": "Important-mail monitor",
+    "schedule_display": "*/30 * * * *",
+    "enabled": false,
+    "no_agent": false,
+    "script": null,
+    "skills": [
+      "email-inbox-triage"
+    ],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "deepseek/deepseek-v4-pro"
+      }
+    ]
+  },
+  {
+    "name": "discord-monitor",
+    "schedule_display": "*/15 * * * *",
+    "enabled": false,
+    "no_agent": false,
+    "script": "discord_monitor.py",
+    "skills": [
+      "discord-monitor"
+    ],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "deepseek/deepseek-v4-pro"
+      }
+    ]
+  },
+  {
+    "name": "dependency-audit",
+    "schedule_display": "0 10 * * 1",
+    "enabled": false,
+    "no_agent": true,
+    "script": "dependency_audit.py",
+    "skills": [],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": null
+  },
+  {
+    "name": "standup-summary",
+    "schedule_display": "30 8 * * 1-5",
+    "enabled": true,
+    "no_agent": true,
+    "script": "standup_summary.py",
+    "skills": [],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": null
+  },
+  {
+    "name": "e2e-smoke-run",
+    "schedule_display": "0 7 * * *",
+    "enabled": false,
+    "no_agent": true,
+    "script": "e2e_smoke.py",
+    "skills": [],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": null
+  },
+  {
+    "name": "llamastash-daily",
+    "schedule_display": "45 7 * * *",
+    "enabled": true,
+    "no_agent": true,
+    "script": "llamastash_daily.py",
+    "skills": [],
+    "model": null,
+    "provider": null,
+    "fallback_providers": null
+  },
+  {
+    "name": "model-scout",
+    "schedule_display": "0 10 * * 0",
+    "enabled": true,
+    "no_agent": false,
+    "script": "model_scout.py",
+    "skills": [],
+    "model": "Ornith-1.5-35B-Q8_0",
+    "provider": "custom:llamastash",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "deepseek/deepseek-v4-pro"
+      }
+    ]
+  },
+  {
+    "name": "proactive-watchdog",
+    "schedule_display": "*/30 * * * *",
+    "enabled": true,
+    "no_agent": true,
+    "script": "watchdog_run.sh",
+    "skills": [],
+    "model": null,
+    "provider": null,
+    "fallback_providers": null
+  },
+  {
+    "name": "proactive-digest",
+    "schedule_display": "0 9 * * 1",
+    "enabled": true,
+    "no_agent": true,
+    "script": "proactive_digest_claude.sh",
+    "skills": [],
+    "model": null,
+    "provider": null,
+    "fallback_providers": null
+  },
+  {
+    "name": "goals-checkin",
+    "schedule_display": "0 9 * * 1",
+    "enabled": true,
+    "no_agent": true,
+    "script": "goals_checkin_claude.sh",
+    "skills": [],
+    "model": null,
+    "provider": null,
+    "fallback_providers": null
+  },
+  {
+    "name": "do-leads-scout",
+    "schedule_display": "0 9 * * 1-5",
+    "enabled": true,
+    "no_agent": false,
+    "script": "do_leads_scout.py",
+    "skills": [],
+    "model": "deepseek/deepseek-v4-pro",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "moonshotai/kimi-k3"
+      },
+      {
+        "provider": "custom:cc-bridge",
+        "model": "qwen/qwen3.8-max"
+      },
+      {
+        "provider": "custom:llamastash",
+        "model": "Ornith-1.5-35B-Q8_0"
+      }
+    ]
+  },
+  {
+    "name": "do-enterprise-scout",
+    "schedule_display": "30 8 * * 1-5",
+    "enabled": true,
+    "no_agent": false,
+    "script": "do_enterprise_scout.py",
+    "skills": [],
+    "model": "deepseek/deepseek-v4-pro",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "moonshotai/kimi-k3"
+      },
+      {
+        "provider": "custom:cc-bridge",
+        "model": "qwen/qwen3.8-max"
+      },
+      {
+        "provider": "custom:llamastash",
+        "model": "Ornith-1.5-35B-Q8_0"
+      }
+    ]
+  },
+  {
+    "name": "job-scout",
+    "schedule_display": "45 7 * * 1-5",
+    "enabled": false,
+    "no_agent": false,
+    "script": "job_search_scout.py",
+    "skills": [
+      "job-search"
+    ],
+    "model": "moonshotai/kimi-k3",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "deepseek/deepseek-v4-pro"
+      },
+      {
+        "provider": "custom:llamastash",
+        "model": "Ornith-1.5-35B-Q8_0"
+      }
+    ]
+  },
+  {
+    "name": "apollo-weekly",
+    "schedule_display": "30 10 * * 1",
+    "enabled": true,
+    "no_agent": false,
+    "script": "apollo_weekly.py",
+    "skills": [],
+    "model": "deepseek/deepseek-v4-pro",
+    "provider": "custom:cc-bridge",
+    "fallback_providers": [
+      {
+        "provider": "custom:cc-bridge",
+        "model": "moonshotai/kimi-k3"
+      },
+      {
+        "provider": "custom:cc-bridge",
+        "model": "qwen/qwen3.8-max"
+      },
+      {
+        "provider": "custom:llamastash",
+        "model": "Ornith-1.5-35B-Q8_0"
+      }
+    ]
+  },
+  {
+    "name": "competitor-scout-daily",
+    "schedule_display": "0 8 * * *",
+    "enabled": true,
+    "no_agent": true,
+    "script": "competitor_scout_daily.py",
+    "skills": [],
+    "model": null,
+    "provider": null,
+    "fallback_providers": null
+  },
+  {
+    "name": "content-winner",
+    "schedule_display": "0 10 * * *",
+    "enabled": true,
+    "no_agent": true,
+    "script": "content_winner.py",
+    "skills": [],
+    "model": null,
+    "provider": null,
+    "fallback_providers": null
+  },
+  {
+    "name": "reel-weekly",
+    "schedule_display": "0 11 * * 1",
+    "enabled": true,
+    "no_agent": true,
+    "script": "reel_weekly.py",
+    "skills": [],
+    "model": null,
+    "provider": null,
+    "fallback_providers": null
+  }
+]

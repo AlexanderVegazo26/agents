@@ -59,7 +59,9 @@ through the EDL, so cutting after captioning leaves stale timings, the main
 defect this method is designed against.
 
 1. **Brief.** Platform and length target, audience, the one message, whether
-   captions are burned in or a sidecar, language. Defaults: 16:9 H.264/AAC,
+   captions are burned in or a sidecar, language. Defaults: keep the
+   source's frame size, frame rate and orientation (never scale, crop or
+   reframe unless asked: a 9:16 source stays 9:16); H.264 CRF 18 / AAC 192k,
    -16 LUFS integrated, -1.5 dBTP, captions as sidecar SRT.
 2. **Probe** the source (`references/commands.md` §1). Record duration, streams,
    resolution, frame rate, audio channels, whether variable frame rate.
@@ -131,7 +133,9 @@ defect this method is designed against.
   tracked crop is only claimed if a face-position source exists.
 - **Titles and lower thirds** over footage come from `sdlc-suite:motion-designer`
   as a transparent or matte asset, or from simple `drawtext=textfile=...:expansion=none`.
-  Anything beyond that is motion work: hand it over, do not improvise it.
+  Anything beyond that is motion work: hand it over, do not improvise it. A full
+  social edit with animated captions and graphics over footage is
+  `sdlc-suite:social-video-edit`.
 - **Platform targets** are stated, not guessed: social short-form usually -14 LUFS
   and 9:16, YouTube about -14 LUFS, podcasts -16 LUFS, broadcast -23 LUFS (EBU R128).
   Take the number the caller or the platform's current spec gives you.

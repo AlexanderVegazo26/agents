@@ -16,6 +16,15 @@ Sources (all read-only, stdlib + gh CLI):
   rss     configured feeds -> items newer than last scan
   disk    filesystem usage above threshold
 
+IDEAS (OpenMuse refreshIdeas/decideIdea port, MIT, (c) 2026 OpenMuse contributors) — suggestions with
+evidence, no model call, sent one card each with Start / Hide buttons (plugin idea_buttons):
+  mail    from ~/.hermes/state/mail_triage_latest.json (mail_triage.py, 07:20): an attachment plus
+          form/permission/fill/sign words -> "I can help with <subject>" (document); meet/schedule/
+          available/coffee words -> "I can help coordinate <subject>"
+  goals   an active goal with no open milestone -> "Let's make a plan for <goal>"
+  An idea is retired, never sent, once handled: you replied in that thread, the goal got an open
+  milestone, or you started/hid it. Hidden ideas stay hidden.
+
 Every finding gets: id, severity (info|warn|action), one-line suggestion.
 Delivered findings live in ~/.hermes/state/proactive_scan.json with a 7-day
 re-alert TTL; `ack <id>` silences one permanently.  Un-acked findings re-surface
@@ -27,6 +36,8 @@ CLI:
   ack <finding-id>                  silence permanently
   add-feed <url> [--name N]         register an RSS source
   test <source>                     dump raw findings, no state changes
+  ideas [--notify]                  refresh ideas, retire handled ones, send new cards
+  idea-decide <idea-id> start|hide  record a button tap (start creates a kanban task)
 
 Cron wiring (see README): run on a schedule with --notify, or attach as a
 --script and let the LLM turn the findings into a daily "here's what needs
@@ -217,6 +228,109 @@ def src_disk() -> list[dict]:
 SOURCES = {"git": src_git, "github": src_github, "rss": src_rss, "disk": src_disk}
 
 
+# ---------------------------------------------------------------- ideas (OpenMuse port)
+
+MAIL_JSON = os.path.join(HOME, ".hermes", "state", "mail_triage_latest.json")
+GOALS_DIR = os.path.join(HOME, ".hermes", "goals")
+DOC_WORDS = re.compile(r"form|permission|complete|fill|sign|formulario|permiso|completar|llenar|firma", re.I)
+MEET_WORDS = re.compile(r"coffee|meet|available|schedule|reuni[oó]n|disponib|agendar|llamada|caf[eé]", re.I)
+
+
+def idea_candidates() -> list[dict]:
+    out = []
+    try:
+        mail = json.load(open(MAIL_JSON)).get("sorted", [])
+    except (OSError, ValueError):
+        mail = []
+    for m in mail:
+        text = f"{m.get('subject', '')} {m.get('body_head', '')}"
+        who = (m.get("from") or "").split("<")[0].strip() or m.get("from", "")
+        base = {"source": "mail", "ref": m.get("threadId") or m.get("id"), "handled": bool(m.get("replied")),
+                "evidence": f"{who} — {m.get('subject', '')[:90]} ({m.get('date', '')[:16]})"}
+        if m.get("attachments") and DOC_WORDS.search(text):
+            out.append({**base, "id": f"idea-doc-{base['ref']}", "kind": "document",
+                        "title": f"I can help with {m.get('subject', '')[:80]}",
+                        "reason": f"{who} sent a document that may need you. I can prepare it and a reply for your review."})
+        elif MEET_WORDS.search(text) and m.get("verdict") == "needs_you":
+            out.append({**base, "id": f"idea-meet-{base['ref']}", "kind": "coordinate",
+                        "title": f"I can help coordinate {m.get('subject', '')[:80]}",
+                        "reason": f"{who} wants to find a time. I can check the calendar and draft a reply."})
+    for fn in sorted(os.listdir(GOALS_DIR)) if os.path.isdir(GOALS_DIR) else []:
+        if not fn.endswith(".json"):
+            continue
+        try:
+            g = json.load(open(os.path.join(GOALS_DIR, fn)))
+        except (OSError, ValueError):
+            continue
+        if str(g.get("status", "active")).lower() not in ("active", ""):
+            continue
+        ms = g.get("milestones") or []
+        open_ms = [x for x in ms if not x.get("done")]
+        gid = fn[:-5]
+        if not open_ms:
+            title = (f"Let's make a plan for {g.get('title', gid)}" if not ms
+                     else f"Pick the next step for {g.get('title', gid)}")
+            out.append({"id": f"idea-plan-{gid}-{len(ms)}", "source": "goals", "ref": gid, "kind": "plan",
+                        "handled": False, "title": title[:110],
+                        "reason": ("It has no milestones yet." if not ms else "Every milestone is done, but the goal is still open.")
+                                  + " I can draft three dated milestones for you to approve.",
+                        "evidence": f"goal {gid}: {g.get('why', '')[:100]}"})
+    return out
+
+
+def refresh_ideas(st: dict) -> list[dict]:
+    """Update st['ideas']; return the ideas that are new and should be sent now."""
+    ideas = st.setdefault("ideas", {})
+    seen = set()
+    for c in idea_candidates():
+        seen.add(c["id"])
+        cur = ideas.get(c["id"])
+        if cur is None:
+            if c["handled"]:
+                continue  # already handled before we ever suggested it
+            ideas[c["id"]] = {**c, "status": "new", "ts": time.time()}
+        elif c["handled"] and cur["status"] in ("new", "sent"):
+            cur["status"] = "retired"
+    for iid, cur in ideas.items():  # goal ideas whose goal got a milestone: retire
+        if cur["source"] == "goals" and iid not in seen and cur["status"] in ("new", "sent"):
+            cur["status"] = "retired"
+    for iid, cur in sorted(ideas.items(), key=lambda kv: kv[1].get("ts", 0))[:-300]:
+        del ideas[iid]
+    fresh = sorted((i for i in ideas.values() if i["status"] == "new"), key=lambda i: i.get("ts", 0))
+    return fresh[:5]  # OpenDuet: at most five suggestions per check-in; the rest wait for the next one
+
+
+def send_idea(idea: dict, dry_run: bool) -> bool:
+    text = f"💡 {idea['title']}\n{idea['reason']}\n\nEvidence: {idea['evidence']}"
+    cid = idea["id"][:56]
+    cmd = [os.path.join(HOME, ".hermes", "scripts", "tg_send.py"), "message", text,
+           "--cb", f"Start|ix:s:{cid}|primary", "--cb", f"Hide|ix:h:{cid}"]
+    if dry_run:
+        print("DRY", " ".join(cmd[2:]))
+        return True
+    return subprocess.run(cmd, capture_output=True, timeout=60).returncode == 0
+
+
+def decide_idea(st: dict, prefix: str, choice: str) -> str:
+    ideas = st.get("ideas", {})
+    iid = next((k for k in ideas if k[:56] == prefix), None)
+    if not iid:
+        return "That suggestion is no longer known."
+    idea = ideas[iid]
+    if idea["status"] in ("started", "hidden"):
+        return f"Already {idea['status']}."
+    if choice == "hide":
+        idea["status"] = "hidden"
+        return "Hidden. It will not be suggested again."
+    body = f"{idea['reason']}\n\nEvidence: {idea['evidence']}\nSource: {idea['source']} {idea['ref']}"
+    r = subprocess.run(["hermes", "kanban", "create", idea["title"], "--body", body, "--created-by", "idea_buttons",
+                        "--idempotency-key", iid], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        return f"Could not create the task: {(r.stderr or r.stdout).strip()[:120]}"
+    idea["status"] = "started"
+    return "Started: added to the kanban board."
+
+
 # ---------------------------------------------------------------- dedup/ack
 
 def load_state() -> dict:
@@ -279,6 +393,11 @@ def main() -> int:
     af.add_argument("--name", default=None)
     t = sub.add_parser("test")
     t.add_argument("source", choices=sorted(SOURCES))
+    iv = sub.add_parser("ideas")
+    iv.add_argument("--notify", action="store_true")
+    idd = sub.add_parser("idea-decide")
+    idd.add_argument("idea_id")
+    idd.add_argument("choice", choices=("start", "hide"))
 
     # --dry-run also works after the subcommand (`run --notify --dry-run`); SUPPRESS keeps
     # a --dry-run given before the subcommand from being reset to False.
@@ -302,6 +421,26 @@ def main() -> int:
         with open(FEEDS, "w") as f:
             json.dump(feeds, f, indent=1)
         print(f"feed added ({len(feeds)} total)")
+        return 0
+
+    if args.cmd == "ideas":
+        fresh = refresh_ideas(st)
+        save_state(st)
+        if not fresh:
+            print("no new ideas")
+            return 0
+        for idea in fresh:
+            ok = send_idea(idea, args.dry_run) if args.notify else True
+            if ok:
+                idea["status"] = "sent"
+            print(f"{'sent' if args.notify else 'new'}: {idea['title']}")
+        save_state(st)
+        return 0
+
+    if args.cmd == "idea-decide":
+        msg = decide_idea(st, args.idea_id, args.choice)
+        save_state(st)
+        print(msg)
         return 0
 
     if args.cmd == "ack":

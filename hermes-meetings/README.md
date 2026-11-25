@@ -20,10 +20,10 @@ Vexa Lite (Docker, self-hosted)        vexa-lite-whisper (faster-whisper, CPU)
 Vexa MCP service (standalone container, 127.0.0.1:18010/mcp)
    ▼
 Hermes Agent
-   ├─ MCP toolset "vexa" (14 tools: send/stop bot, transcripts, recordings…)
+   ├─ MCP toolset "vexa" (send/stop bot, transcripts, chat, recordings, speak…)
    ├─ skills: meeting-bot-ops, meeting-live-questions, meeting-notes
    ├─ webhook routes: meeting-live-questions, meeting-notes
-   └─ cron poller (~/.hermes/scripts/vexa-poll.py) drives the loop
+   └─ cron poller (~/.hermes/scripts/vexa-poll.py, planned, not installed yet)
    ▼
 You (Telegram) + notes on disk
 ```
@@ -78,18 +78,19 @@ hermes chat -t vexa   # "call get_bot_status" should return the running-bots lis
 
 ## Using it
 
-In any Hermes session (or `/meeting-bot-ops` style prompts):
+In any Hermes session (or with `/meeting-bot-ops`):
 
 - "Join the meeting at <Meet/Zoom/Teams/Jitsi URL> as Hermes" — Hermes uses
   `parse_meeting_link` + `request_meeting_bot`.
 - "What's happening in the meeting right now?" — `get_meeting_transcript`.
 - "Leave the meeting" — `stop_bot`.
-- Realtime questions: the cron poller posts transcript deltas to the
-  `meeting-live-questions` webhook route; Hermes replies on Telegram with
-  up to 3 sharp questions, in SOUL.md voice.
-- Meeting notes: on completion the `meeting-notes` route writes structured
-  notes (summary, decisions, action items with owners, open questions) to
-  `~/.hermes/data/vexa-notes/` and reports a compact summary.
+- Realtime questions: once the poller exists it will post transcript deltas
+  to the `meeting-live-questions` webhook route. Until then, ask "what should
+  I ask?" mid-call and Hermes replies on Telegram with up to 3 questions.
+- Meeting notes: "notes for that call" runs `meeting-notes`, which writes
+  structured notes (summary, decisions, action items with owners, open
+  questions) to `~/.hermes/data/vexa-notes/` and replies with a compact
+  summary.
 
 ## Status (honest)
 
@@ -99,9 +100,12 @@ with auth, all three skills, Hermes-to-Vexa tool calls.
 In progress / next: webhook routes + `vexa-poll.py` cron loop (last wiring
 step), then an end-to-end test against a live Jitsi/Meet call.
 
-Known limits: `update_bot_config` and in-call TTS (`/bots/{id}/speak`) are not
-in the Vexa open core yet — Hermes listens and answers on Telegram; speaking
-in-call needs the Pipecat layer (see INVESTIGATION.md, phase 2). Attribution
+Known limits: `update_bot_config` is not in the Vexa open core (it may 404).
+In-call speech (`speak_in_meeting`) works through a local patch
+(`vexa-lite:v0.12.28-voice`, VoiceStudio; see
+`~/AI/engines/vexa-lite/voice-patch/README.md`). The transcription model is
+`faster-whisper-small.en`, which is English-only, so Spanish calls need a
+multilingual model first. Attribution
 is dropped (empty speaker) rather than guessed under crosstalk. CPU
 transcription lags a realtime feed by design on this box; the question cadence
 is throttled to match.
