@@ -51,6 +51,21 @@ test('notAddressed survives into the brief — the gap must be visible to the le
   assert.ok(r.text.includes('needs the schema change'))
 })
 
+test('planGaps survive into the brief — an escalated decision must be visible to the lens', () => {
+  const m = { ...manifest('backend', 1), planGaps: ['plan.md does not say whether export is sync or async'] }
+  const r = b.buildBrief({ manifests: [m], lens: 'review' })
+  assert.ok(r.text.includes('Plan gaps escalated'))
+  assert.ok(r.text.includes('sync or async'))
+  const none = b.buildBrief({ manifests: [manifest('backend', 1)], lens: 'review' })
+  assert.ok(!none.text.includes('Plan gaps escalated'), 'no gap section when the builder raised none')
+})
+
+test('the manifest schema admits planGaps as an optional string array', () => {
+  const s = b.BUILD_MANIFEST_SCHEMA
+  assert.deepStrictEqual(s.properties.planGaps.items, { type: 'string' })
+  assert.ok(!s.required.includes('planGaps'))
+})
+
 test('each lens gets its own budget', () => {
   assert.strictEqual(b.LENS_BUDGETS.qa, 32_000)
   assert.strictEqual(b.LENS_BUDGETS.performance, 16_000)
@@ -218,6 +233,28 @@ test('the brief always carries a diff ref, even when truncated', () => {
   assert.strictEqual(r.truncated, true)
   assert.ok(r.text.includes('HEAD~1..HEAD') || r.omittedFiles.length > 0,
     'the lens must have some route back to the real change')
+})
+
+test('the route to the whole change is never cut, and absent when not given', () => {
+  // The HU 16 pilot: with the file list dropped, review, security and
+  // performance never read two of the files the change was about; the
+  // per-builder worktrees had diverged, so Glob could not bring them back. In
+  // spec mode the caller passes a git route to the whole change; it rides in
+  // the head with the criteria, which no step cuts.
+  const route = 'git diff 3f03357, plus the new untracked files: git status --short'
+  const criteria = Array.from({ length: 28 }, (_, i) => `AC-${i}: ${'c'.repeat(380)}`).join('\n')
+  for (const lens of Object.keys(b.LENS_BUDGETS)) {
+    for (const ms of [[manifest('backend', 300, 60_000)], [manifest('a', 40), manifest('b', 40)]]) {
+      const r = b.buildBrief({ manifests: ms, lens, criteria, changeRef: route })
+      assert.ok(r.text.includes(`## The whole change\n${route}\n`), `${lens}: the route was cut`)
+      assert.ok(r.text.indexOf(route) < r.text.indexOf('## Implementation'), `${lens}: the route must sit in the head`)
+      assert.ok(r.chars <= b.LENS_BUDGETS[lens] || r.overBudget, `${lens}: ${r.chars} over budget`)
+    }
+  }
+  const alone = b.buildBrief({ manifests: [manifest('a', 1)], lens: 'review', changeRef: route })
+  assert.ok(alone.text.startsWith(`## The whole change\n${route}\n\n## Implementation\n`), 'a route without criteria still heads the brief')
+  const none = b.buildBrief({ manifests: [manifest('a', 1)], lens: 'review', criteria: 'AC-1: x' })
+  assert.ok(!none.text.includes('The whole change'), 'no route section when none is given')
 })
 
 test('handoffRecord captures chars and truncated so a degraded lens is visible later', () => {

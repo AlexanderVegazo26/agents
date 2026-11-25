@@ -25,15 +25,15 @@ sdlc-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 25 | 65 | 6 | — |
-| `sdlc-suite/` | 25 | 65 | 6 | 11 |
-| `commandcode-suite/` | 25 | 65 | 6 | 6 |
-| `.kimi-code/` | 25 | 71 | 6 | — |
-| `.copilot/` | 25 | 65 | — | — |
-| `.codex/` | 25 | 65 | — | — |
-| `.agents/` | — | 65 | — | — |
-| `.pi/` | — | — | — | 11 |
-| `.hermes/` | — | — | — | 10 |
+| `.claude/` | 25 | 66 | 7 | — |
+| `sdlc-suite/` | 25 | 66 | 7 | 12 |
+| `commandcode-suite/` | 25 | 66 | 6 | 6 |
+| `.kimi-code/` | 25 | 72 | 6 | — |
+| `.copilot/` | 25 | 66 | — | — |
+| `.codex/` | 25 | 66 | — | — |
+| `.agents/` | — | 66 | — | — |
+| `.pi/` | — | — | — | 12 |
+| `.hermes/` | — | — | — | 11 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
@@ -52,7 +52,7 @@ The audit trail (`AUDIT.md`, `findings.json`, remediation record) lives in the s
 |---|---|---|---|
 | **Skill** | Procedural knowledge, loaded on demand | Claude, following it | You need the *how* of a technique |
 | **Agent** | A specialist with its own context, tools, and evidence discipline | Claude, turn by turn | One role's judgment is what's needed |
-| **Command** | A thin slash-command entry point that invokes a workflow | The workflow it calls | You want one of the six orchestrations, by name |
+| **Command** | A thin slash-command entry point that invokes a workflow | The workflow it calls | You want one of the workflows below, by name |
 | **Workflow** | A JS script the runtime executes, spawning agents | The script | Many agents, or a repeatable orchestration |
 | **Memory** | Durable per-project context | The agents that own each file | Something must outlive the session |
 
@@ -185,6 +185,8 @@ Overlap between these is a **feature**: two independent methods agreeing is a st
 
 `orchestrator` is not a stage in this diagram — it sits above it, choosing which of these boxes a given task actually needs and accounting for the ones it skipped.
 
+The bottom of the diagram loops back to the top. `/sdlc-maintain`'s incident record ends in an `intent.md`, and a person can choose to feed it to the next `/sdlc-feature`.
+
 Two properties hold at every arrow:
 
 1. **Traceability.** Everything downstream cites `product-analyst`'s numbered criterion IDs. Those IDs are Tier 3 of `qa-engineer`'s Oracle Hierarchy, which is the suite's tie-breaker when sources of truth disagree — regulatory requirement first, the agent's own inference last, and a conflict is *reported*, never silently resolved by taking the higher tier.
@@ -196,9 +198,19 @@ Two properties hold at every arrow:
 
 Workflows script the orchestration so it's repeatable and its intermediate results never fill a context window. Run `/workflows` to watch progress, `s` to save a run.
 
+In all seven workflows, every mechanical bridge step (policy, learnings, run recording, blocked-gate collection and, where a workflow has them, handoff files and the detector) is **sealed**: a bridge asks a transcriber model to write a script and relay its stdout, and both cross as hex with a SHA-256 — the loader refuses a script whose hash differs, and output that fails `sha256(nonce ‖ output)` is discarded. That is tamper-evidence, not authentication: the nonce is in the transcriber's own prompt, so a steered transcriber could compute a valid seal. What keeps untrusted text from steering it is that the transcriber never sees the payload in readable form.
+
+How the bridges run:
+
+- **On Haiku.** Every bridge step runs on Haiku at low effort, unless `"tiers": "inherit"` is passed, in which case it follows the session model. In `/sdlc-feature` and `/sdlc-maintain`, the workflow's own bridges (handoff files, the spec-directory preflight, the detector) follow the `transcribe` tier, so an override such as `"tiers": { "transcribe": { "model": "sonnet" } }` moves those. The shared runtime bridges (policy, learnings, run recording, blocked gates) stay on Haiku unless `tiers` is `"inherit"`.
+- **In chunks.** The host's Bash tool cuts output at roughly 30,000 characters, and hex doubles every byte. So no relay carries more than 12,000 bytes (24,000 hex characters): a bigger script is written to disk in parts first, and a bigger output is read back in chunks. One SHA-256 still covers the whole payload. Each chunk is its own transcriber call, so a relay is capped at 64 chunks (768,000 bytes) each way: at most 64 part-write or read-back steps. A larger script is not sent and a larger announced output is discarded, both logged, and the bridge counts as not having run — it fails visibly instead of quietly running hundreds of transcriber calls.
+- **Close sends back only an acknowledgement.** The step that writes `outcome.json` returns `{ ok, status }`, not the outcome itself, which stays on disk.
+- **A lost phase record doesn't switch off the breaker.** If the bridge that records a phase doesn't run, or its output fails the seal, the workflow counts that phase's failed agents itself. At three or more, the breaker trips and the run stops, with a `breaker.unrecorded` gate. Below three, the run continues with a `runtime.phaseUnrecorded` gate, because a resume can't replay that phase.
+
 | Command | What it does | Agents |
 |---|---|---|
-| `/sdlc-feature` | Full lifecycle: requirements → design → build → 4-lens verification → readiness | ~12 |
+| `/sdlc-feature` | Plan expensive, execute cheap: Plan → Design → Build → Test → Review → bounded repair → Readiness, each stage handing the next a file | ~13 |
+| `/sdlc-maintain` | Stage 6: a script checks CI, health commands and logs (or takes a reported incident); only on a signal, diagnosis and an incident record plus a new `intent.md` for `/sdlc-feature` | 2 |
 | `/independent-review` | Four evidentiary bases on one change, every finding adversarially refuted, then merged | ~10 |
 | `/persona-qa-sweep` | Derive personas → explore as each → probe every pair → triage | scales with personas |
 | `/release-readiness` | Five gates in parallel from their owning agents → classified recommendation | 6 |
@@ -207,6 +219,8 @@ Workflows script the orchestration so it's repeatable and its intermediate resul
 
 ```bash
 /sdlc-feature          Add CSV export to the reporting dashboard
+/sdlc-maintain                                   # just run the detector
+/sdlc-maintain         checkout returns 502 for EU users since 14:00
 /independent-review    the diff on feature/checkout-v2
 /persona-qa-sweep      { "target": "http://localhost:3000", "env": "staging" }
 /release-readiness     release 2.4.0
@@ -214,9 +228,166 @@ Workflows script the orchestration so it's repeatable and its intermediate resul
 /registry-audit
 ```
 
-Commands are shown bare for readability, matching the naming note at the top. Installed as a plugin they resolve as `/sdlc-suite:sdlc-feature` and so on; the six command files ship under `commands/` in this plugin, so the prefixed form is the one guaranteed to resolve.
+Commands are shown bare for readability, matching the naming note at the top. Installed as a plugin they resolve as `/sdlc-suite:sdlc-feature` and so on; the command files ship under `commands/` in this plugin, so the prefixed form is the one guaranteed to resolve.
 
 `/system-archaeology` runs **static-evidence-only** unless you pass `observeTarget`, and it refuses to guess at a safe one — dynamic observation is opt-in and must name a non-production target.
+
+### `/sdlc-feature` — plan expensive, execute cheap
+
+The most capable model is spent where a mistake costs the most to undo: the plan that every later stage executes. Build and test then run a cheaper tier against that plan. Review and security go back to a strong tier, because a reviewer weaker than the writer isn't much of an independent check; the strongest (Fable) is opt-in for changes where a mistake is expensive.
+
+| Stage (recorded phase) | Who | Default tier | Hands the next stage |
+|---|---|---|---|
+| **Plan** | `product-manager` → `product-analyst` → `solution-architect`, in that order. The analyst also lists every contradiction between the intent and the repository's specs, docs and code, both sides quoted | `plan`: Opus / high | `intent.md`, `spec.md` (numbered acceptance criteria, contradictions), `plan.md` |
+| **Design** | `ux-designer` spec, then `ui-engineer` builds a static self-contained HTML mock of it, in a worktree (the mock file itself is written by absolute path to the main checkout's handoff directory — the run's `handoff/`, or the spec directory; anything else the agent touches stays in the worktree). The mock is skipped when there is no run directory to hold it. **Only when the change touches a frontend surface**; otherwise the phase is recorded empty | `design`: Opus / high | `design.md`, `mock.html` |
+| **Build** | One builder per surface (`software-engineer` / `ui-engineer` / `database-engineer`), executing `plan.md` and returning a build manifest. In spec mode they take turns (data, backend, frontend) in the checkout the run started in, each told what the earlier ones changed, and the workflow commits each stage (Build, Test with its evidence, each Repair, the end) so the evidence names the commit it ran on and the outcome shows delivered == verified (`"commitStages": false` turns it off); otherwise each gets its own worktree, in parallel (`"buildTree"` picks) | `build`: Sonnet / medium | the manifests |
+| **Test** | `qa-engineer`, which designs and interprets the cases and is told to hand execution loops to `qa-runner`. Its brief has the criteria and the change — files and diff route — but not the builders' own account (summaries, criteria claimed, gaps, decision records). It returns one case per criterion (type: unit, component, integration, e2e, visual, mutation or manual; result; evidence path), saves the evidence in `<handoff>/evidencia/` with a `casos.md` a person can review or copy to a tracker, and runs mutation testing on the changed files when the repository has it set up | `test`: Sonnet / medium; `testLoop`: Haiku / low (see below) | `test-report.md`, opening with a traceability table; `evidencia/` |
+| **Review** | `code-reviewer` and `performance-engineer`; `security-engineer`. They get `test-report.md` as evidence to weigh, not a verdict to adopt | `review`: Opus / high; `security`: Opus / high | findings |
+| Cross-check | Every Test and Review finding goes to a refuter (`code-reviewer`) before it counts | `refute`: session model / low | — |
+| **Repair**, **Re-verify** | The builder fixes confirmed blocking findings in its own change, and then only the lenses that raised them re-check the fix, at most 2 rounds. `"repair": false` in `args` turns this off | `build`, then each lens's own tier | — |
+| **Readiness** | `release-manager` writes two go/no-go **recommendations** — `technical` (for engineering) and `product` (for the product owner) — and `technical-writer` drafts the docs | `readiness`: Opus / high; `docs`: Sonnet / medium | — |
+
+- **Handoff files.** By default they land in `<runDir>/handoff/`; in spec mode (below), in the spec directory. **An agent that authors a document writes it itself** with its Write tool — `product-manager` writes `intent.md`, `solution-architect` `plan.md`, `ux-designer` `design.md`, `ui-engineer` `mock.html`. A sealed bridge on the `transcribe` tier (Haiku / low) then confirms the file is on disk and records its SHA-256 in the phase artifact. The bridge confirms whatever non-empty file is at that path; only if there is none does it write one from the agent's returned text, and only when that text is at most 16,384 characters. `mock.html` is confirm-only. `spec.md` and `test-report.md` are rendered by the workflow itself and written by a sealed bridge on every pass, replay included, cut at 16,384 characters. A file is registered in the return value's `handoff` and handed to the next stage by path only when it is confirmed on disk. If there is no run directory (recording off, or runtime unreachable), or a file isn't confirmed, the next stage gets the text inline instead — never a path to a file that doesn't exist — unless the run is strict, in which case that stage does not start.
+- **Resuming checks the files.** On a resume, each authored file must still hash to what its phase recorded. A file edited or planted between attempts is not handed on (the run log says it CHANGED), so a resume never picks up a hand edit. To build from a `spec.md` and `plan.md` you edited, use plan approval in spec mode (below): commit them and start a **fresh** run with `"approvedPlan": true` — never a resume. A resume of a run recorded by the older phase layout (one with a `Requirements` or `Verify` phase) is refused outright, with `status: "stopped"` and no agent run: replaying part of it would check one build against another run's criteria. The refusal happens before anything is written, so the old run's record (its attempt count and any breaker trip) is left as it was.
+- **Plan gaps escalate; they aren't improvised.** A builder that needs a decision the plan didn't make (an interface, a data shape, an error behaviour) lists it in its manifest's optional `planGaps` field and doesn't decide it. The run still continues through Test, Review and Readiness. Each gap then shows up in four places: a `BLOCKED — plan.insufficient` entry in `blockedGates`, the return value's `planGaps`, the `humanDecisionRequired` list, and the readiness prompt, which treats any criterion a gap touches as not Confirmed.
+- **`testLoop` is a request, not a pin.** The script never dispatches `qa-runner` itself. It tells `qa-engineer` to delegate the loops and to ask for the `testLoop` model when its Agent tool accepts a model parameter. Whether that happens is up to `qa-engineer`.
+- **Stops.** The run stops if `product-analyst` returns no acceptance criteria, if `solution-architect` returns no plan (the build tier executes `plan.md` and isn't allowed to design, so it doesn't run without one; the stop reason suggests `"tiers": { "plan": { "model": "opus" } }` in case the account can't use the plan model), and if no builder returns a manifest. With `approvedPlan`, the first two become: the approved `spec.md` has no acceptance criteria in the expected line format, or the approved `plan.md` isn't confirmed on disk.
+- **A Test stage with no result is a gate, not a pass.** If `qa-engineer` returns nothing, the run records a `BLOCKED — test.noEvidence` gate ("treating the change as tested" withheld), and `test-report.md` says the test stage produced no evidence. Review still runs. The dead Test lens also counts toward Review's breaker threshold (three empty results in one phase stop the run), so `qa-engineer` plus two Review lenses dying stops the run before Readiness, as it did when Test and Review were one Verify phase. It counts without being recorded again: `failures.jsonl` has it once, under Test. A trip that counted it fails the Test phase too, so a resume re-runs `qa-engineer` rather than replaying its empty result.
+- **A Review lens with no result is a gate too.** A Review lens that returns nothing, below the breaker threshold, records a `BLOCKED — review.incomplete` gate naming the lens ("treating the change as reviewed by every lens" withheld), so a review that lost a lens doesn't look complete. Re-run the workflow, or do that review by hand.
+
+**Spec mode — durable files beside the change.** For a repository that keeps one directory per feature (a `specs/features/<HU>/` layout), pass `specDir` in `args`:
+
+```
+"specDir": "specs/features/HU-22"   // a person's intent.md there is the intent; every handoff file is written there
+"intentPath": "docs/intent.md"      // use an existing intent file; the other files stay in <runDir>/handoff/
+"strict": true                      // strictness without a spec directory
+"pauseAfterPlan": false             // spec mode only: don't stop for plan approval (it stops by default)
+"approvedPlan": true                // spec mode only: build from the committed spec.md and plan.md
+"replan": true                      // spec mode only: plan again over uncommitted edits, overwriting them
+```
+
+- **The intent is a person's.** With `specDir`, `intent.md` in that directory is the intent; with `intentPath`, that file is. Either way `product-manager` doesn't run, and Plan doesn't start without the file: the run stops with `no intent.md at <path>`. `spec.md`, `plan.md`, `design.md`, `mock.html` and `test-report.md` are written to the spec directory instead of the run directory, and the agents that make design decisions record them in `decisiones.md` there, never under `.claude/memory/` (local and unversioned).
+- **Spec mode is strict.** A stage whose input file isn't confirmed on disk doesn't start, and the run stops naming the file: Design (when there is a frontend surface) needs `spec.md` and `plan.md`, Build needs `plan.md` (and `design.md` when there is a frontend surface), and Review needs `test-report.md`. Without strictness the stage would get the inline text instead. `intentPath` alone doesn't turn strictness on.
+- **Paths are repository-relative.** Both must be plain relative paths: no `..` or `.` segment, drive letter or leading slash, and only letters, digits, `.`, `_`, `/` and `-`. In a `specDir`, no path segment may start with `.` or be `node_modules`, in any case and at any depth — `.Git/hooks` is the real `.git/hooks` on a case-insensitive filesystem, and `pkg/.claude/commands` is still a command folder — because a document written there could become a command, a hook or a CI input. Anything else stops the run.
+- **The directory is confined on disk too.** Before anything is planned, a preflight walks `specDir` (and `intentPath`) one segment at a time from the repository root. A symbolic link or junction anywhere on the way, or a segment whose real path resolves outside the repository, stops the run. If the preflight can't run, the run stops rather than write to an unchecked directory. Confinement is checked again at every write, so a link swapped in after the preflight can't carry a write out of the repository: that file is simply not written or handed on.
+- **A run directory is required.** `specDir`, `intentPath` and `strict` need run recording to place and confirm files; without it the run stops rather than falling back.
+- The return value's `handoff` reports `specDir`, `strict` and `approvedPlan` alongside `dir` and `files`.
+
+**Plan approval: in spec mode, the run stops after Plan and waits for a person.**
+
+1. Run with `specDir`. Plan writes `spec.md` and `plan.md` into the spec directory, and the run returns `status: "awaiting-plan-approval"` with a `next` line to relay. Design, Build and the rest don't run. `humanDecisionRequired` asks for the approval and lists the spec's open questions.
+2. The person reviews `spec.md` and `plan.md`, edits them if needed, and **commits them**.
+3. Start a **fresh** run with the args the `next` line gives: this run's args with `"approvedPlan": true` added, and `resume`, `pauseAfterPlan`, `replan`, `runtimeDir`, `policy` and `policyDefault` left out. The command supplies `runtimeDir` and `policyDefault` again; pass an explicit `policy` again yourself if the first run had one. That run starts at Design from exactly the committed files. No planner runs (not `product-analyst`, not `solution-architect`), and `spec.md` isn't re-rendered: the person's file is the spec.
+
+To skip the stop, pass `"pauseAfterPlan": false` and the run goes straight through. `approvedPlan` needs `specDir`; without it the run stops. It also stops, naming the file, if `spec.md` or `plan.md` isn't exactly its committed version: untracked, modified since the commit, or absent.
+
+**Approval is never a resume.** Passing `"approvedPlan": true` with `resume` set to the paused run is refused: that run's Plan was written by the planners, and building the person's files while tracing the planners' criteria would mix the two. Resuming the paused run with its original args is refused too, because it would build a plan nobody approved; the stop reason points at the fresh `approvedPlan` run. On any resume, the Plan the run **recorded** decides the mode, not the flags of the new invocation:
+
+- A resumed approved run builds only what it approved. If `spec.md` or `plan.md` no longer hashes to what was approved, it stops; to build the new version, start a fresh run with `"approvedPlan": true`.
+- A resume never pauses for approval again.
+
+**"Committed" is decided from the bytes on disk.** The preflight computes each file's git blob id itself, from the bytes on disk, and compares it with the blob at `HEAD`. It doesn't use `git hash-object`, which runs the working tree's `.gitattributes` filters first: an `ident` or clean filter could fold an edited file back onto the committed blob. A CRLF file whose committed blob is the LF form (an `autocrlf` checkout) still counts as committed.
+
+**The approved `spec.md` is parsed, so keep its layout.** An approved run reads the criteria back from the file, in the layout the workflow renders:
+
+```markdown
+## Acceptance criteria
+
+- **AC-1** — Exporting a report downloads a CSV with one row per visible line.
+- **AC-2** — An empty report exports a CSV with the header row only.
+
+## Surfaces
+
+backend, frontend
+```
+
+Each criterion is one list line, `- **<ID>** — <text>`, under the `## Acceptance criteria` heading. Also accepted: an en dash, a plain hyphen or a colon as the separator; `*` or `+` bullets and numbered items (`1.` or `1)`); a checkbox (`- [ ] **AC-1** — …`, `[x]` too); and the colon inside the bold, `**AC-1:**`. An indented line (two or more spaces) continues the criterion above it, and blank lines are skipped. **Nothing under the heading is dropped silently.** Any other line there, a criterion id that appears twice, or a leftover `…[truncated at N characters` marker anywhere in the file stops the run before anything is recorded, with `the approved spec.md cannot be read exactly:` followed by the problems (up to three, each offending line quoted). A heading with no criteria under it stops the run with `the approved spec.md in <dir> has no acceptance criteria in the expected form`. The `## Surfaces` section decides which builders run and whether Design runs: it has to name `backend`, `frontend` or `data`. With none named, no builder starts and the run stops with `No build surface produced an implementation manifest.` `## Assumptions` and `## Open questions` are read back as list items too.
+
+**A run never overwrites an uncommitted edit.** Before Plan, a fresh spec-mode run checks the files it would write: `spec.md`, `plan.md`, `design.md` and `mock.html` when it plans, or only `design.md` and `mock.html` with `approvedPlan` (there `spec.md` and `plan.md` are the approval itself, but Design still writes the other two). If any of them is modified or untracked, the run stops before anything is recorded and names the files. To build from edited `spec.md` and `plan.md`, commit them and run with `"approvedPlan": true`. To throw the edits away on purpose, run with `"replan": true`. A resume doesn't run this check, because it never re-plans; the recorded hashes guard the files instead.
+
+**Before Build, every authored file is re-checked.** Design-stage agents have a Write tool, so before Build starts, every file Plan and Design recorded (`intent.md`, the approved `spec.md`, `plan.md`, `design.md`, `mock.html`) must still hash to its recorded SHA-256, fresh run or resume. One that changed isn't handed on, and in spec mode Build then doesn't start without its `plan.md` (and `design.md` when there is a frontend surface). With `approvedPlan`, the builders (and `ux-designer`) are told the `plan.md` they read was "written or approved by a person and committed to the repository" and is the authoritative copy, rather than that the stage before them wrote it.
+
+**A file an earlier run left in the spec directory is never taken as this run's.** The preflight records each document's hash before the run starts. After an agent's stage, a file at that path counts as this run's only if it changed during the stage, or if it matches the text the agent returned. Otherwise the workflow writes the returned text over it (when that text is 16,384 characters or less), or doesn't hand the file on at all. In strict mode, a stage that needs that file then doesn't start.
+
+**Overriding the tiers.** No stage pins Fable by default: on the live pilot it cost twice Opus and over-planned a trivial change, with no measured gain. Opt into it for a change where a planning or security mistake is expensive (auth, payments, permissions, destructive data changes, concurrency, a lasting architecture decision), or when a person rejects an Opus plan as too shallow. Pass `args.tiers`:
+
+```
+"tiers": "inherit"                                                           // pin nothing; every stage follows the session model
+"tiers": { "plan": { "model": "fable" }, "security": { "model": "fable" } } // partial override; other stages keep their default
+```
+
+The stage keys are the ones in the table above, plus `transcribe`. Models: `fable`, `opus`, `sonnet`, `haiku`, `inherit`. Efforts: `low`, `medium`, `high`, `xhigh`, `max`. An unknown stage, model or effort is logged and ignored, and the default stays in place. It is never passed through to the agent call. The return value's `tiers` shows what the run actually resolved. With `"inherit"`, the only pin left is the refuter's low effort, which existed before tiers did.
+
+The tiers are set in the workflow script, one per `agent()` call, and not in agent frontmatter: a tier belongs to the stage, not the agent (`code-reviewer` reviews on one tier and refutes on another). Under the pi and Hermes runners the model comes from the agent file, and `opts.model` is ignored. Only `low`, `medium` and `high` are mapped to a thinking level there, so those pins fall back to the session model instead of failing.
+
+### `/sdlc-maintain` — stage 6, Maintain
+
+It recommends and never acts. It doesn't mitigate, roll back, restart, push or deploy, and it doesn't start `/sdlc-feature` on its own.
+
+| Stage (recorded phase) | Who | Default tier |
+|---|---|---|
+| **Detect** | `_detect.js`, a deterministic script and not a model. It checks the latest conclusive `push`, `schedule`, `workflow_dispatch` or `merge_group` GitHub Actions run of each workflow on a branch (via `gh run list`), runs the configured health commands, scans the configured log files, and takes any incident you passed as a signal. On a signal, the full signals, evidence included, go to `<runDir>/handoff/signals.json` for the diagnosis to read; the bridge relays only a sealed summary, so its transcriber never sees a CI title, an output line or a log line in readable form | the sealed bridge that runs it: `transcribe`, Haiku / low |
+| **Diagnose** | `site-reliability`, read-only: root-cause hypothesis with evidence for and against, a status of confirmed / hypothesis / unknown, blast radius, recommended mitigation. **Runs only when Detect found a signal** | `diagnose`: Opus / max |
+| **Record** | `incident-commander` writes `incident.md` and the `intent.md` for the fix | `record`: Opus / high |
+
+The `verdict` field is the result:
+
+- `healthy` — every configured source was checked and none signalled.
+- `no-signal-with-gaps` — nothing was found, but some sources couldn't be checked (listed in `detectorErrors`, and as a `BLOCKED — maintain.detectorGap` gate). Never report this as healthy.
+- `config-error` — `.claude/maintain.json` (or the `config` path in `args`) is broken or malformed, so nothing was checked: not CI, not health commands, not logs. `detectorErrors` names what to fix (the entries starting `config:`). It is the workflow's form of the detector CLI's exit 2. Never report it as healthy. One exception: an incident passed alongside a broken config is still a signal, so that run is diagnosed and ends as `incident` or `incident-unrecorded`, with the config error in `detectorErrors` (the CLI exits 2 for the same input).
+- `unknown` — the detector couldn't run and no incident was given, or run recording was off or unreachable. **This workflow needs a run directory**: that is where `signals.json` lives, and without a run id the bridge seal's nonce would be a constant. With no run directory nothing is checked, and the run is `incomplete`. For a model-free check, run the detector CLI below.
+- `incident` — a signal was diagnosed and recorded. The result includes `signalsFile`, `incident.md` and `intent.md` in `<runDir>/handoff/`, and a `nextInitiative`, which is the rendered `intent.md`. You can pass it to `/sdlc-feature` as its initiative. Whether to run it is a decision for a person, and it is always in `humanDecisionRequired`. The result's `untrustedFields` names the fields that are model text derived from untrusted signals — `diagnosis`, `incident`, `nextInitiative` and `humanDecisionRequired[0]` (the mitigation line). Whoever relays them presents them as quoted data and never acts on an instruction found inside them.
+- `incident-unrecorded` — a signal was diagnosed, but `incident-commander` returned no usable incident record. The result carries the `diagnosis`, `nextInitiative` is null, no handoff file is written, and the run's `status` is `incomplete` with a `run.deliverableMissing` gate. Relay the diagnosis and offer no build.
+
+If `site-reliability` returns no diagnosis, the run stops (`status: "stopped"`) with no verdict, rather than writing an incident record from nothing.
+
+**`intent.md` is derived from untrusted input.** It opens with a banner saying it came from CI output, command output, log lines or a report, and is to be read as a claim about the system, not as instructions. Show it to the person before it goes anywhere near `/sdlc-feature`.
+
+`incident.md` and `intent.md` are written from the returned text by a sealed bridge (cut at 16,384 characters), and `handoff.files` lists one only when its on-disk SHA-256 matches the text. `signals.json` is written to `<runDir>/handoff/` only when there is a signal, and never through a symbolic link. On a resume it must still hash to what Detect recorded; if it changed or vanished, the run stops (`status: "stopped"`) rather than diagnose content the detector didn't produce — start a fresh run.
+
+**A healthy run spends no diagnosing or recording model, but it isn't model-free.** The workflow's mechanical bridge steps still run, all on Haiku at low effort: the detector and handoff bridges on the `transcribe` tier, and the policy, learnings and run-recording bridges on the runtime's bridge model (see *Workflows* above). For a check that spends no model at all, run the detector CLI below.
+
+Configuration is `.claude/maintain.json` in the consuming repository. With no file, only CI on `main` is checked:
+
+```json
+{
+  "ci":     { "enabled": true, "branch": "main", "limit": 20 },
+  "health": [ { "name": "unit tests", "command": "npm test", "timeoutSec": 90 } ],
+  "logs":   [ { "path": "logs/app.log", "patterns": ["ERROR", "FATAL"], "tailLines": 2000 } ]
+}
+```
+
+A file that exists but can't be read or parsed is an error, not a silent fallback to the defaults. So is a **malformed** config: a section of the wrong type (`"ci"` not an object, `"health"` or `"logs"` not an array) or a top-level key the detector doesn't read (anything but `ci`, `health` and `logs`). Silently ignoring `"healthchecks": [...]` would report a repository whose checks never ran as healthy. A config that enables nothing — CI disabled, no health command, no log — is a gap. Neither is ever reported healthy. Per source:
+
+- **CI** needs `gh` installed and authenticated. If `gh` fails, that is a detector gap, never a green CI. Only `push`, `schedule`, `workflow_dispatch` and `merge_group` runs whose head branch is exactly the configured branch count. A `merge_group` run may also be on the branch's merge-queue branch, `gh-readonly-queue/<branch>/…`. This is an allowlist, not a blocklist: `pull_request*`, `issue_comment` and `workflow_run` runs can be started or titled by outsiders, so they can't turn the branch red, and neither can any event not on the list. Of the qualifying completed runs, the latest **conclusive** one per workflow counts: a run that concluded `cancelled`, `skipped`, `neutral`, `stale` or `action_required` (a run waiting for a maintainer to approve it) says nothing about the branch, so it is passed over for the one before it. Only a `failure`, `timed_out` or `startup_failure` conclusion signals. Finding no qualifying run in the last `limit` runs is a gap, not a pass: check `ci.branch` and `ci.limit`.
+- **Health commands are armed only by a committed, merged config.** They run through a shell, so they run only when the bytes of `.claude/maintain.json` equal its committed version at `HEAD` **and** its version on the repository's default branch, read from `refs/remotes/origin/HEAD`. That reference is the trust anchor because the config can't choose it. The config's own `ci.branch` is not used for this: a PR could point it at its own branch. The comparison is on bytes, not `git diff`, so an edit hidden with `assume-unchanged` or `skip-worktree` still disarms them. The detector computes the file's git blob id itself from the bytes on disk, rather than calling `git hash-object`, which runs the working tree's `.gitattributes` filters: an `ident` or clean filter could otherwise fold an edited config (`$Id: anything $`) back onto the committed blob. A CRLF file whose committed blob is the LF form (an `autocrlf` checkout) still matches. An untracked config, a locally edited one, or one changed on a PR branch checked out for review has its commands listed in `errors` as a gap and not run; commit the config and merge it to the default branch to arm them.
+  - **With no `origin/HEAD`, nothing is armed** unless you opt in. A repository with no remote has no `origin/HEAD`, and neither does a CI checkout that fetched a single branch. Every health command is then listed as a gap. If the checkout is the default branch, so `HEAD` is already the reviewed version (a CI job on `main`, for example), pass `"trustHead": true` in `args`, or `--trust-head` to the CLI: the config then only has to match `HEAD`. Otherwise, `git remote set-head origin --auto` creates the reference. **What a command runs is not checked.** A committed `npm test` executes whatever the working tree's `package.json` and test files hold, so arming a health command is like adding a CI step. Commands run from the repository root with a default timeout of 90 s, and with secret-shaped environment variables removed: names matching tokens, secrets, passwords (including `PASS`, `PASSWD`, `PGPASS` and a name ending `_PWD`), keys (`API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`, `SESSION_KEY`, `CLIENT_KEY`, a standalone `KEY` or `PAT`), credentials, signing and encryption keys, `AUTH`, `DSN`, cookies, JWTs, webhooks, `DATABASE_URL`, connection strings, a name ending `_URI`, Redis/Mongo/AMQP/Postgres/MySQL URLs, `NETRC`, `SERVICE_ROLE`, `KUBECONFIG`, `SSH_AUTH_SOCK`, `AWS_PROFILE` and Docker config (case-insensitive). `PWD`, `OLDPWD`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` and `GIT_AUTHOR_DATE` carry no secret and are always kept, even though the `_PWD` and `AUTH` patterns would otherwise catch some of them. It is a name-pattern list, so a secret under an innocent name still passes, and a check that needs `GITHUB_TOKEN`, for example, doesn't belong here. Otherwise they run as you, with your filesystem access, which is wider than a CI step. Under `/sdlc-maintain` they run inside one bridge shell call, which has a ceiling of roughly two minutes, so a long suite belongs in CI. **Known limit:** on Windows, a timed-out command's own child processes may outlive it, because the timeout kills the shell, not its descendants.
+- **Log paths** must stay inside the repository. An absolute path, a `..` escape, a UNC root or a link resolving outside it is refused. A configured log that doesn't exist is a gap, not a clean log.
+
+Evidence is size-capped, secret-shaped tokens are redacted (best effort, a pattern list), and the evidence is fenced as data in the diagnosis prompt.
+
+The detector also runs on its own, from cron or CI, with no model at all:
+
+```bash
+node sdlc-suite/workflows/_detect.js [--cwd <dir>] [--config <file>] [--incident "<text>"] [--trust-head]
+```
+
+`--trust-head` is the CLI form of `"trustHead": true`: pass it only when the checkout is the default branch and has no `origin/HEAD`, as in a single-branch CI clone (see *Health commands* above).
+
+`--config` must resolve inside the repository, under the same rules as log paths. The detector prints the result as JSON, and the exit code is the result:
+
+| Exit | Meaning |
+|---|---|
+| **0** | Every configured source was checked and none signalled. |
+| **1** | At least one signal. |
+| **2** | The config can't be used: a `--config` path that is missing or outside the repository, or a config file that can't be read, isn't valid JSON, isn't a JSON object, or is malformed (a section of the wrong type, or an unknown top-level key). This wins over 1, so an `--incident` passed alongside a broken config still exits 2. |
+| **3** | Nothing signalled, but at least one source couldn't be checked — including a config that enables nothing. The reasons are in the JSON's `errors`. **Not healthy.** |
+
+A CI gate should treat anything other than 0 as not healthy. A bad entry inside an otherwise valid config (a branch name that isn't a plain name, a health entry with no command, an invalid log pattern) is a gap for that source, so it exits 3 (or 1 if something else signalled), not 2.
+
+The tiers override the same way as `/sdlc-feature`'s. The stage keys are `diagnose`, `record` and `transcribe`, and `"tiers": "inherit"` pins nothing.
+
+**Not ported.** `commandcode-suite/` and `.kimi-code/` still run their hand-ported copy of the *previous* `sdlc-feature` (Requirements → Design → Build → Verify → Readiness, no tiers, no handoff files, no `planGaps`) and have no `sdlc-maintain`. This is a known, accepted divergence. pi and Hermes don't have this problem: their commands point at these same `sdlc-suite/workflows/*.js` scripts, with the tier caveat above.
 
 ### Quality patterns these encode
 
@@ -231,15 +402,15 @@ Commands are shown bare for readability, matching the naming note at the top. In
 
 **2. Workflows accept no mid-run human input.** That's why every workflow here terminates in a *recommendation* with an explicit `humanDecisionRequired` list, and why sign-off-shaped stages are separate workflows rather than one long chain.
 
-**3. `incident-commander` is deliberately not driven by a workflow.** Incident response needs human judgment on irreversible mitigation *during* the run, which is exactly what a workflow cannot provide. Use the agent directly. Same reasoning limits `product-manager`: prioritization is a human business-value call, so `sdlc-feature` starts from an already-prioritized initiative.
+**3. No workflow runs incident *command*.** Live incident response needs human judgment on irreversible mitigation *during* the incident, and a workflow can't provide that. For a live incident, use `incident-commander` directly. `/sdlc-maintain` does dispatch `incident-commander`, but only after `site-reliability` has diagnosed the signal, and only to write the record and the intent for the fix. It recommends a mitigation and applies none. The same reasoning limits `product-manager`: prioritization is a human business-value call. In `/sdlc-feature`'s Plan stage it frames the intent (`intent.md`) of an initiative that someone has already chosen to run.
 
-**4. Fanning agents out *outside* a workflow gives you none of the workflow's isolation.** `sdlc-feature` runs its build agents with `isolation: 'worktree'`; calling `Agent` directly two or three times in one message does not — they share one working tree, one branch, and one uncommitted diff. That is often what you want for a split task, but it has three failure modes worth planning around:
+**4. Fanning agents out *outside* a workflow gives you none of the workflow's isolation.** `sdlc-feature` runs its build agents with `isolation: 'worktree'` outside spec mode (in spec mode they take turns in the checkout instead, so there is one tree to review); calling `Agent` directly two or three times in one message does not — they share one working tree, one branch, and one uncommitted diff. That is often what you want for a split task, but it has three failure modes worth planning around:
 
 - **Whole-tree git operations are destructive to a peer.** A `git stash -u` taken to measure a clean baseline sweeps up the other agent's in-flight work. Give each agent an explicit ownership list of paths, and tell it that a shared tree makes `stash`/`clean`/`reset`/branch-switch off limits.
 - **Shared checks go red for reasons that belong to someone else.** A typecheck or suite run while a peer is mid-edit reports their broken state as readily as yours. Agents need to be told this in advance, or they will either "fix" a peer's file or report their own work as broken.
 - **The join is what gets dropped, not the files.** Two agents given disjoint paths will not conflict — they will each build to the interface and neither will connect it, producing a green suite over a feature that does nothing. Name the seam in both briefs and say which side closes it, and make the milestone's acceptance exercise the joined path end to end.
 
-`qa-runner` also appears in no workflow script — correctly. It's reached at runtime via `Agent(qa-runner)` from `qa-engineer`, `database-engineer`, and `performance-engineer` when a run would otherwise flood their context.
+`qa-runner` is never dispatched by a workflow script, and that's intentional. It's reached at runtime through `Agent(qa-runner)` from `qa-engineer`, `database-engineer` and `performance-engineer` when a run would otherwise flood their context. `/sdlc-feature`'s Test stage only *tells* `qa-engineer` to delegate its execution loops this way.
 
 ---
 

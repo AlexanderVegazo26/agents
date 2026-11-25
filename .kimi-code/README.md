@@ -94,7 +94,7 @@ Flow skills use `type: flow` with a D2 diagram. Invoke with `/skill:<name>` (no 
 
 ## Workflows
 
-Python workflow scripts in `.kimi-code/workflows/` provide programmatic orchestration equivalent to the original `.claude/workflows/*.js`. Run them from the shell:
+Python workflow scripts in `.kimi-code/workflows/` provide programmatic orchestration ported from `.claude/workflows/*.js`. Two exceptions: `sdlc-feature.py` is a port of the *previous* `sdlc-feature` (Requirements → Design → Build → Verify → Readiness, not the current Plan → Design → Build → Test → Review → Readiness with model tiers), and `sdlc-maintain` has no port. This is a known, accepted divergence. Run them from the shell:
 
 ```bash
 python .kimi-code/workflows/sdlc-feature.py "Add CSV export"

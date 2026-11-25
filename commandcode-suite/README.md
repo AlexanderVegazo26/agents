@@ -14,6 +14,17 @@ This is a faithful port of the [sdlc-suite](../sdlc-suite) Claude Code plugin, r
 > means carrying `_runtime.block.js`'s behaviour into `_runner.js`; until then,
 > use the Claude Code workflows for anything you want the suite to learn from.
 
+> **`sdlc-feature` here is the previous version, and there is no `sdlc-maintain`.**
+> In the Claude Code tree, `sdlc-feature` is now "plan expensive, execute cheap":
+> Plan (`intent.md` → `spec.md` → `plan.md`) → Design (UX spec + static mock) →
+> Build → Test → Review → Readiness, with per-stage model tiers, handoff files and
+> builder `planGaps` escalation. A new `sdlc-maintain` workflow also detects,
+> diagnoses and records incidents. Neither change was ported here.
+> `commandcode-suite/workflows/sdlc-feature.js` still runs Requirements →
+> Design → Build → Verify → Readiness. This is a known, accepted divergence. The
+> "faithful port" claim above holds for the agents and skills, not for this
+> workflow.
+
 ```
 commandcode-suite/
 ├── agents/          agents (.commandcode/agents format — Markdown + YAML frontmatter)
@@ -32,15 +43,15 @@ commandcode-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 25 | 65 | 6 | — |
-| `sdlc-suite/` | 25 | 65 | 6 | 11 |
-| `commandcode-suite/` | 25 | 65 | 6 | 6 |
-| `.kimi-code/` | 25 | 71 | 6 | — |
-| `.copilot/` | 25 | 65 | — | — |
-| `.codex/` | 25 | 65 | — | — |
-| `.agents/` | — | 65 | — | — |
-| `.pi/` | — | — | — | 11 |
-| `.hermes/` | — | — | — | 10 |
+| `.claude/` | 25 | 66 | 7 | — |
+| `sdlc-suite/` | 25 | 66 | 7 | 12 |
+| `commandcode-suite/` | 25 | 66 | 6 | 6 |
+| `.kimi-code/` | 25 | 72 | 6 | — |
+| `.copilot/` | 25 | 66 | — | — |
+| `.codex/` | 25 | 66 | — | — |
+| `.agents/` | — | 66 | — | — |
+| `.pi/` | — | — | — | 12 |
+| `.hermes/` | — | — | — | 11 |
 
 `—` means the tree does not ship that artifact kind. `.agents/` is skills only.
 `.kimi-code/` skills include six workflow-launcher skills that exist only in that port.
@@ -145,7 +156,7 @@ Inside a Command Code session, invoke the same scripts via the launcher commands
 
 | Command | What it does | Agents |
 |---|---|---|
-| `sdlc-feature` | Full lifecycle: requirements → design → build → 4-lens verification → readiness | ~12 |
+| `sdlc-feature` | Full lifecycle: requirements → design → build → 4-lens verification → readiness. The *previous* design, so it differs from the Claude Code tree's `sdlc-feature` (see the note at the top) | ~12 |
 | `independent-review` | Four evidentiary bases on one change, every finding adversarially refuted, then merged | ~10 |
 | `persona-qa-sweep` | Derive personas → explore as each → probe every pair → triage | scales with personas |
 | `release-readiness` | Five gates in parallel from their owning agents → classified recommendation | 6 |
@@ -176,7 +187,7 @@ Phases are sequential; agents within a phase run concurrently (`Promise.all` ove
 
 **2. Workflows accept no mid-run human input.** That's why every workflow terminates in a *recommendation* with an explicit `humanDecisionRequired` list, and why sign-off-shaped stages are separate workflows rather than one long chain.
 
-**3. `incident-commander` is deliberately not driven by a workflow.** Incident response needs human judgment on irreversible mitigation *during* the run, which is exactly what a workflow cannot provide. Use the agent directly. Same reasoning limits `product-manager`: prioritization is a human business-value call.
+**3. `incident-commander` is deliberately not driven by a workflow in this port.** (In the Claude Code tree, `sdlc-maintain` dispatches it to write an incident record. It recommends a mitigation and applies none.) Incident response needs human judgment on irreversible mitigation *during* the run, which is exactly what a workflow cannot provide. Use the agent directly. Same reasoning limits `product-manager`: prioritization is a human business-value call.
 
 `qa-runner` also appears in no workflow script — correctly. It's reached at runtime via task-tool delegation from `qa-engineer`, `database-engineer`, and `performance-engineer` when a run would otherwise flood their context.
 
