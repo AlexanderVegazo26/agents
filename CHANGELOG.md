@@ -105,16 +105,16 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   recorded phases are now Plan → Design → Build → Test → Review → Readiness,
   and Cross-check, Repair and Re-verify are unchanged. *Requirements* and
   *Verify* are gone.
-  - **Plan** (Fable / high): `product-manager` writes `intent.md`,
+  - **Plan** (Opus / high): `product-manager` writes `intent.md`,
     `product-analyst` writes `spec.md`, and `solution-architect` writes
     `plan.md`.
-  - **Design** (Opus / xhigh): a `ux-designer` spec plus a `ui-engineer`
+  - **Design** (Opus / high): a `ux-designer` spec plus a `ui-engineer`
     static HTML mock. Runs only when a frontend surface is touched.
   - **Build** (Sonnet / medium): the builders execute `plan.md`.
   - **Test**: `qa-engineer` on Sonnet, asked to run its loops through
     `qa-runner` on Haiku. That is a request in the prompt, not a pin.
   - **Review**: `code-reviewer` and `performance-engineer` on Opus / high, and
-    `security-engineer` on Fable. All are handed `test-report.md`.
+    `security-engineer` on Opus / high (Fable is opt-in). All are handed `test-report.md`.
 
   Each stage's file lands in `<runDir>/handoff/` (or the spec directory, below).
   An agent that authors a document — `intent.md`, `plan.md`, `design.md`,

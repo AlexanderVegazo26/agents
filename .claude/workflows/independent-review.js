@@ -166,7 +166,7 @@ function slug(s) {
 // RELAY SIZE. A transcriber relays a script in and its stdout out, and the
 // host's Bash tool cuts output beyond ~30,000 characters. Sealed payloads are
 // hex — two characters a byte — so every relay is bounded to RELAY_CHUNK bytes
-// (24,000 hex characters) per step: a larger script is written in parts first,
+// (12,000 hex characters) per step: a larger script is written in parts first,
 // and a larger output is read back in chunks. One SHA-256 covers the whole
 // either way (code review round 3 M1: resuming a realistic run relayed ~122k).
 const RELAY_CHUNK = 6000
@@ -1168,7 +1168,7 @@ for (const [py, flags] of tries) {
   // distil.py: 0 = done; 1 = something quarantined; 2 = something dropped.
   // All three are a real dry run. Anything else is a failure, not a preview.
   return [0, 1, 2].includes(r.status)
-    ? { ok: true, text: String(r.stdout).slice(-4000) }
+    ? { ok: true, text: String(r.stdout).slice(0, 4000) }
     : { ok: false, text: ('distil.py exited ' + r.status + ': ' + String(r.stderr || r.stdout || '')).slice(-1500) }
 }
 return { ok: false, text: 'no Python interpreter answered (tried ' + tries.map(t => t[0]).join(', ') + ')' }`
@@ -1354,7 +1354,7 @@ async function finishRun(body, extras = () => ({})) {
   if (preview && preview.ok === true && typeof preview.text === 'string') learningCandidates = preview.text
   else if (preview) log(`the learning preview (distil.py, dry run) did not run${typeof preview.text === 'string' ? ` — ${preview.text.slice(0, 300)}` : ''}`)
 
-  const allGates =[...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
+  const allGates = [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
   return {
     ...(result || {}),
     status,

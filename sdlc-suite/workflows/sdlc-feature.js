@@ -3,11 +3,11 @@ export const meta = {
   description: 'Run a feature end-to-end through the SDLC agent suite — plan expensive, execute cheap: plan, design, build, test, review, release readiness, each stage handing the next a file',
   whenToUse: 'A feature or change large enough to warrant the full lifecycle. Pass the initiative description as args. Produces recommendations only — never deploys.',
   phases: [
-    { title: 'Plan', detail: 'plan tier (Fable/high): product-manager writes intent.md, product-analyst spec.md, solution-architect plan.md' },
-    { title: 'Design', detail: 'design tier (Opus/xhigh): ux-designer spec + ui-engineer static mock — only when a frontend surface is touched' },
+    { title: 'Plan', detail: 'plan tier (Opus/high): product-manager writes intent.md, product-analyst spec.md, solution-architect plan.md' },
+    { title: 'Design', detail: 'design tier (Opus/high): ux-designer spec + ui-engineer static mock — only when a frontend surface is touched' },
     { title: 'Build', detail: 'build tier (Sonnet/medium): software-engineer / ui-engineer / database-engineer execute plan.md; plan gaps escalate, never improvised' },
     { title: 'Test', detail: 'test tier (Sonnet) designs and interprets; qa-runner on the testLoop tier (Haiku) runs the loops' },
-    { title: 'Review', detail: 'review tier (Opus/high) code review and performance, security tier (Fable) security — handed the test report' },
+    { title: 'Review', detail: 'review tier (Opus/high) code review and performance, security tier (Opus/high) security — handed the test report' },
     { title: 'Cross-check', detail: 'every finding handed to a refuter before it is reported' },
     { title: 'Repair', detail: 'the builder fixes confirmed blocking findings in its own change — at most 2 rounds' },
     { title: 'Re-verify', detail: 'only the lenses that raised a blocking finding re-check the repair, then the refuter' },
@@ -172,7 +172,7 @@ function slug(s) {
 // RELAY SIZE. A transcriber relays a script in and its stdout out, and the
 // host's Bash tool cuts output beyond ~30,000 characters. Sealed payloads are
 // hex — two characters a byte — so every relay is bounded to RELAY_CHUNK bytes
-// (24,000 hex characters) per step: a larger script is written in parts first,
+// (12,000 hex characters) per step: a larger script is written in parts first,
 // and a larger output is read back in chunks. One SHA-256 covers the whole
 // either way (code review round 3 M1: resuming a realistic run relayed ~122k).
 const RELAY_CHUNK = 6000
@@ -1174,7 +1174,7 @@ for (const [py, flags] of tries) {
   // distil.py: 0 = done; 1 = something quarantined; 2 = something dropped.
   // All three are a real dry run. Anything else is a failure, not a preview.
   return [0, 1, 2].includes(r.status)
-    ? { ok: true, text: String(r.stdout).slice(-4000) }
+    ? { ok: true, text: String(r.stdout).slice(0, 4000) }
     : { ok: false, text: ('distil.py exited ' + r.status + ': ' + String(r.stderr || r.stdout || '')).slice(-1500) }
 }
 return { ok: false, text: 'no Python interpreter answered (tried ' + tries.map(t => t[0]).join(', ') + ')' }`
@@ -1360,7 +1360,7 @@ async function finishRun(body, extras = () => ({})) {
   if (preview && preview.ok === true && typeof preview.text === 'string') learningCandidates = preview.text
   else if (preview) log(`the learning preview (distil.py, dry run) did not run${typeof preview.text === 'string' ? ` — ${preview.text.slice(0, 300)}` : ''}`)
 
-  const allGates =[...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
+  const allGates = [...blocked.gates, ...BREAKER_ENTRIES, ...requiredGates, ...runtimeGates(outcome)]
   return {
     ...(result || {}),
     status,
@@ -1525,10 +1525,6 @@ function tier(key) {
 // file is not confirmed DOES NOT START: the run stops and names the file.
 // Otherwise the stage gets the inline text instead — never a dangling path.
 // ===========================================================================
-// Directories a spec directory must never be inside: writing plan.md there
-// would create a slash command, a CI workflow input or a git hook (N7).
-const SPEC_DIR_DENY = new Set(['.git', '.claude', '.github', 'node_modules'])
-
 function repoRelPath(v, what) {
   if (v === undefined || v === null || v === '') return { value: null }
   const p = typeof v === 'string' ? v.replace(/\\/g, '/').replace(/\/+$/, '').replace(/^(\.\/)+/, '') : ''
@@ -2113,7 +2109,7 @@ function renderSpec(reqs) {
     '# spec.md', '',
     `Initiative: ${initiative}`, '',
     '## Acceptance criteria', '',
-    ...reqs.criteria.map(c => `- **${c.id}** — ${c.text}`), '',
+    ...reqs.criteria.map(c => `- **${c.id}** — ${String(c.text).replace(/\s+/g, ' ').trim()}`), '',
     '## Surfaces', '',
     reqs.surfaces.join(', ') || '(none classified)', '',
     '## Assumptions', '', ...list(reqs.assumptions), '',
@@ -3451,6 +3447,8 @@ PLAN GAPS — design decisions the build tier escalated instead of making. Each 
           withPolicy(`Draft the user-facing documentation and release notes for this change. Verify every behavioral claim against the actual implementation, not the requirement text — label anything you could not verify as Unverified rather than asserting or omitting it.
 
 CRITERIA:\n${criteriaText}
+
+Write nothing into the repository: the change has been verified as committed, and any file you add or edit outside the run's handoff or spec directory would make the delivered commit differ from the verified one. Return the drafts in your reply.
 
 IMPLEMENTATION (build manifest — read the listed files rather than assuming their contents):\n${JSON.stringify(manifests, null, 2)}`),
           { agentType: 'sdlc-suite:technical-writer', label: 'docs', phase: 'Readiness', ...tier('docs') },

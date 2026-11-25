@@ -3007,6 +3007,21 @@ async function main() {
     assert.deepStrictEqual(grouped.surfaces, ['backend'])
   })
 
+  await test('a criterion the planner wrote over several lines survives the spec.md round trip', () => {
+    // Code review of PR 7: renderSpec wrote c.text verbatim, so a Given/When/Then criterion became an unindented
+    // multi-line bullet that parseSpec then rejected on approvedPlan, on a file the workflow wrote itself.
+    const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
+    const cut = (open) => { const a = src.indexOf(open); return src.slice(a, src.indexOf('\n}\n', a) + 3) }
+    const initiative = 'HU-9'
+    const { renderSpec, parseSpec } = new Function('initiative', `${cut('function renderSpec(reqs) {')}; ${cut('function parseSpec(text) {')}; return { renderSpec, parseSpec }`)(initiative)
+    const reqs = { criteria: [{ id: 'AC-1', text: 'Given a file\nWhen it is exported\nThen a CSV is written' }, { id: 'AC-2', text: 'single line' }],
+      surfaces: ['backend'], assumptions: [], openQuestions: [], contradictions: [] }
+    const r = parseSpec(renderSpec(reqs))
+    assert.deepStrictEqual(r.errors, [])
+    assert.deepStrictEqual(r.criteria.map(c => c.id), ['AC-1', 'AC-2'])
+    assert.strictEqual(r.criteria[0].text, 'Given a file When it is exported Then a CSV is written')
+  })
+
   await test('the test report traces every criterion to a case, its type, result and evidence — and readiness sees the count', async () => {
     // Pilot, HU 16: the report had a verdict and findings and nothing else.
     const { cwd, d } = gitSpecRepo()
