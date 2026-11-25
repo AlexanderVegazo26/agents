@@ -1,0 +1,6 @@
+name: apollo
+version: "0.1.0"
+description: "Apollo.io lookups for Hermes chats: `apollo` tool (people_search / contacts_search). Free searches only (0 credits); never reveals emails or phones. Key: APOLLO_API_KEY."
+author: "sdlc-suite"
+provides_tools:
+  - apollo

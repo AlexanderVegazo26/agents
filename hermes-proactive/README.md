@@ -66,16 +66,19 @@ Both are installed by `install.sh`.)
 ```sh
 python3 ~/.hermes/scripts/goals.py add "Ship the thing" --why "..."
 python3 ~/.hermes/scripts/goals.py milestone ship-the-thing add "First step" --due 2026-10-20
+# --script takes one filename with no arguments, so wrap `goals.py checkin`:
+printf '#!/usr/bin/env bash\nexec python3 "$HOME/.hermes/scripts/goals.py" checkin\n' \
+    > ~/.hermes/scripts/goals_digest.sh && chmod +x ~/.hermes/scripts/goals_digest.sh
 hermes cron create "0 9 * * 1" --name goals-checkin \
-    --script goals.py checkin --model <deep-model> --deliver telegram:<chat> \
+    --script goals_digest.sh --model <deep-model> --deliver telegram:<chat> \
     "From the goal report below write a check-in: celebrate done milestones, flag overdue, ask ONE question about the most stalled goal."
 ```
 
 ## Skills
 
-`watch`, `trigger`, `proactive-scan`, `goals` — installed into
-`~/.hermes/skills/`. In a Hermes session, mention them or use
-`/skill:<name>`-style invocation per your harness.
+`watch`, `trigger`, `proactive-scan`, `goals`: symlinked into
+`~/.hermes/skills/`, so edits here are live. In Hermes, each one is also a
+slash command (`/watch`, `/trigger`, `/proactive-scan`, `/goals`).
 
 ## Layout
 

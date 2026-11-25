@@ -20,11 +20,14 @@ A watch is a JSON file in ~/.hermes/monitors/:
     }
 
 KINDS
-  changed       visible-text hash differs from last run (honours "ignore")
+  changed       visible text differs from last run (honours "ignore"); the alert lists the
+                changed lines (New / Updated / Removed). A change in relative times alone
+                ("3 min ago", "hace 2 horas") is not reported. Line diff ported from
+                OpenMuse page-diff.ts (MIT, (c) 2026 OpenMuse contributors).
   text_contains condition substring/regex present
   text_missing  condition substring/regex absent
-  price_below   first $-price (after "selector") < condition
-  price_above   first $-price (after "selector") > condition
+  price_below   any $ / USD price (after "selector") < condition
+  price_above   any $ / USD price (after "selector") > condition
   json_equals   dotted json_path == condition        (path in "selector")
   json_below    numeric json_path < condition
   json_above    numeric json_path > condition
@@ -75,8 +78,12 @@ BACKOFF_MAX_TICKS = 64
 
 # ---------------------------------------------------------------- fetching
 
+BLOCK_TAGS = {"p", "div", "li", "tr", "br", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article",
+              "header", "footer", "td", "th", "dt", "dd", "pre", "blockquote", "option", "table", "ul", "ol"}
+
+
 class _Text(HTMLParser):
-    """Strip tags/script/style -> visible-ish text."""
+    """Strip tags/script/style -> visible-ish text, one line per block element."""
 
     def __init__(self):
         super().__init__()
@@ -86,20 +93,104 @@ class _Text(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style", "noscript"):
             self._skip += 1
+        elif tag in BLOCK_TAGS:
+            self.parts.append("\n")
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "noscript") and self._skip:
             self._skip -= 1
+        elif tag in BLOCK_TAGS:
+            self.parts.append("\n")
 
     def handle_data(self, data):
         if not self._skip:
             self.parts.append(data)
 
 
-def visible_text(html: str) -> str:
+def _raw_text(html: str) -> str:
     p = _Text()
     p.feed(html)
-    return re.sub(r"\s+", " ", " ".join(p.parts)).strip()
+    return "".join(p.parts)
+
+
+def visible_text(html: str) -> str:
+    return re.sub(r"\s+", " ", _raw_text(html)).strip()
+
+
+# ---------------------------------------------------------------- page diff (OpenMuse page-diff.ts, MIT)
+
+def page_lines(text: str, limit: int = 2000) -> list[str]:
+    """Unique, whitespace-collapsed lines (max 300 chars each) in page order."""
+    seen: dict[str, None] = {}
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()[:300]
+        if line:
+            seen.setdefault(line, None)
+        if len(seen) >= limit:
+            break
+    return list(seen)
+
+
+# Relative times tick on their own ("58 minutes ago" -> "1 hour ago"); a change in them alone is not news.
+_REL_TIME = re.compile(
+    r"\b(?:\d+|an?|one)\s+(?:sec(?:ond)?|min(?:ute)?|hour|hr|day|week|month|year)s?\s+ago\b"
+    r"|\bhace\s+(?:\d+|un[ao]?)\s+(?:segundo|minuto|min|hora|d[ií]a|semana|mes|año)(?:s|es)?\b"
+    r"|\bvor\s+(?:\d+|einer?|einem)\s+(?:sekunde|minute|stunde|tag|woche|monat|jahr)(?:e|en|n)?\b",
+    re.I)
+
+
+def without_relative_times(text: str) -> str:
+    return _REL_TIME.sub("<time>", text)
+
+
+def _numberless(line: str) -> str:
+    s = re.sub(r"\d+(?:[.,]\d+)*", "#", without_relative_times(line))
+    return re.sub(r"([^\W\d_])s\b", r"\1", s).lower()
+
+
+def _pair(previous: list[str], current: list[str], key):
+    """Pair each current line with one unused previous line of the same key."""
+    open_: dict[str, list[str]] = {}
+    for line in previous:
+        open_.setdefault(key(line), []).append(line)
+    used: list[str] = []
+    paired, unpaired = [], []
+    for line in current:
+        bucket = open_.get(key(line))
+        if bucket:
+            used.append(bucket.pop(0))
+            paired.append(line)
+        else:
+            unpaired.append(line)
+    left = list(previous)
+    for u in used:
+        left.remove(u)
+    return paired, unpaired, left
+
+
+def diff_page(previous: list[str], current: list[str]) -> dict:
+    _, unpaired, left = _pair(previous, current, lambda x: x)
+    _, unpaired, left = _pair(left, unpaired, without_relative_times)  # only a relative time changed
+    updated, added, removed = _pair(left, unpaired, _numberless)
+    return {"added": added, "updated": updated, "removed": removed}
+
+
+def describe_diff(d: dict) -> str:
+    out = []
+    for title, key, limit in (("New", "added", 8), ("Updated", "updated", 4), ("Removed", "removed", 4)):
+        lines = d[key]
+        if lines:
+            out.append(f"{title}:")
+            out += [f"• {x[:160]}" for x in lines[:limit]]
+            if len(lines) > limit:
+                out.append(f"+{len(lines) - limit} more")
+    return "\n".join(out)
+
+
+def count_diff(d: dict) -> str:
+    parts = [f"{len(d[k])} {w}" for k, w in (("added", "new"), ("updated", "updated"), ("removed", "removed")) if d[k]]
+    total = sum(len(v) for v in d.values())
+    return f"{total} line{'s' if total != 1 else ''} changed ({', '.join(parts)})" if total else ""
 
 
 def fetch(url: str, headers: dict | None, timeout: int, max_bytes: int) -> tuple[bytes, str]:
@@ -116,9 +207,8 @@ def fetch(url: str, headers: dict | None, timeout: int, max_bytes: int) -> tuple
 
 # ---------------------------------------------------------------- evaluation
 
-def _first_price(text: str) -> float | None:
-    m = re.search(r"\$\s*(\d[\d,]*(?:\.\d+)?)", text)
-    return float(m.group(1).replace(",", "")) if m else None
+def _prices(text: str) -> list[float]:
+    return [float(m.replace(",", "")) for m in re.findall(r"(?:\$|USD)\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)", text)]
 
 
 def _json_path(payload, path: str):
@@ -157,12 +247,14 @@ def evaluate(watch: dict, body: bytes, ctype: str) -> dict:
 
     text = body.decode("utf-8", "replace")
     if kind == "changed":
-        vis = visible_text(text)
+        raw = _raw_text(text) if "<" in text else text
         for pat in watch.get("ignore", []):
-            vis = re.sub(pat, " ", vis)
+            raw = re.sub(pat, " ", raw)
+        vis = re.sub(r"\s+", " ", raw).strip()
         digest = hashlib.sha256(vis.encode()).hexdigest()[:16]
+        timeless = hashlib.sha256(without_relative_times(vis).encode()).hexdigest()[:16]
         return {"state": "changed", "line": f"{name}: changed hash={digest} len={len(vis)}",
-                "value": digest, "snapshot": vis[:400]}
+                "value": digest, "timeless": timeless, "lines": page_lines(raw), "snapshot": vis[:400]}
 
     region = text
     if sel:
@@ -182,11 +274,13 @@ def evaluate(watch: dict, body: bytes, ctype: str) -> dict:
                 "line": f"{name}: {'ALERT' if not hit else 'ok'} expected text {cond!r} {'present' if hit else 'MISSING'}",
                 "value": hit}
     # price kinds
-    price = _first_price(visible_text(region) if "<" in region else region)
-    if price is None:
+    prices = _prices(visible_text(region) if "<" in region else region)
+    if not prices:
         return {"state": "error", "line": f"{name}: ERROR no price found in selected region", "value": None}
     thr = float(cond)
-    hit = price < thr if kind == "price_below" else price > thr
+    hits = [p for p in prices if (p < thr if kind == "price_below" else p > thr)]
+    hit = bool(hits)
+    price = hits[0] if hits else prices[0]
     return {"state": "alert" if hit else "ok",
             "line": f"{name}: {'ALERT' if hit else 'ok'} price ${price:.2f} threshold ${thr:.2f}",
             "value": price}
@@ -284,16 +378,23 @@ def run_watch(watch: dict, *, mode: str = "transitions", notify: bool = False,
         return line if mode == "transitions" else f"{name}: ok (recovered)"
 
     if watch["kind"] == "changed":
-        old_baseline = st.get("baseline")
-        commit(0, baseline=res["value"])
-        if old_baseline is None:
+        old_baseline, old_timeless, old_lines = st.get("baseline"), st.get("timeless"), st.get("lines")
+        commit(0, baseline=res["value"], timeless=res["timeless"], lines=res["lines"])
+        if old_baseline is None or old_timeless is None:  # first run, or state from before the line diff
             return f"{name}: baseline hash={res['value']}" if mode == "state" else None
         if res["value"] == old_baseline:
             return f"{name}: ok hash={res['value']}" if mode == "state" else None
-        line = f"{name}: CHANGE DETECTED hash {old_baseline} -> {res['value']}"
+        if old_timeless == res["timeless"]:  # only relative times ("3 min ago") changed: keep quiet
+            return f"{name}: ok (only relative times changed)" if mode == "state" else None
+        d = diff_page(old_lines, res["lines"]) if old_lines is not None else None
+        summary = count_diff(d) if d else ""
+        line = f"{name}: changed — {watch['url']}" + (f" — {summary}" if summary else "")
+        if d and not summary:  # text moved but no line changed (e.g. a reflow): not news
+            return f"{name}: ok (reflow only)" if mode == "state" else None
         if notify:
-            send_message(line + "\n\n" + (res.get("snapshot") or ""), dry_run=dry_run)
-        return line
+            body = describe_diff(d) if d else (res.get("snapshot") or "")
+            send_message(line + "\n\n" + body, dry_run=dry_run)
+        return line + ("\n" + describe_diff(d) if d else "")
 
     prev_alert = st.get("alert")
     hit = res["state"] == "alert"

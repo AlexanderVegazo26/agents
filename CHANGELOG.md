@@ -361,7 +361,51 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
     exits 0 (every source checked, none signalled), 1 (signal), 2 (broken
     config) or 3 (no signal, but some source could not be checked; not
     healthy).
-- **`video-editor` agent 1.0.0 and `video-editing` skill 1.1.0** for recorded
+- **Hermes video requests**: a `pre_gateway_dispatch` hook in the sdlc plugin adds a
+  routing note to every inbound video message (use the `video-editor` role, write under
+  `~/Videos/hermes-out/`, end with a `MEDIA:` line). `opus-video` may run
+  `hermes-transcribe` (local Whisper, SRT) beside `ffmpeg` and `ffprobe`; `claude_allow`
+  rules may contain a path.
+- **Hermes `claude` backend: per-choice `claude_allow` and medium effort**: a
+  catalog choice on the `claude` backend may list `Bash(<command>:*)` rules (for
+  example `ffmpeg` and `ffprobe` for video work); `claude -p` then gets Bash for
+  those commands only and every other command is denied. Every `claude`
+  dispatch is now pinned to `--effort medium`.
+- **Hermes `claude` model backend and role re-routing (sdlc plugin 0.2.0)**: a
+  catalog choice may set `"backend": "claude"`, and the `agent` tool then runs
+  that dispatch as `claude -p` on the user's Claude plan. The session is
+  read-only (`--tools Read,Grep,Glob`), unsaved, loads no MCP servers
+  (`--strict-mcp-config`) and runs with every `ANTHROPIC_*` variable removed, so
+  it uses the plan login and never an API key. A choice whose CLI is missing is
+  unavailable and walks its `fallback` list. The Python and Node catalog
+  validators both reject an unknown backend; `/idea` passes a claude choice
+  through without a local model load. Per-machine routing now sends the
+  orchestrator and QA to the local Ornith model, review and product roles to
+  Claude Sonnet, security, architecture and incident roles to Claude Opus, and
+  implementers to the Command Code DeepSeek model.
+- **`social-video-edit` skill** (footage plus HyperFrames motion graphics for
+  9:16 social video) and the Hermes **`watch_video`** plugin (Gemini reads a
+  YouTube link or file and reports cuts, captions and the hook).
+
+- **Hermes `cmdc` tool — a second dispatch backend in `.hermes/plugins/sdlc/`**:
+  one headless Command Code CLI session (`cmdc -p`) per call, instead of a
+  `hermes chat` process, so a Hermes session can delegate work to the Command
+  Code CLI. Parameters: `task`, optional `name` (a suite role whose file is
+  prepended exactly as `agent` does), `model` (a Command Code model id, passed
+  as `-m`) and `yolo`. Headless `cmdc` blocks file writes and shell commands by
+  default, so the tool is read-only unless `yolo` is true — and the tool
+  description reserves that for a request that actually asks for changes. The
+  prompt travels on stdin (`cmdc -p` auto-detects piped input), so a 50 KB role
+  file needs no shell and no argument-length limit; role files still resolve
+  from this suite's repository only, and the session runs in the caller's
+  directory. The runner resolves the CLI from `$CMDC_BIN`, the installed
+  `command-code` npm package, then `cmdc` on PATH, and names its exit codes in
+  the log. Separately, `plugin.yaml` now lists every registered tool in
+  `provides_tools` (`video_edit` was missing, which `hermes plugins validate`
+  rejects and `hermes plugins doctor` warns about), and `.hermes/validate.py`
+  checks that rule offline — CI runs the offline gate, not the catalog
+  validator.
+
 - **Routing-pin replay evals, `evals/routing-cases.v1.json` + `evals/routing.test.js`.**
   Each case is a representative task for one agent, the response recorded on its
   pinned tier and effort, and deterministic graders: `qa-runner` on haiku reports a
@@ -526,6 +570,12 @@ anything not listed here is in the commit log.
   deepfake detection) are deliberately not implemented. `motion-designer`,
   `prototyper`, `qa-runner` and `orchestrator` name it; `project-memory` adds a
   `video/` directory.
+- **Hermes `/videoedit` command and `video_edit` tool** (`.hermes/plugins/sdlc`): a host-side video pipeline for Telegram
+  that does not depend on a model improvising in the docker sandbox. ffmpeg runs inside bubblewrap; transcription uses a
+  local faster-whisper server managed by LlamaStash (`stt-transcribe`); the edit is one re-encode at the source's size,
+  frame rate and orientation. Includes a **motion-graphics layer** (glass cards with key points chosen by a local model,
+  stat/title/lower-third/picture cards, word-highlight captions, progress bar), admission limits for unattended callers,
+  and ~90 tests with mutation-checked guards. See `.hermes/plugins/sdlc/README.md`.
 - **`go-to-market` skill**, owned by `product-manager` (`2bf533e`).
 - **`prototyper` Fast mode**, the default for transcript prototypes (`75b0bc6`).
 - **pi harness port**: the generated `.pi/prompts/` and root `AGENTS.md`

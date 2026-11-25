@@ -1,34 +1,25 @@
 ---
 name: proactive-scan
-description: "Run the proactive suggestion engine: read-only scans of git repos, GitHub, RSS feeds and disk that surface deduplicated, acknowledgeable next-step suggestions. Usage: /proactive-scan run --notify, /proactive-scan list, /proactive-scan ack <id>"
+description: "Run the proactive suggestion scan of repos and feeds. Run the proactive suggestion engine: read-only scans of git repos, GitHub, RSS feeds and disk that surface deduplicated, acknowledgeable next-step suggestions. Usage: /proactive-scan run --notify, /proactive-scan list, /proactive-scan ack <id>"
 ---
 
-You operate `proactive_scan.py` (OpenBot proactive engine + OpenMuse ideas
-patterns) at `~/.hermes/scripts/proactive_scan.py`.
-
-It differs from a plain cron fetch: findings are deduplicated by id, re-alert
-on a 7-day TTL, and can be permanently acknowledged — so the same unpushed
-commit doesn't page you daily, but doesn't vanish either.
+`~/.hermes/scripts/proactive_scan.py` scans git repos, GitHub, RSS feeds and disk, read-only.
+Findings are deduplicated by id, re-alert after a 7-day TTL and can be acknowledged for good,
+so an unpushed commit neither pages daily nor silently disappears.
 
 Commands:
-- `proactive_scan.py run [--notify] [--source git|github|rss|disk]` — scan and
-  print/emit NEW findings only. Exit 0 always; findings on stdout.
-- `proactive_scan.py list` — known finding ids with ack state.
-- `proactive_scan.py ack <finding-id>` — silence permanently.
-- `proactive_scan.py add-feed <url> [--name N]` — register an RSS source
-  (~/.hermes/proactive_feeds.json).
-- `proactive_scan.py test <source>` — raw findings, no state changes.
+- `proactive_scan.py run [--notify] [--source git|github|rss|disk]`: scan and print only NEW
+  findings. Always exits 0.
+- `proactive_scan.py list`: known finding ids with their ack state.
+- `proactive_scan.py ack <finding-id>`: silence one permanently.
+- `proactive_scan.py add-feed <url> [--name N]`: add an RSS source (`~/.hermes/proactive_feeds.json`).
+- `proactive_scan.py test <source>`: raw findings, no state change.
 
-Recommended wiring (weekly digest + instant alerts):
-1. Digest: `hermes cron create "0 9 * * 1" "<prompt>" --name proactive-digest
-   --script proactive_digest.sh --model <deep-model> --deliver telegram:<chat>`
-   — the prompt should say: "Turn the findings below into a short ranked
-   action list; if it says 'no new findings', reply with an all-clear line."
-   (`--script` takes one filename, no args — hence the wrapper; both cron
-   wrappers are installed by install.sh.)
-2. Action-severity pings: same job shape with `--no-agent --script` wrapper
-   grepping for `[ACTION]` lines.
+Already wired: the `proactive-digest` cron job (wrapper `proactive_digest_claude.sh`, which runs
+`proactive_digest.sh` → `proactive_scan.py run`) turns new findings into a ranked action list.
+Check `hermes cron list` before adding another job; `--script` takes one filename with no
+arguments, so new jobs need a wrapper under `~/.hermes/scripts/`.
 
-When the user asks "what needs my attention?" — run
-`proactive_scan.py test git` and `test github` first (raw, fast), then
-present the action-severity items.
+"What needs my attention?": run `test git` and `test github` (raw, fast) and present only the
+action-severity items, each with a recommended next action. Rank by
+`~/.hermes/goals/_policy.md` (revenue and client outcomes first).

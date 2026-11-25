@@ -1,0 +1,66 @@
+# Project manager configuration (plugin: ~/.hermes/plugins/project_manager, docs: README.md there).
+# Edit freely; every job re-reads this file on each run, the Discord commands on each use.
+# IDs below were verified on 2026-10-21 against the ClickUp API and the Discord API.
+project_manager:
+  enabled: true
+  timezone: America/Santo_Domingo          # AST, UTC-4, no DST (host clock uses the same zone)
+
+  clickup:
+    workspace_id: "0000000000"             # your workspace
+    list_ids:
+      - "000000000000"                     # Testing Hay Mesa / Hay Mesa Board / Kanban Board (dev workflow)
+      - "000000000000"                     # Testing Hay Mesa / PM & POs / Kanban Board
+    status_mappings:                       # compared case-insensitively, "qa - testing" == "qa -testing"
+      closed: [closed, complete]
+      testing: [qa -testing]
+      rejected: [rejected]
+      blocked: [blocked]
+    stale_excluded_categories: [closed]    # Closed tickets never count as stale
+    inactivity_threshold_days: 7
+    max_stale_listed: 15
+    poll_interval_minutes: 15              # must match the pm-sync cron schedule
+
+  discord:
+    guild_id: "0000000000000000000"        # your server
+    standup_channel_id: "0000000000000000000"    # #standup channel
+    report_channel_id: "0000000000000000000"     # #report channel
+    operations_channel_id: "0000000000000000000" # #home (bot channel): errors, mapping problems
+    standup:
+      commands: [daily, standup, checking]
+      notification_mode: summary           # all_team | summary | targeted | quiet  (see README)
+      targeted_recipients: []              # user keys, for notification_mode: targeted
+      required_members: [member1, member2]     # who is reminded when missing (Member 3's 2026-10-16 announcement)
+      workdays: [0, 1, 2, 3, 4]            # Monday=0
+      prompt_enabled: true
+      reminder_enabled: true
+      summary_enabled: true
+    reporting:
+      daily_enabled: false
+      weekly_enabled: true
+      stale_mention_assignees: true        # ping assignees of stale tickets (verified mappings only)
+    reviewers:                             # confirmed by Member 4 2026-10-21
+      testing: member1
+      rejected: member2
+      blocked: member3
+    project_manager: member3              # gets unassigned-ticket follow-ups
+    escalation_recipient: member4        # gets escalations (mapping not yet verified -> not mentioned)
+
+  followups:
+    enabled: true
+    cooldown_hours: 24                     # min time between repeat reminders for the same issue
+    escalate_after_days: 3                 # after first notice, escalate once
+    testing_stuck_days: 3
+    rejected_stuck_days: 2
+    due_soon_days: 2
+    notify_unassigned: true
+
+  # verified: true only when the identity was confirmed beyond a name match. Unverified users are
+  # shown by name and never mentioned. IDs are immutable platform IDs, never display names.
+  users:
+    - {key: member1, display_name: Member 1, clickup_user_id: "000000000", discord_user_id: "000000000000000000", enabled: true, verified: true}
+    - {key: member2, display_name: Member 2, clickup_user_id: "000000000", discord_user_id: "000000000000000000", enabled: true, verified: true, aliases: [Member One]}
+    - {key: member3, display_name: Member 3, clickup_user_id: "000000000", discord_user_id: "0000000000000000000", enabled: true, verified: true}
+    - {key: member4, display_name: Member 4, clickup_user_id: "000000000", discord_user_id: "000000000000000000", enabled: true, verified: false}
+    - {key: member5, display_name: Member 5, clickup_user_id: "00000000", discord_user_id: "0000000000000000000", enabled: true, verified: false}
+    - {key: member6, display_name: Member 6, clickup_user_id: "000000000", discord_user_id: "0000000000000000000", enabled: true, verified: false}
+    - {key: member7, display_name: Member 7, clickup_user_id: "000000000", enabled: true, verified: false}
