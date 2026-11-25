@@ -60,7 +60,7 @@
       "claude_allow": [
         "Bash(ffmpeg:*)",
         "Bash(ffprobe:*)",
-        "Bash(/home/alexander-vegazo/.hermes/scripts/hermes-transcribe:*)"
+        "Bash(/home/you/.hermes/scripts/hermes-transcribe:*)"
       ],
       "use_for": "Claude Opus via your Claude plan for video work: read-only plus ffmpeg, ffprobe and the local hermes-transcribe (Whisper, SRT) only; no other shell command, no MCP.",
       "fallback": [

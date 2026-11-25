@@ -190,6 +190,31 @@ CHECKS: list[Check] = [
     _suite("hermes-proactive/tests/test_notify.py",
            "hp.notify, the Telegram hand-off all three services share, with tg_send.py faked. "
            "Seen red by ignoring tg_send's exit code (2 failures) and by dropping --chat (1)."),
+    _suite("hermes-proactive/tests/test_ideas.py",
+           "Idea candidates, retirement and decisions in proactive_scan.py. Seen red by dropping "
+           "the five-suggestions-per-check-in cap."),
+    _suite("hermes-proactive/tests/test_page_diff.py",
+           "The page line diff in condition_monitor.py. Seen red by making the relative-time "
+           "filter miss English 'N minutes ago' (a tick of the clock became news)."),
+    _suite(".hermes/plugins/sdlc/test_vet_copy.py",
+           "vet_copy, what the /idea pipeline publishes, with WORK_BASE a temp dir. Seen red by "
+           "removing the site/-inside-WORK_BASE check."),
+    _suite(".hermes/plugins/sdlc/test_cmdc_gate.py",
+           "The cmdc caller gate (host Command Code is owner-only). Seen red by letting cron "
+           "sessions through."),
+    _suite(".hermes/plugins/sdlc/test_video_pipeline.py",
+           "The video pipeline with a fake stt-transcribe and a fake loopback Bot API; skips its "
+           "end-to-end cases without ffmpeg/bubblewrap/systemd-run. Seen red (2 failures) by making under_roots accept "
+           "any path.", timeout=900),
+    _suite(".hermes/plugins/project_manager/test_project_manager.py",
+           "The ClickUp/Discord project manager, both faked. Seen red by @mentioning unverified "
+           "Discord mappings."),
+    _suite(".hermes/plugins/sonnet_link/test_sonnet_link.py",
+           "sonnet_link publishing with cloudflared/systemctl faked. Seen red by accepting "
+           "reserved subdomains."),
+    _suite(".hermes/plugins/watch_video/test_watch_video.py",
+           "watch_video URL/file intake with urlopen faked. Seen red by accepting YouTube URLs "
+           "that carry userinfo."),
     _suite("scripts/test_gitleaks_rules.py",
            "Every .gitleaks.toml rule fires and every allowlist excuses only its own rule on its "
            "own paths; skips without a gitleaks binary (CI's secrets job requires one). Seen red "

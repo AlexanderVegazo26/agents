@@ -605,6 +605,11 @@ class Handler(unittest.TestCase):
         self.mod.register(Ctx())
         self.assertIn("pre_gateway_dispatch", hooks)
         self.assertIn("video-editor", self.mod.VIDEO_ROUTING_NOTE)
+        # The note names the transcriber by absolute path: the opus-video choice's claude_allow is a
+        # literal command prefix, so "~" in the note would not match it.
+        transcribe = os.path.expanduser("~") + "/.hermes/scripts/hermes-transcribe "
+        self.assertIn(transcribe, self.mod.VIDEO_ROUTING_NOTE,
+                      f"routing note should give the absolute transcriber path {transcribe!r}")
         self.assertIn("video_edit", reg)
         self.assertEqual(reg["video_edit"]["toolset"], "sdlc")
         self.assertIn("Do NOT run ffmpeg", reg["video_edit"]["schema"]["description"])

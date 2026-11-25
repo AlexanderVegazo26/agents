@@ -888,7 +888,7 @@ VIDEO_ROUTING_NOTE = (
     "\n\n[Hermes routing note: this message carries a video. If the request is to edit, cut, caption, clean or "
     "reframe it, do not edit it yourself. Call the `agent` tool once with role `video-editor`, pass the video file path "
     "from the attachment note above and the request, and tell it: write the result under ~/Videos/hermes-out/; to "
-    "transcribe run /home/alexander-vegazo/.hermes/scripts/hermes-transcribe <file> [language] (SRT on stdout); end "
+    f"transcribe run {Path.home()}/.hermes/scripts/hermes-transcribe <file> [language] (SRT on stdout); end "
     "the reply with the finished file as a line `MEDIA: <absolute path>`. Then answer with that MEDIA line, or one "
     "question if you are blocked. If the request is only to look at or describe the video, use `watch_video` instead.]"
 )
