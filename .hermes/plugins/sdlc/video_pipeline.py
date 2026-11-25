@@ -261,9 +261,17 @@ def new_job(source: Path, opts: dict, fingerprint: str = "") -> str:
     os.chmod(STATE, 0o700)
     sweep_old()
     sweep_outputs()
-    job = f"{time.strftime('%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-    d = STATE / job
-    d.mkdir(mode=0o700)
+    # The id is the second plus 4 hex digits, so two jobs in one second can draw the same id: draw again
+    # rather than fail the request (mkdir is the atomic claim).
+    for attempt in range(8):
+        job = f"{time.strftime('%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+        d = STATE / job
+        try:
+            d.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            if attempt == 7:
+                raise
     (d / "job.json").write_text(json.dumps({"source": str(source), "opts": opts, "fingerprint": fingerprint}), encoding="utf-8")
     return job
 

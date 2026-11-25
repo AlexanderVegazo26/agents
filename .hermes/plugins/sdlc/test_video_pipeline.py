@@ -6,6 +6,7 @@ Telegram Bot API on loopback; the child environment never inherits real TELEGRAM
 import fcntl
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -327,6 +329,19 @@ class Safety(unittest.TestCase):
         vp.OUT_DIR = self._out
         self.t.cleanup()
 
+    def test_new_job_draws_a_fresh_id_when_the_first_one_is_taken(self):
+        """Two jobs in the same second can draw the same 4-hex suffix; the second must not fail with FileExistsError."""
+        draws = iter(["aaaa", "aaaa", "bbbb"])
+        with mock.patch.object(vp, "STATE", self.p / "state"), \
+                mock.patch.object(vp.time, "strftime", lambda fmt, *a: "1125-010203"), \
+                mock.patch.object(vp.secrets, "token_hex", lambda n: next(draws)):
+            first = vp.new_job(self.p / "a.mp4", {})
+            second = vp.new_job(self.p / "b.mp4", {})
+            self.assertEqual((first, second), ("1125-010203-aaaa", "1125-010203-bbbb"),
+                             "the colliding draw should be retried, not reused or raised")
+            self.assertIn("b.mp4", (vp.STATE / second / "job.json").read_text(),
+                          "the retried job should hold its own source, not overwrite the first job's")
+
     def test_publish_copies_and_hashes(self):
         r = self.p / "render.mp4"
         r.write_bytes(b"abc" * 1000)
@@ -400,8 +415,16 @@ class Safety(unittest.TestCase):
         self.assertIn("+3 more", r)
 
 
-@unittest.skipUnless(vp.bwrap_available() and subprocess.run(["which", "systemd-run"], capture_output=True).returncode == 0,
-                     "needs bubblewrap and systemd --user")
+def _user_systemd_reachable() -> bool:
+    """systemd-run being installed is not enough: CI runners have it but no user bus (no XDG_RUNTIME_DIR)."""
+    try:
+        return subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+@unittest.skipUnless(vp.bwrap_available() and shutil.which("systemd-run") and _user_systemd_reachable(),
+                     "needs bubblewrap and a reachable systemd --user")
 class RealUnit(unittest.TestCase):
     def test_sandbox_works_under_the_production_unit_properties(self):
         """The bug the unit tests missed: some unit properties stop bubblewrap from starting (AppArmor userns policy)."""
@@ -430,7 +453,14 @@ class Handler(unittest.TestCase):
         self.mod = _plugin()
         self.vp = self.mod._video_module()
         self.vp.STATE, self.vp.OUT_DIR = self.t / "state", self.t / "out"
-        self.vp.bwrap_available()   # probe the sandbox for real, before subprocess is mocked
+        # The handler's host checks are pinned, not probed: this class tests the handler's own logic, and
+        # it must give the same answer on a host without ffmpeg or a usable bubblewrap (GitHub's runners).
+        # The real tools are covered by Renderer, Sandbox, RealUnit and EndToEnd, which skip without them.
+        self.saved_bwrap, self.vp._BWRAP = self.vp._BWRAP, True
+        real_which = shutil.which
+        self.which = mock.patch.object(shutil, "which", lambda name, *a, **k:
+                                       f"/usr/bin/{name}" if name in ("ffmpeg", "ffprobe") else real_which(name, *a, **k))
+        self.which.start()
         self.calls = []
         self.real_run, self.real_popen = subprocess.run, subprocess.Popen
         self.is_active = "inactive"
@@ -459,6 +489,8 @@ class Handler(unittest.TestCase):
 
     def tearDown(self):
         subprocess.run, subprocess.Popen = self.real_run, self.real_popen
+        self.which.stop()
+        self.vp._BWRAP = self.saved_bwrap
         for k, v in self.saved.items():
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
         self.td.cleanup()
