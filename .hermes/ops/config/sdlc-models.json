@@ -28,7 +28,7 @@
       ]
     },
     "power": {
-      "model": "cc-deepseek",
+      "model": "cmd-deepseek",
       "use_for": "Command Code bridge (deepseek/deepseek-v4-pro via cmd -p, can edit and run). Strong cloud implementer for software, UI and database work; also the escalation tier when local models are down. Content leaves the machine.",
       "fallback": [
         "sonnet",
