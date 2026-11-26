@@ -52,8 +52,13 @@ class TempCase(unittest.TestCase):
         self.src.mkdir()
         self.secret = self.root / "host-secret.txt"
         self.secret.write_text("HOST SECRET")
+        # vet_copy walks from WORK_BASE with O_NOFOLLOW and refuses a src outside it, so each case's
+        # temp dir has to be the prototypes folder (same as test_vet_copy.py does).
+        self._wb = mock.patch.object(pp, "WORK_BASE", self.root)
+        self._wb.start()
 
     def tearDown(self) -> None:
+        self._wb.stop()
         self._td.cleanup()
 
     def write(self, rel: str, text: str = "x") -> Path:

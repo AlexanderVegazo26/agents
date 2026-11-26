@@ -16,7 +16,7 @@ open-source tools onto Hermes's actual, verified extension points.
 | Outbound push | `hermes send -t telegram` etc. from any shell script |
 | Local STT | `faster-whisper 1.2.1` + `ctranslate2` already in the venv ("Speech-to-Text: local faster-whisper") |
 | Personality | `~/.hermes/SOUL.md` system personality + project/local skills (`.hermes/skills/`), including `persona-qa-sweep` |
-| Models | Local Ornith-1.5-35B (llamastash), cc-bridge, Nous Portal, Anthropic |
+| Models | Local Ornith-1.5-35B (llamastash), cmd-bridge, Nous Portal, Anthropic |
 
 Key insight: Hermes is an event-driven agent already. Meetings are just another
 event source. The bot is the *ears and voice*; Hermes is the *brain*.
@@ -96,7 +96,8 @@ Two modes:
 1. **Plugin tool (`~/.hermes/plugins/meetings/`)**
    - `plugin.yaml` → `provides_tools: [meeting_bot, meeting_transcript, meeting_stop]`
    - Python `__init__.py` registers tools whose handlers call the Vexa API
-     (localhost:18056). Or skip the plugin: Vexa's `/mcp` endpoint is an MCP
+     (localhost:8056 — the gateway port; 18056 was an early guess). Or skip
+     the plugin: Vexa's `/mcp` endpoint is an MCP
      server — add it as a Hermes toolset (`hermes` MCP config) and Hermes gets
      the tools for free.
 2. **Webhook (event → agent turn)**
@@ -130,7 +131,7 @@ Two modes:
   and `meeting-notes`, delivered to Telegram. Hermes's existing faster-whisper
   venv can serve as the Vexa STT unit.
 - **Phase 2 (in-call voice):** Meeting-Baas speaking-meeting-bot (Pipecat) with
-  its LLM step pointed at Hermes (cc-bridge / local llamastash endpoint), and
+  its LLM step pointed at Hermes (cmd-bridge / local llamastash endpoint), and
   its Markdown persona generated from SOUL.md. Vexa remains the transcription/
   archive layer, or the Pipecat bot's transcript is posted to the same webhook
   routes.
