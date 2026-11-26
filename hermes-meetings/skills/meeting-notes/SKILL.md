@@ -1,7 +1,7 @@
 ---
 name: meeting-notes
 description: "Notes, decisions and actions from a call transcript. Turn a completed call transcript into structured notes (summary, decisions, action items with owners, open questions, follow-up draft) and update long-term memory. Use after a meeting ends or when the user asks for notes or a recap of a call."
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 license: MIT
 platforms: [linux]
@@ -29,6 +29,13 @@ Invoked by hand, or `transcript_file` missing: find the meeting with
 pull `mcp__vexa__get_meeting_transcript`, and use
 `~/.hermes/data/vexa-notes/<platform>-<native_meeting_id>.md` as the target.
 Create parent dirs as needed.
+
+No poller is installed yet, so the webhook payload path above is not wired
+and `~/.hermes/data/vexa-transcripts/` does not exist — expect to be invoked
+by hand and to pull the transcript from Vexa itself. `~/.hermes/data/vexa-notes/`
+does not exist either: create it (`mkdir -p`) before writing. If the MCP
+server is unreachable, start the stack first
+(`~/.hermes/scripts/vexa-stack.sh start`).
 
 ## Procedure
 

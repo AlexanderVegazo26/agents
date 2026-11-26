@@ -26,7 +26,7 @@
       "fallback": ["balanced", "fast"]
     },
     "power": {
-      "model": "cc-deepseek",
+      "model": "cmd-deepseek",
       "use_for": "Command Code bridge (deepseek/deepseek-v4-pro through the local cmd-gateway). The escalation tier: reach for it when the local models are unavailable, out of VRAM, or the task outgrows them. No probe — the bridge is a local service.",
       "fallback": ["deep"]
     }

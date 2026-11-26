@@ -39,14 +39,18 @@ LEDGER = os.path.join(HOME, ".local/state/llm-ask/ledger.jsonl")
 # rejects is halved, and the halved size is reused for the remaining pieces.
 CHARS_PER_TOKEN = 1.4
 
-# name: (model id, context window per request, fallback tier)
+# name: (model id, context window per request, fallback tier, endpoint override)
+# The endpoint override (2026-11-26) lets a tier point at a DIFFERENT local server than
+# the LlamaStash proxy — that is how a cloud model is reachable: the commandcode gateway
+# (http://127.0.0.1:11440/v1) serves 100+ cloud models that cost no local VRAM. A tier
+# with its own endpoint is not a local model, so it is never gated by the GPU fit check.
 DEFAULT_TIERS = {
-    "fast": ("Ornith-1.5-9B-Q8_0", 131072, None),
-    "agent": ("Ornith-1.5-35B-Q8_0", 262144, "fast"),
-    "coder": ("Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", 131072, "agent"),
-    "deep": ("Qwen3.8-27B-Q8_0", 131072, "agent"),
-    "vision": ("Qwen3-VL-8B-Instruct-Q8_0", 65536, "agent"),
-    "frontier": ("Ornith-1.5-122B-UD-Q3_K_XL", 131072, "agent"),
+    "fast": ("Ornith-1.5-9B-Q8_0", 131072, None, None),
+    "agent": ("Ornith-1.5-35B-Q8_0", 262144, "fast", None),
+    "coder": ("Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", 131072, "agent", None),
+    "deep": ("Qwen3.8-27B-Q8_0", 131072, "agent", None),
+    "vision": ("Qwen3-VL-8B-Instruct-Q8_0", 65536, "agent", None),
+    "frontier": ("Ornith-1.5-122B-UD-Q3_K_XL", 131072, "agent", None),
 }
 KNOWN_CALLERS = ("claude", "cmd", "codex", "kimi", "pi", "opencode", "copilot", "gemini", "hermes", "aider")
 CALLER_ALIASES = {"command-code": "cmd", "commandcode": "cmd", "hermes-agent": "hermes"}
@@ -91,7 +95,11 @@ def config():
             die(f"bad {CONFIG}: {exc}")
     tiers = dict(DEFAULT_TIERS)
     for name, t in (cfg.get("tiers") or {}).items():
-        tiers[name] = (t["model"], int(t.get("ctx", 32768)), t.get("fallback"))
+        tbase = (t.get("base_url") or "").rstrip("/") or None
+        if tbase and not _loopback(tbase) and os.environ.get("LLM_ASK_ALLOW_REMOTE") != "1":
+            die(f"refusing non-loopback tier endpoint {tbase} (file contents and the key would leave "
+                "this machine). Do not override this yourself: stop and ask the user.")
+        tiers[name] = (t["model"], int(t.get("ctx", 32768)), t.get("fallback"), tbase)
     base = (os.environ.get("LLM_ASK_BASE_URL") or cfg.get("base_url") or "http://127.0.0.1:11435/v1").rstrip("/")
     if not _loopback(base) and os.environ.get("LLM_ASK_ALLOW_REMOTE") != "1":
         die(f"refusing non-loopback endpoint {base} (file contents and the key would leave this machine). "
@@ -163,15 +171,17 @@ def fits(model):
 
 def pick(tier, tiers, explicit_model):
     if explicit_model:
-        return explicit_model, 32768, None
+        return explicit_model, 32768, None, None
     seen, name = [], tier
     while name and name not in seen:
         if name not in tiers:
             die(f"unknown tier {name!r}; tiers: {', '.join(tiers)}")
         seen.append(name)
-        model, ctx, fb = tiers[name]
-        if fits(model):
-            return model, ctx, (None if name == tier else f"{tier}->{name} (GPU memory)")
+        model, ctx, fb, tbase = tiers[name]
+        # A tier with its own endpoint is a remote (cloud) model: it needs no local GPU
+        # memory, so the local fit check does not apply to it.
+        if tbase or fits(model):
+            return model, ctx, (None if name == tier else f"{tier}->{name} (GPU memory)"), tbase
         name = fb
     die(f"tier {tier} and its fallbacks cannot load now without unloading other models; "
         "retry later, use --tier fast, or free room with `llm-combo load`", 4)
@@ -271,9 +281,11 @@ def split_lines(text, size):
 def cmd_ask(a):
     base, key, tiers = config()
     tier = "vision" if a.image and a.tier == "agent" and not a.model else a.tier
-    model, ctx, fallback = pick(tier, tiers, a.model)
+    model, ctx, fallback, tbase = pick(tier, tiers, a.model)
     if fallback:
         print(f"[llm-ask] {fallback}: using {model}", file=sys.stderr)
+    if tbase:
+        base = tbase  # the tier's own endpoint (a cloud model behind the local gateway)
     material, _ = read_inputs(a.file)
     system = a.system or ("You are a careful assistant working for another AI agent. Answer only what the "
                           "instruction asks, as briefly as the task allows. If the material does not contain "
@@ -391,7 +403,19 @@ def cmd_tiers():
         print(f"endpoint {base}: UNREACHABLE ({exc})")
     if up:
         print(f"endpoint {base}: up")
-    for name, (model, ctx, fb) in tiers.items():
+    for name, (model, ctx, fb, tbase) in tiers.items():
+        if tbase:
+            # A cloud tier: its own endpoint, no local VRAM. Check that one instead.
+            try:
+                req = urllib.request.Request(tbase + "/models", headers={"Authorization": f"Bearer {key}"})
+                with OPENER.open(req, timeout=10) as r:
+                    cids = {m.get("id") for m in json.load(r).get("data", [])}
+                known = "" if model in cids else "  (not in /models)"
+                state = "up"
+            except Exception as exc:
+                known, state = f"  (UNREACHABLE: {exc})", "down"
+            print(f"  {name:<9} {model:<42} ctx {ctx:>7,}  cloud @ {tbase} [{state}]{known}")
+            continue
         known = "" if not up else ("" if model in ids or any(model in (i or "") for i in ids) else "  (not in /models)")
         print(f"  {name:<9} {model:<42} ctx {ctx:>7,}  fallback {fb or '-'}{known}")
     sys.exit(0 if up else 3)

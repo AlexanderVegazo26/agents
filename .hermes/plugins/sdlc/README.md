@@ -227,7 +227,7 @@ to Telegram as a button.
 idea-cloud "<text>"`) runs the same pipeline with every role — prototyper,
 code review, visual review, fixes — pinned to one catalog choice, `power` by
 default (`SDLC_CLOUD_CHOICE` overrides it). `power` is the Command Code bridge
-(`cc-deepseek` → `deepseek/deepseek-v4-pro` on `commandcode-gateway.service`,
+(`cmd-deepseek` → `deepseek/deepseek-v4-pro` on `commandcode-gateway.service`,
 `:11440`), so nothing is loaded on the GPU. The idea, the prototype's files and
 the reviews go to that cloud provider; use `/idea` to keep them on this
 machine.

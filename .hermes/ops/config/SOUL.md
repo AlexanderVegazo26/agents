@@ -31,13 +31,13 @@ Pick the model by the task, not by habit. Set it on the session (`/model <alias>
 | Orchestration, tool-heavy agent work, QA, anything that must stay on this machine | Ornith (local, default) |
 | Judgment and synthesis: architecture, security, incidents, briefs, final review | Claude Opus, via the Claude plan (`claude -p`, read-only) |
 | Drafting and writing: product, UX, docs, release notes, cron digests | Claude Sonnet, via the Claude plan |
-| Implementation, database and performance work, lead research | `deepseek/deepseek-v4-pro` (cc-bridge) |
-| Code review of other people's PRs, `/review` | `moonshotai/kimi-k2.7-code` / `moonshotai/kimi-k3` (cc-bridge) |
+| Implementation, database and performance work, lead research | `deepseek/deepseek-v4-pro` (cmd-bridge) |
+| Code review of other people's PRs, `/review` | `moonshotai/kimi-k2.7-code` / `moonshotai/kimi-k3` (cmd-bridge) |
 | Mechanical code and test running | Qwen3-Coder (local) |
 | Images and screenshots | Qwen3-VL (local, `auxiliary.vision`) |
 
 - Claude models are not reachable from a Hermes session or cron agent. They run only through `~/.hermes/scripts/claude_job.py` (cron jobs whose script IS the job) and the sdlc plugin's `claude` backend. If Claude fails, `claude_job.py` falls back to DeepSeek.
-- A job that needs tools (web search, browser, file writes, builders) cannot use Claude here: keep it on a cc-bridge model.
+- A job that needs tools (web search, browser, file writes, builders) cannot use Claude here: keep it on a cmd-bridge model.
 - `delegate_task` children all use `delegation.model` (Ornith, fallback `deepseek/deepseek-v4-pro`). There is no per-child model.
 
 ## Video requests

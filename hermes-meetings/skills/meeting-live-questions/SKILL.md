@@ -1,7 +1,7 @@
 ---
 name: meeting-live-questions
 description: Questions to ask right now in a live call. Generate sharp, well-timed questions to ask right now in a call that is still running (client, prospect or partner — budget, scope, timing, objections), from the live transcript when there is one. Used by the vexa-live webhook route, or when the user asks mid-call "what should I ask?" / "qué le pregunto?". Not for email drafts or the sales pipeline (that is `sales-outreach`).
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 license: MIT
 platforms: [linux]
@@ -26,9 +26,12 @@ From the webhook payload (when triggered by the `vexa-live` route):
 - `meeting_file` — running transcript Markdown
   (`~/.hermes/data/vexa-transcripts/<meeting_id>.md`)
 
-When invoked by hand (no payload), or when `meeting_file` is missing: get
-the meeting with `mcp__vexa__get_bot_status`, then
+No poller is installed yet, so the route does not fire by itself and
+`~/.hermes/data/vexa-transcripts/` does not exist. Expect to be invoked by
+hand: get the meeting with `mcp__vexa__get_bot_status`, then
 `mcp__vexa__get_meeting_transcript`; treat the last ~3 minutes as `new_text`.
+If the MCP server is unreachable, start the stack first
+(`~/.hermes/scripts/vexa-stack.sh start`).
 
 ## Procedure (keep it fast — at most 3 tool calls)
 

@@ -2,15 +2,15 @@
 model:
   default: Ornith-1.5-35B-Q8_0
 fallback_providers:
-- provider: cc-bridge
+- provider: cmd-bridge
   model: deepseek/deepseek-v4-pro
-- provider: cc-bridge
+- provider: cmd-bridge
   model: moonshotai/kimi-k3
 - provider: custom:llamastash
   model: Ornith-1.5-35B-Q8_0
 auxiliary:
   review:
-    provider: custom:cc-bridge
+    provider: custom:cmd-bridge
     model: moonshotai/kimi-k3
   vision:
     provider: llamastash
@@ -21,18 +21,18 @@ delegation:
   provider: custom:llamastash
   model: Ornith-1.5-35B-Q8_0
   fallback_providers:
-  - provider: custom:cc-bridge
+  - provider: custom:cmd-bridge
     model: deepseek/deepseek-v4-pro
-  - provider: custom:cc-bridge
+  - provider: custom:cmd-bridge
     model: moonshotai/kimi-k3
 moa:
   presets:
     default:
       reference_models:
-      - provider: custom:cc-bridge
+      - provider: custom:cmd-bridge
         model: deepseek/deepseek-v4-pro
         enabled: true
-      - provider: custom:cc-bridge
+      - provider: custom:cmd-bridge
         model: moonshotai/kimi-k3
         enabled: true
       aggregator:
@@ -41,10 +41,10 @@ moa:
       degraded_reference_policy: loud
       fanout: user_turn
   reference_models:
-  - provider: custom:cc-bridge
+  - provider: custom:cmd-bridge
     model: deepseek/deepseek-v4-pro
     enabled: true
-  - provider: custom:cc-bridge
+  - provider: custom:cmd-bridge
     model: moonshotai/kimi-k3
     enabled: true
   aggregator:

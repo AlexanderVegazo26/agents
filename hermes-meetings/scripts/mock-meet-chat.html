@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- A stand-in for Google Meet's chat panel, used to test the vexa_cdp driver without a live call.
+     Mirrors the shapes the driver looks for: a "Chat with everyone" button, a hidden panel with a
+     textarea labelled "Send a message to everyone", and Enter that posts the message. -->
+<html>
+  <head><meta charset="utf-8" /><title>mock meet</title></head>
+  <body>
+    <h1>Mock meeting</h1>
+    <button aria-label="Chat with everyone">Chat</button>
+    <div id="chat-panel" style="display: none">
+      <ul id="messages"></ul>
+      <textarea aria-label="Send a message to everyone" rows="2"></textarea>
+    </div>
+    <script>
+      const panel = document.getElementById("chat-panel");
+      const input = panel.querySelector("textarea");
+      const list = document.getElementById("messages");
+      document.querySelector('button[aria-label*="chat with everyone" i]').addEventListener("click", () => {
+        panel.style.display = "block";
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" || !input.value.trim()) return;
+        e.preventDefault();
+        const li = document.createElement("li");
+        li.textContent = "Hermes: " + input.value;
+        list.appendChild(li);
+        input.value = "";
+      });
+    </script>
+  </body>
+</html>
