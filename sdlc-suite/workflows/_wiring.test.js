@@ -1170,6 +1170,16 @@ async function main() {
     const rp = rep.calls.find(c => c.label === 'repair:backend')
     assert.ok(rp.opts.isolation === undefined, 'the repair must work on the original change, not a fresh worktree')
     assert.ok(rp.prompt.includes('HEAD~1..HEAD'), 'the repair was not told where the change lives')
+    // A reviewer's rule for the pilot: every bug enters first as a test that fails.
+    assert.ok(/write the test that reproduces it, run it and see it FAIL on the current code/.test(rp.prompt), 'the repair is not told to reproduce a defect with a failing test first')
+    // A surviving mutant is closed by evidence (now Killed, or a disable comment whose reason holds), never by argument:
+    // the repair, the refuter and the re-verifier all carry the rule.
+    assert.ok(/report that the mutant is now Killed/.test(rp.prompt) && /Also run it on the lines your repair changed/.test(rp.prompt), 'the repair is not told to show the mutant killed and to mutate its own lines')
+    const rule = /refuted or closed only by evidence: a mutation run on that file and line in which the mutant is now Killed/
+    assert.ok(rule.test(rep.calls.find(c => c.label === 'reverify:qa').prompt), 'the re-verifier can close a surviving mutant without seeing it killed')
+    assert.ok(/run the mutation tool yourself on that file and line/.test(rep.calls.find(c => c.label === 'reverify:qa').prompt), 'the re-verifier is not told to re-run the mutation')
+    const refuters = rep.calls.filter(c => /^refute:/.test(c.label))
+    assert.ok(refuters.length > 0 && refuters.every(c => rule.test(c.prompt)), 'a refuter can dismiss a surviving mutant by argument')
   })
 
   await test('a closed repair records its round and clears the blocking finding', () => {
@@ -3032,7 +3042,7 @@ async function main() {
         { id: 'CP-01', criterion: 'AC-1', title: 'Exportar un CSV | con columnas', type: 'unit', test: 'test/export.test.ts › csv', result: 'pass', evidence: 'specs/features/HU-9/evidencia/CP-01/out.txt' },
         { id: 'CP-02', criterion: 'AC-2', title: 'Rechazar una exportación vacía', type: 'manual', result: 'not-run' },
       ],
-      mutation: { tool: 'stryker', score: 86, survived: 2, scope: 'src/export.ts' },
+      mutation: { tool: 'stryker', score: 86, survived: 2, measured: 40, skipped: 12, scope: 'src/export.ts' },
     }
     const r = await runScript('sdlc-feature.js', {
       cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents({ 'verify:qa': qa }),
@@ -3041,13 +3051,65 @@ async function main() {
     const rep = fs.readFileSync(path.join(d, 'test-report.md'), 'utf8')
     assert.ok(/## Traceability — one case per criterion/.test(rep), rep.slice(0, 400))
     assert.ok(rep.includes('| AC-1 | CP-01 — Exportar un CSV \\| con columnas | unit | test/export.test.ts › csv | pass | specs/features/HU-9/evidencia/CP-01/out.txt |'), rep)
-    assert.ok(/1 of 2 criteria proven by a passing automated case; pending human QA \(no passing automated case\): AC-2; mutation score 86% \(stryker, src\/export\.ts\)/.test(rep), rep)
+    assert.ok(/1 of 2 criteria proven by a passing automated case; pending human QA \(no passing automated case\): AC-2; mutation score 86% over 40 measured \(2 survived\), 12 skipped \(stryker, src\/export\.ts\); 2 live mutant\(s\) reported but only 0 surviving-mutant finding\(s\)/.test(rep), rep)
+    assert.ok(/mutation score 86% over 40 measured \(2 survived\), 12 skipped/.test(byLabel(r, 'readiness').prompt), 'readiness does not see what the mutation score was measured over')
     const qaCall = r.calls.find(c => c.label === 'verify:qa')
     assert.strictEqual(qaCall.opts.schema.required.includes('cases'), true, 'the test lens is not asked for cases')
     assert.ok(qaCall.prompt.includes(`${SPEC}/evidencia/`) || qaCall.prompt.includes('evidencia/<case id>'), 'the test lens is not told where to save evidence')
     assert.ok(/1 of 2 criteria proven/.test(byLabel(r, 'readiness').prompt), 'readiness does not see the traceability count')
     // The review lenses keep the plain findings schema.
     assert.ok(!r.calls.find(c => c.label === 'verify:review').opts.schema.required.includes('cases'))
+    // The test lens is asked for what the score was measured over; the code review
+    // is asked for the callers the changed-lines mutation run cannot see.
+    const mut = qaCall.opts.schema.properties.mutation.properties
+    assert.ok(mut.measured && mut.skipped, 'the mutation schema does not ask for measured and skipped mutants')
+    assert.ok(/"mutation\.measured" and "mutation\.skipped"/.test(qaCall.prompt), 'the test lens is not told to report measured and skipped mutants')
+    // A surviving mutant blocks: killed by a test, or justified as equivalent where the tool reads it.
+    assert.ok(/Each surviving mutant in changed code — a mutant with no coverage counts as surviving — is a Must Fix finding of its own/.test(qaCall.prompt), 'a surviving mutant is not a blocking finding')
+    assert.ok(/Stryker disable next-line <mutator>: <why it is equivalent>/.test(qaCall.prompt), 'the test lens is not told how an equivalent mutant is justified')
+    assert.ok(/find its callers and say whether their tests would notice/.test(byLabel(r, 'verify:review').prompt), 'the code review is not asked to check the callers of what changed')
+  })
+
+  await test('the mutation score always says what it was measured over, and warns when most was skipped', () => {
+    // A reviewer of the first real pilot: a changed-lines score of 91.72% means
+    // little without how many mutants were measured and how many were skipped.
+    const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
+    const a = src.indexOf('function mutationText(m) {')
+    const mutationText = new Function(`${src.slice(a, src.indexOf('\n}\n', a) + 3)}; return mutationText`)()
+    assert.strictEqual(mutationText({ tool: 'stryker', score: 91.72, measured: 290, skipped: 37, scope: 'changed lines' }),
+      'mutation score 91.72% over 290 measured, 37 skipped (stryker, changed lines)')
+    // 30 of 56 skipped: more than a quarter.
+    assert.strictEqual(mutationText({ score: 96.15, measured: 26, skipped: 30 }),
+      'mutation score 96.15% over 26 measured, 30 skipped; more than a quarter of the mutants were skipped, so the score speaks only of the measured ones')
+    // Exactly a quarter does not warn.
+    assert.ok(!/more than a quarter/.test(mutationText({ score: 90, measured: 30, skipped: 10 })))
+    // A missing count is said, never silently dropped.
+    assert.strictEqual(mutationText({ tool: 'stryker', score: 86, survived: 2, scope: 'src/export.ts' }),
+      'mutation score 86%, measured not reported (2 survived), skipped not reported (stryker, src/export.ts)')
+    assert.strictEqual(mutationText({ score: 91.72, measured: 290, survived: 22, noCoverage: 2, skipped: 37 }),
+      'mutation score 91.72% over 290 measured (22 survived, 2 no coverage), 37 skipped')
+    assert.strictEqual(mutationText({ score: 91.72, measured: 290 }), 'mutation score 91.72% over 290 measured, skipped not reported')
+    // A count that is not a whole non-negative number is not printed as one.
+    assert.strictEqual(mutationText({ score: 80, measured: 2.5, skipped: -1 }), 'mutation score 80%, measured not reported, skipped not reported')
+    // Nothing measured: no score, not 0% — and a null score (Stryker's NaN) with counts still ran.
+    assert.strictEqual(mutationText({ score: 0, measured: 0, skipped: 56 }), 'mutation: no mutants measured, 56 skipped')
+    assert.strictEqual(mutationText({ tool: 'stryker', score: null, measured: 0, skipped: 56 }), 'mutation: no mutants measured, 56 skipped (stryker)')
+    // No mutation block, or one with nothing in it: the caller says "no mutation testing reported".
+    assert.strictEqual(mutationText(undefined), '')
+    assert.strictEqual(mutationText({ tool: 'stryker' }), '')
+  })
+
+  await test('every live mutant must be its own finding: fewer surviving-mutant findings than live mutants is said', () => {
+    const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
+    const a = src.indexOf('function liveMutantGap(m, findings) {')
+    const gap = new Function(`${src.slice(a, src.indexOf('\n}\n', a) + 3)}; return liveMutantGap`)()
+    const f = n => Array.from({ length: n }, (_, i) => ({ summary: `Surviving mutant ${i} in src/x.ts` }))
+    assert.strictEqual(gap({ survived: 22, noCoverage: 2 }, [{ summary: 'one finding for all survivors' }]),
+      '; 24 live mutant(s) reported but only 0 surviving-mutant finding(s): every live mutant must be its own Must Fix finding')
+    assert.strictEqual(gap({ survived: 2, noCoverage: 1 }, f(3)), '')
+    assert.strictEqual(gap({ survived: 3 }, f(1)), '; 3 live mutant(s) reported but only 1 surviving-mutant finding(s): every live mutant must be its own Must Fix finding')
+    assert.strictEqual(gap(undefined, []), '')
+    assert.strictEqual(gap({ survived: 'many' }, undefined), '')
   })
 
   await test('the plan pause lists only what changes the build; the rest is one line pointing to spec.md', async () => {

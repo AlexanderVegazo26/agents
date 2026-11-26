@@ -2214,7 +2214,47 @@ function traceabilityLine(raw, criteria) {
     (t.manualOpen.length ? `; proven, but a manual check is still open: ${t.manualOpen.join(', ')}` : '') +
     (t.unknown.length ? `; ${t.unknown.length} case(s) name no known criterion and prove nothing` : '') +
     (t.duplicates.length ? `; duplicate case id(s): ${t.duplicates.join(', ')}` : '') +
-    (m && typeof m.score === 'number' ? `; mutation score ${m.score}%${m.tool ? ` (${m.tool}` : ''}${m.scope ? `${m.tool ? ', ' : ' ('}${m.scope}` : ''}${m.tool || m.scope ? ')' : ''}` : '; no mutation testing reported')
+    (mutationText(m) ? `; ${mutationText(m)}` : '; no mutation testing reported') +
+    liveMutantGap(m, raw && raw.findings)
+}
+
+/**
+ * Every live mutant is its own Must Fix finding. A test lens that reports
+ * "22 survived" and files one finding, or none, would let 21 through the
+ * repair loop unseen; this says so where readiness reads it.
+ */
+function liveMutantGap(m, findings) {
+  const count = v => (Number.isInteger(v) && v >= 0 ? v : 0)
+  const live = m && typeof m === 'object' ? count(m.survived) + count(m.noCoverage) : 0
+  const filed = (Array.isArray(findings) ? findings : []).filter(f => /surviving mutant/i.test(String(f && f.summary || ''))).length
+  return live > filed
+    ? `; ${live} live mutant(s) reported but only ${filed} surviving-mutant finding(s): every live mutant must be its own Must Fix finding`
+    : ''
+}
+
+/**
+ * "mutation score 86% over 40 measured, 12 skipped (stryker, src/x.ts)". The
+ * score never travels without what it was computed over: on the first real
+ * pilot 42% of the mutants were static and skipped, and a reviewer asked that
+ * the percentage always say how many were measured and how many were not.
+ */
+function mutationText(m) {
+  if (!m || typeof m !== 'object') return ''
+  const count = v => Number.isInteger(v) && v >= 0
+  const hasScore = typeof m.score === 'number' && Number.isFinite(m.score)
+  // A run with nothing measured has no score (Stryker says NaN, which JSON turns into null): not 0%, and not "no mutation testing".
+  if (!hasScore && !count(m.measured) && !count(m.skipped)) return ''
+  const paren = [m.tool, m.scope].filter(Boolean).join(', ')
+  const tail = paren ? ` (${paren})` : ''
+  const skipped = count(m.skipped) ? `${m.skipped} skipped` : 'skipped not reported'
+  if (m.measured === 0 || !hasScore) return `mutation: no mutants measured, ${skipped}${tail}`
+  const live = [count(m.survived) && `${m.survived} survived`, count(m.noCoverage) && `${m.noCoverage} no coverage`].filter(Boolean).join(', ')
+  const measured = count(m.measured) ? ` over ${m.measured} measured${live ? ` (${live})` : ''}` : `, measured not reported${live ? ` (${live})` : ''}`
+  const over = `${measured}, ${skipped}`
+  const many = count(m.measured) && count(m.skipped) && m.skipped * 4 > m.measured + m.skipped
+    ? '; more than a quarter of the mutants were skipped, so the score speaks only of the measured ones'
+    : ''
+  return `mutation score ${m.score}%${over}${tail}${many}`
 }
 
 function renderTestReport(raw, findings, criteria) {
@@ -2410,7 +2450,15 @@ const QA_SCHEMA = {
     mutation: {
       type: 'object',
       description: 'Mutation testing on the changed files, when the repository has it set up.',
-      properties: { tool: { type: 'string' }, score: { type: 'number', description: 'mutation score, 0-100' }, survived: { type: 'number' }, scope: { type: 'string' } },
+      properties: {
+        tool: { type: 'string' },
+        score: { type: 'number', description: 'mutation score, 0-100, over the measured mutants only' },
+        survived: { type: 'number' },
+        noCoverage: { type: 'number', description: 'mutants no test covers; they count as surviving' },
+        measured: { type: 'number', description: 'mutants the score is computed over: killed, timed out, survived, no coverage' },
+        skipped: { type: 'number', description: 'mutants generated but not measured: static ones the tool skipped, and invalid ones (compile or runtime errors)' },
+        scope: { type: 'string' },
+      },
     },
   },
 }
@@ -2424,7 +2472,7 @@ const LENSES = [
     agentType: 'code-reviewer',
     tier: 'review',
     stage: 'Review',
-    brief: 'Review by reading. Form your independent expectation from the criteria BEFORE reading the diff (your §4 contamination guard), then state if it changed. Never inherit the implementer\'s self-report.',
+    brief: 'Review by reading. Form your independent expectation from the criteria BEFORE reading the diff (your §4 contamination guard), then state if it changed. Never inherit the implementer\'s self-report. Mutation testing measures only the lines the change edited: when the change modifies something other code uses (an exported function, type, constant or message), find its callers and say whether their tests would notice the new behaviour. A caller whose behaviour changes with no test that notices is a finding.',
   },
   {
     key: 'qa',
@@ -2549,6 +2597,14 @@ process.stdout.write(JSON.stringify(out))`, undefined, { manifests, facts, crite
  * Shared by Verify and by each repair round's re-verification, so a finding
  * raised after a fix is held to exactly the standard the original was.
  */
+/**
+ * A surviving mutant is closed by evidence, never by argument: on the first
+ * real pilot a 91.72% score shipped 22 survivors, and a reviewer of the flow
+ * asked that each be killed by a test or justified in the code. The refuter,
+ * the repair builder and the re-verifier all get this same rule.
+ */
+const SURVIVOR_RULE = 'A finding about a surviving (or uncovered) mutant is refuted or closed only by evidence: a mutation run on that file and line in which the mutant is now Killed, or a disable comment for it in the code (Stryker: `// Stryker disable next-line <mutator>: <why it is equivalent>`) whose reason you have checked holds — no input can tell the mutant apart from the original. An argument that it is equivalent, with no such comment in the code, does not close it; neither does a new test that was never shown to kill it.'
+
 function refuteFindings(result, lensKey, criteriaText, phaseLabel = 'Cross-check') {
   if (!result?.findings?.length) return []
   return parallel(
@@ -2558,6 +2614,8 @@ function refuteFindings(result, lensKey, criteriaText, phaseLabel = 'Cross-check
 
 FINDING (${f.severity}): ${f.summary}
 EVIDENCE CLAIMED: ${f.evidence}
+
+${SURVIVOR_RULE}
 
 Criteria for context:\n${criteriaText}`),
         {
@@ -3190,7 +3248,7 @@ EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from
 - Choose the type the criterion needs: logic → unit; a UI component → component; several modules or the database together → integration; a user journey → e2e; how a screen looks → visual. A criterion you cannot check by execution here is type manual, result not-run: it is pending human QA, never "pass".
 - ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md. If the repository has ${QA_TEMPLATE}, follow it exactly — its case titles, headings and naming — and, when it describes a tracker draft (a container and its cases), also write ${evidenceDir}/tracker-draft.md from it, ready to paste. Never publish anything to a tracker yourself. Without that file, write one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is. Write everything a person reads in casos.md and the tracker draft in the language of the template or the spec, the result word included (for a Spanish one: PASA, FALLA, NO EJECUTADO — never pass/fail); only the "result" field of each case keeps pass, fail or not-run. Each case's expected result states the concrete, observable outcome taken from its criterion's text — what the person must see or get — never "the criterion is met" or "the behaviour described by AC-n holds": a tester runs the case from that line.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
 ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the current branch. Name it in every case's execution result: evidence is bound to the commit it was produced on.\n` : ''}- Evidence is committed with the spec: before saving any output, response or screenshot, redact tokens, credentials, secrets and personal data (names, phone numbers, emails) — or use test data that has none.
-- If the repository has mutation testing set up (for example a Stryker configuration), run it on the code this change touched and report it in "mutation". Use the repository's own script for it when it has one. Otherwise mutate only the lines the change added or modified${BUILD_BASE ? ` (the ranges from \`git diff -U0 ${BUILD_BASE}\`)` : ''} when the tool takes line ranges (Stryker: \`--mutate path:start-end\`), not whole files, and skip static mutants when the tool can (Stryker: \`ignoreStatic\`): on the first real pilot whole files gave 786 mutants, 42% of them static, and hours of run time; the changed lines without static mutants took 3 minutes. Say the scope in "mutation.scope", with how many mutants were skipped as static. Each surviving mutant in changed code is a Should Fix finding: a test that does not fail when the code is broken does not protect it.
+- If the repository has mutation testing set up (for example a Stryker configuration), run it on the code this change touched and report it in "mutation". Use the repository's own script for it when it has one. Otherwise mutate only the lines the change added or modified${BUILD_BASE ? ` (the ranges from \`git diff -U0 ${BUILD_BASE}\`)` : ''} when the tool takes line ranges (Stryker: \`--mutate path:start-end\`), not whole files, and skip static mutants when the tool can (Stryker: \`ignoreStatic\`): on the first real pilot whole files gave 786 mutants, 42% of them static, and hours of run time; the changed lines without static mutants took 3 minutes. Say the scope in "mutation.scope", with the reason for any skipped mutants (static, invalid), and give "mutation.measured" and "mutation.skipped": the score speaks only of the measured mutants, so a score over a few measured out of many says little. Each surviving mutant in changed code — a mutant with no coverage counts as surviving — is a Must Fix finding of its own, whose summary says "surviving mutant" and whose evidence names the report file, the file and line, the mutator and the replacement, so a reviewer can check it by reading; give "mutation.survived" and "mutation.noCoverage" as counts: a test that does not fail when the code is broken does not protect it, and a survivor left open keeps the change from Go. The fix is a test that fails on that mutant. Only when the mutant is equivalent (no input can tell it apart from the original) is the fix a comment that says so where the tool reads it (Stryker: \`// Stryker disable next-line <mutator>: <why it is equivalent>\`), and the reason must hold up when the lens re-checks it.
 - A criterion with no automated test where one was possible is a finding, not a case to skip.`)
 
   const testFindings = (testArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
@@ -3294,6 +3352,8 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
 
 Work on YOUR ORIGINAL CHANGE, where it already lives — ${m.diffRef ? `reach it through: ${m.diffRef}` : 'the worktree or branch you built it in'}. Do not start from a fresh checkout: the change is not there, and a fix applied to the wrong tree fixes nothing.${IN_CHECKOUT ? ` It is in the checkout this run started in${STAGE_COMMITS ? ', committed by this workflow after each stage' : ', uncommitted'}, together with the other builders' work: fix only what the findings name, never revert theirs, and do not commit, switch branches, stash, reset or clean${STAGE_COMMITS ? ' — this workflow commits your repair' : ''}.` : ''} Stay inside the findings' scope; anything else you notice goes in your summary as noticed-but-not-touched.
 
+A finding that is a defect in behaviour enters as a test first: write the test that reproduces it, run it and see it FAIL on the current code, then fix the code and see the same test pass. Say both runs in your summary. A fix without a test that failed before it can come back unnoticed. A finding that is itself a missing or weak test (a surviving mutant) is fixed by that test: run the mutation tool on that file and line and report that the mutant is now Killed, or, only if it is equivalent, add the disable comment with the reason. Also run it on the lines your repair changed, and report the result: code written in a repair has had no mutation run yet.
+
 A finding you believe is wrong is not yours to dismiss — say so in notAddressed with the evidence, and the independent lens that raised it will re-check. You do not certify this repair; the lens re-verifies it after you.
 
 FINDINGS TO FIX:
@@ -3354,7 +3414,7 @@ Report a BUILD MANIFEST of the repair, with the same rules as the build: every f
         lens => dispatch(
           withPolicy(`${lens.brief}
 
-RE-VERIFICATION, round ${k} of ${MAX_REPAIR_ROUNDS}. A builder has attempted to fix the blocking findings below, which your lens raised and an independent refuter confirmed. Decide INDEPENDENTLY whether each one is actually fixed: read the changed files yourself — the repair manifest is the builder's claim, not evidence. Report every finding that is still present, at its real severity, and any new defect the repair introduced. A finding you have shown to be fixed is not reported again; a finding you could not check is reported as still present, with why.
+RE-VERIFICATION, round ${k} of ${MAX_REPAIR_ROUNDS}. A builder has attempted to fix the blocking findings below, which your lens raised and an independent refuter confirmed. Decide INDEPENDENTLY whether each one is actually fixed: read the changed files yourself — the repair manifest is the builder's claim, not evidence. Report every finding that is still present, at its real severity, and any new defect the repair introduced. A finding you have shown to be fixed is not reported again; a finding you could not check is reported as still present, with why. ${SURVIVOR_RULE} For such a finding, run the mutation tool yourself on that file and line (Stryker: \`--mutate <file>:<line>-<line>\`) and report the mutant's status.
 
 FINDINGS TO RE-CHECK:
 ${JSON.stringify(target.filter(f => f.lens === lens.key).map(f => ({ severity: f.severity, summary: f.summary, evidence: f.evidence, file: f.file, line: f.line })), null, 2)}
