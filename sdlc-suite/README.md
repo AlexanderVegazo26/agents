@@ -25,13 +25,13 @@ sdlc-suite/
 
 | Tree | Agents | Skills | Workflows | Commands |
 |---|---|---|---|---|
-| `.claude/` | 25 | 66 | 7 | — |
-| `sdlc-suite/` | 25 | 66 | 7 | 12 |
-| `commandcode-suite/` | 25 | 66 | 6 | 6 |
-| `.kimi-code/` | 25 | 72 | 6 | — |
-| `.copilot/` | 25 | 66 | — | — |
-| `.codex/` | 25 | 66 | — | — |
-| `.agents/` | — | 66 | — | — |
+| `.claude/` | 25 | 67 | 7 | — |
+| `sdlc-suite/` | 25 | 67 | 7 | 12 |
+| `commandcode-suite/` | 25 | 67 | 6 | 6 |
+| `.kimi-code/` | 25 | 73 | 6 | — |
+| `.copilot/` | 25 | 67 | — | — |
+| `.codex/` | 25 | 67 | — | — |
+| `.agents/` | — | 67 | — | — |
 | `.pi/` | — | — | — | 12 |
 | `.hermes/` | — | — | — | 11 |
 
