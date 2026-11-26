@@ -3050,6 +3050,43 @@ async function main() {
     assert.ok(!r.calls.find(c => c.label === 'verify:review').opts.schema.required.includes('cases'))
   })
 
+  await test('the plan pause lists only what changes the build; the rest is one line pointing to spec.md', async () => {
+    // First real pilot: 22 items reached the approver and none stopped the build.
+    const reqs = {
+      ...REQS,
+      openQuestions: ['BLOCKS BUILD: which table holds the zone?', 'FOR THE PO: the exact wording of the message (default: the copy deck row)', 'FOR THE PO: does the web page count too? (default: no)', 'an untagged question'],
+      contradictions: ['NEEDS A PERSON: the ticket says X, specs/010 says Y', 'code says A, the as-built says B — the code wins'],
+    }
+    const { cwd } = gitSpecRepo()
+    const p = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents({ requirements: reqs }) })
+    assert.strictEqual(p.result.status, 'awaiting-plan-approval', JSON.stringify(p.result).slice(0, 300))
+    const hd = p.result.humanDecisionRequired
+    assert.ok(hd.includes('BLOCKS BUILD: which table holds the zone?') && hd.includes('an untagged question'), JSON.stringify(hd))
+    assert.ok(hd.includes('CONTRADICTION: NEEDS A PERSON: the ticket says X, specs/010 says Y'), JSON.stringify(hd))
+    assert.ok(!hd.some(x => x.startsWith('FOR THE PO:') || x.includes('the code wins')), JSON.stringify(hd))
+    assert.ok(hd.some(x => /2 question\(s\) for the product owner.*1 contradiction\(s\) already resolved/.test(x)), JSON.stringify(hd))
+    assert.ok(/OPEN QUESTIONS\. Start each with "BLOCKS BUILD:"/.test(byLabel(p, 'requirements').prompt), 'the planner is not asked to tag its questions')
+  })
+
+  await test('a contradiction that still needs a person is never counted as resolved (independent review, SF-1)', async () => {
+    const open = [
+      'ticket says X, specs/010 says Y — a person must decide which side wins',
+      'A says X; B says Y — neither side clearly wins',
+      'A says X; B says Y; not resolved, ask the PO',
+      'A says X; B says Y; neither wins — NEEDS A PERSON:',
+      'A says X; B says Y',
+      'the ticket says X — specs/010 says Y — the PO decides which one wins',
+      'A says X; B says Y — whoever wins, a person must confirm',
+    ]
+    const resolved = 'the ticket says «zones» but specs/010 says «el alta no pide zona» — the intent wins'
+    const { cwd } = gitSpecRepo()
+    const p = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents({ requirements: { ...REQS, contradictions: [...open, resolved] } }) })
+    const hd = p.result.humanDecisionRequired
+    for (const c of open) assert.ok(hd.includes(`CONTRADICTION: ${c}`), `hidden: ${c}\n${JSON.stringify(hd)}`)
+    assert.ok(!hd.includes(`CONTRADICTION: ${resolved}`), 'a "no" quoted from one side made a resolved contradiction read as open')
+    assert.ok(hd.some(x => /1 contradiction\(s\) already resolved/.test(x)), JSON.stringify(hd))
+  })
+
   await test('contradictions found while planning reach spec.md, the pause and readiness — and survive approval', async () => {
     // Pilot, HU 16: the ticket put zones in onboarding, an existing spec ruled
     // them out; a person found it by hand.
@@ -3059,7 +3096,9 @@ async function main() {
     const p = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents({ requirements: withC }) })
     assert.strictEqual(p.result.status, 'awaiting-plan-approval', JSON.stringify(p.result).slice(0, 300))
     assert.ok(/## Contradictions\n\n- the intent says «zones in onboarding»/.test(fs.readFileSync(path.join(d, 'spec.md'), 'utf8')), 'spec.md does not carry the contradiction')
-    assert.ok(p.result.humanDecisionRequired.some(x => x === `CONTRADICTION: ${C}`), JSON.stringify(p.result.humanDecisionRequired))
+    // Resolved by the planner ("the intent wins"): counted, not listed one by one.
+    assert.ok(!p.result.humanDecisionRequired.some(x => x === `CONTRADICTION: ${C}`), JSON.stringify(p.result.humanDecisionRequired))
+    assert.ok(p.result.humanDecisionRequired.some(x => /1 contradiction\(s\) already resolved in the spec/.test(x)), JSON.stringify(p.result.humanDecisionRequired))
     assert.ok(/CONTRADICTIONS\. Before you write criteria/.test(byLabel(p, 'requirements').prompt), 'the planner is not asked to look for contradictions')
     gitIn(cwd, 'add', '-A')
     gitIn(cwd, 'commit', '-q', '-m', 'approve')
@@ -3252,7 +3291,8 @@ async function main() {
     assert.deepStrictEqual(v.commits.map(c => c.stage), ['Build', 'Test', 'Readiness'], JSON.stringify(v.commits))
     const [build, tested] = v.commits
     assert.ok(!build.empty && filesIn(cwd, build.commit).includes('src/export.ts'), `the Build commit does not hold the code: ${filesIn(cwd, build.commit)}`)
-    assert.ok(/^sdlc-feature\(.+\): Build — HU-9$/.test(gitIn(cwd, 'log', '-1', '--format=%s', build.commit).trim()), 'the Build commit does not name the run and stage')
+    assert.strictEqual(gitIn(cwd, 'log', '-1', '--format=%s', build.commit).trim(), 'sdlc-feature: Build — HU-9', 'the Build commit subject does not name the stage and the initiative')
+    assert.ok(/^Run: \S+/m.test(gitIn(cwd, 'log', '-1', '--format=%b', build.commit)), 'the Build commit body does not name the run')
     const testFiles = filesIn(cwd, tested.commit)
     assert.ok(testFiles.includes('test/export.test.ts') && testFiles.includes(`${SPEC}/test-report.md`), `the Test commit lacks the tests or the evidence: ${testFiles}`)
     assert.strictEqual(v.verifiedCommit, tested.commit, 'the evidence is not bound to the commit Review read')
@@ -3261,6 +3301,9 @@ async function main() {
     assert.strictEqual(gitIn(cwd, 'status', '--short', '--', '.', ':(exclude).claude').trim(), '', 'the run left part of the change uncommitted')
     const qa = r.calls.find(c => c.label === 'verify:qa')
     assert.ok(qa.prompt.includes(`The code under test is commit ${build.commit}`), 'the test stage was not told which commit it tests')
+    assert.ok(qa.prompt.includes('PASA, FALLA, NO EJECUTADO'), 'the test stage was not told to write results in the template language')
+    assert.ok(qa.prompt.includes('expected result states the concrete, observable outcome'), 'the test stage was not told to write concrete expected results')
+    assert.ok(qa.prompt.includes(`git diff -U0 ${base}`) && qa.prompt.includes('ignoreStatic'), 'the test stage was not told to mutate only the changed lines')
     assert.ok(r.calls.find(c => c.label === 'build:backend').prompt.includes('this workflow commits each stage itself'), 'builders were not told the workflow commits')
     assert.ok(r.calls.find(c => c.label === 'readiness').prompt.includes(`CODE UNDER VERIFICATION: commit ${tested.commit}`), 'readiness was not told the verified commit')
     assert.ok(!r.result.blockedGates.some(g => g.gate === 'verification.drift'))
@@ -3285,6 +3328,76 @@ async function main() {
     assert.strictEqual(v.verifiedCommit, repair.commit, 're-verification read the repair commit, but the evidence is bound elsewhere')
     assert.strictEqual(v.verifiedStage, 'Repair 1')
     assert.strictEqual(v.deliveredMatchesVerified, true)
+    // Evidence refresh: QA re-verifies a repair of ANOTHER lens's finding,
+    // re-running its cases on the repair commit (first real pilot: every case
+    // named the Build commit after a repair).
+    const reQa = r.calls.find(c => c.label === 'reverify:qa')
+    assert.ok(reQa, `QA did not re-verify the repair: ${r.calls.map(c => c.label).join(', ')}`)
+    assert.ok(reQa.prompt.includes('EVIDENCE REFRESH') && reQa.prompt.includes(`commit ${repair.commit}`), 'the QA re-verification was not told to refresh its evidence on the repair commit')
+    assert.ok(!r.calls.find(c => c.label === 'reverify:review').prompt.includes('EVIDENCE REFRESH'), 'a non-QA lens got the evidence refresh')
+    assert.ok(byLabel(r, 'readiness').prompt.includes(`RE-RUN — QA re-ran its cases on the repaired commit ${repair.commit}`), 'readiness was not told the evidence was refreshed')
+  })
+
+  await test('a dead evidence refresh is recorded, not read as bound to the repair (independent review, SF-2)', async () => {
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: stageAgents(cwd, {
+        'verify:review': { verdict: 'blocking', findings: [{ severity: 'Must Fix', summary: 'no CSV header', evidence: 'src/export.ts:1', file: 'src/export.ts' }] },
+        'refute:review': { refuted: false, reasoning: 'confirmed on re-read' },
+        'repair:backend': () => { writeIn(cwd, 'src/export.ts', 'export const csv = "id,name"\n'); return manifest('repair:backend', BACKEND_FILES) },
+        'reverify:review': { verdict: 'fixed', findings: [] },
+        'reverify:qa': null,
+      }),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    assert.ok(r.result.verification.errors.some(e => /QA did not refresh its evidence/.test(e)), JSON.stringify(r.result.verification.errors))
+    assert.ok(/MEASURED BEFORE THE REPAIR LOOP — 1 repair round/.test(byLabel(r, 'readiness').prompt), 'readiness was told the evidence was re-run')
+  })
+
+  await test('the refreshed-evidence commit follows the LAST repair: a later round whose QA died clears it', async () => {
+    // Round 1 fixes a review finding and QA refreshes on R1, but also raises a
+    // Must Fix; round 2 fixes it and QA dies — readiness must not hear "R1 is current".
+    const { cwd } = gitSpecRepo()
+    let qaCalls = 0
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false },
+      onAgent: stageAgents(cwd, {
+        'verify:review': { verdict: 'blocking', findings: [{ severity: 'Must Fix', summary: 'no CSV header', evidence: 'src/export.ts:1', file: 'src/export.ts' }] },
+        'refute:review': { refuted: false, reasoning: 'confirmed' },
+        'refute:qa': { refuted: false, reasoning: 'confirmed' },
+        'repair:backend': () => { writeIn(cwd, 'src/export.ts', `export const csv = "id,name" // fix ${Date.now()}\n`); return manifest('repair:backend', BACKEND_FILES) },
+        'reverify:review': { verdict: 'fixed', findings: [] },
+        'reverify:qa': () => (++qaCalls === 1
+          ? { verdict: 'blocking', findings: [{ severity: 'Must Fix', summary: 'CP-01 now fails', evidence: 'evidencia/CP-01', file: 'src/export.ts' }] }
+          : null),
+      }),
+    })
+    assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+    assert.strictEqual(r.result.repairRounds.rounds.length, 2, JSON.stringify(r.result.repairRounds))
+    const ready = byLabel(r, 'readiness').prompt
+    assert.ok(/MEASURED BEFORE THE REPAIR LOOP — 2 repair round/.test(ready) && !ready.includes('RE-RUN — QA re-ran'), 'readiness was told stale evidence is current')
+    assert.ok(r.result.verification.errors.some(e => /Re-verify 2: QA did not refresh/.test(e)), JSON.stringify(r.result.verification.errors))
+  })
+
+  await test('stage commit subjects: the initiative title cut at a word, and the team format from commitSubject', async () => {
+    const long = 'HU 42: Avisos de entrega claros para el cliente en cada canal. The approved intent is specs/features/HU-42/intent.md; follow its scope strictly.'
+    for (const [extra, want] of [
+      [{}, /^sdlc-feature: Build — HU 42: Avisos de entrega claros para el cliente en cada…$/],
+      [{ commitSubject: 'feat(hu-42): {title} ({stage})' }, /^feat\(hu-42\): HU 42: Avisos de entrega claros para el cliente en cada… \(Build\)$/],
+      [{ commitSubject: 'no stage placeholder' }, /^sdlc-feature: Build — /],
+      [{ initiative: 'HU 42: Avisos de entrega claros\nThe approved intent is specs/features/HU-42/intent.md; follow its scope strictly.' }, /^sdlc-feature: Build — HU 42: Avisos de entrega claros$/],
+      [{ initiative: 'HU 7: cost $& and $$ fees', commitSubject: 'feat: {title} ({stage})' }, /^feat: HU 7: cost \$& and \$\$ fees \(Build\)$/],
+    ]) {
+      const { cwd } = gitSpecRepo()
+      const r = await runScript('sdlc-feature.js', {
+        cwd, args: { initiative: long, policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false, ...extra }, onAgent: stageAgents(cwd),
+      })
+      assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+      const subject = gitIn(cwd, 'log', '-1', '--format=%s', r.result.verification.commits[0].commit).trim()
+      assert.ok(want.test(subject), `${JSON.stringify(extra)}: ${subject}`)
+      assert.ok(!subject.includes('approved intent'), `the subject carries the initiative's instructions: ${subject}`)
+    }
   })
 
   await test('code changed after verification is caught: delivered != verified is a blocked gate', async () => {

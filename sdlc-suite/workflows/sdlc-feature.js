@@ -10,7 +10,7 @@ export const meta = {
     { title: 'Review', detail: 'review tier (Opus/high) code review and performance, security tier (Opus/high) security — handed the test report' },
     { title: 'Cross-check', detail: 'every finding handed to a refuter before it is reported' },
     { title: 'Repair', detail: 'the builder fixes confirmed blocking findings in its own change — at most 2 rounds' },
-    { title: 'Re-verify', detail: 'only the lenses that raised a blocking finding re-check the repair, then the refuter' },
+    { title: 'Re-verify', detail: 'the lenses that raised a blocking finding re-check the repair, then the refuter; QA also re-runs its cases when the run writes evidence' },
     { title: 'Readiness', detail: 'release-manager recommends go/no-go for HUMAN approval; technical-writer drafts docs' },
     { title: 'Runtime', detail: 'bridge steps that reach the recorder, the policy loader and the brief builder' },
   ],
@@ -1607,6 +1607,71 @@ const changeRef = () => (BUILD_TREE === 'checkout' && BUILD_BASE
     : `The whole change is UNCOMMITTED in the checkout this run started in. List it with \`git diff ${BUILD_BASE} --stat\` and \`git status --short\` (new files are untracked); read it with \`git diff ${BUILD_BASE}\`.`)
   : '')
 
+// STAGE COMMIT MESSAGES. The subject is short and whole: the initiative's first
+// sentence (its title, e.g. "HU 42: Avisos de entrega claros"), cut at a
+// word, never mid-word, and the run id goes in the body. The first real pilot's
+// subjects were the run id plus the initiative cut at 72 characters, in the
+// middle of its instructions ("…The approved intent is specs/featur").
+// `args.commitSubject` is the team's own format: a single line with {stage},
+// and optionally {title} and {runId} (e.g. "feat(hu-42): {title} ({stage})").
+const COMMIT_SUBJECT_ARG = args && typeof args === 'object' && typeof args.commitSubject === 'string' ? args.commitSubject : null
+const COMMIT_SUBJECT = COMMIT_SUBJECT_ARG && COMMIT_SUBJECT_ARG.includes('{stage}') && !/[\r\n]/.test(COMMIT_SUBJECT_ARG) && COMMIT_SUBJECT_ARG.length <= 200
+  ? COMMIT_SUBJECT_ARG : null
+function initiativeTitle(max = 60) {
+  // The first non-empty line, then its first sentence: a heading line with no
+  // closing period must not pull the instructions below it into the subject.
+  const line = String(initiative || '').split(/\r?\n/).find(l => l.trim()) || ''
+  const s = line.replace(/\s+/g, ' ').trim()
+  const first = (s.split(/(?<=[.!?])\s/)[0] || s).replace(/[.!?]$/, '')
+  if (first.length <= max) return first
+  const cut = first.slice(0, max + 1)
+  const sp = cut.lastIndexOf(' ')
+  return `${(sp > max / 2 ? cut.slice(0, sp) : first.slice(0, max)).replace(/[\s,;:—-]+$/, '')}…`
+}
+// WHAT THE PERSON IS ASKED. Only what changes the build reaches them one by
+// one: open questions tagged BLOCKS BUILD and contradictions tagged NEEDS A
+// PERSON (an untagged item counts as one of those — when in doubt, show it).
+// The rest — questions FOR THE PO and contradictions with a stated resolution —
+// is counted in one line that points to spec.md, where the PO message comes
+// from. On the first real pilot 22 items reached the approver; none stopped
+// the build, and the person asked why there were so many questions.
+function decisionsFor(reqs) {
+  const qs = (reqs && reqs.openQuestions) || []
+  const cs = (reqs && reqs.contradictions) || []
+  const forPo = qs.filter(q => /^\s*FOR THE PO:/i.test(q))
+  // Settled only on a positive, un-negated "X wins": "a person must decide
+  // which side wins", "neither wins", "not resolved" and a NEEDS A PERSON tag
+  // anywhere in the line all keep it listed (independent review, SF-1).
+  // Only the resolution — the last "— …" or "; …" part — is read: the sides
+  // quote other people's words, and a "no" inside a quote says nothing.
+  const resolutionOf = c => { const p = String(c).split(/\s[—–-]\s|;\s/); return p[p.length - 1] }
+  const needsPerson = c => /NEEDS A PERSON/i.test(c) ||
+    /\b(neither|not|no|nobody|nadie|ningun\w*|decid\w*|confirm\w*|choos\w*|chose\w*|elig\w*|ask\w*|pregunt\w*|po|person\w*|tbd|undecided|unclear|pending|pendiente|open question)\b/i.test(resolutionOf(c))
+  const settled = cs.filter(c => !needsPerson(c) && /\b(wins|gana|prevails|prevalece)\b/i.test(resolutionOf(c)))
+  const lines = [
+    ...cs.filter(c => !settled.includes(c)).map(c => `CONTRADICTION: ${c}`),
+    ...qs.filter(q => !forPo.includes(q)),
+  ]
+  const rest = []
+  if (forPo.length) rest.push(`${forPo.length} question(s) for the product owner that do not change what gets built`)
+  if (settled.length) rest.push(`${settled.length} contradiction(s) already resolved in the spec`)
+  if (rest.length) lines.push(`Not blocking, for the record: ${rest.join('; ')} — in spec.md under "## Open questions" and "## Contradictions".`)
+  return lines
+}
+function stageCommitMessage(stage) {
+  const title = initiativeTitle()
+  const runId = RUN ? RUN.runId : ''
+  if (COMMIT_SUBJECT_ARG && !COMMIT_SUBJECT && !stageCommitMessage.warned) {
+    stageCommitMessage.warned = true
+    log('commitSubject ignored: it must be one line of at most 200 characters that contains {stage} — using the default subject')
+  }
+  // Function replacements: a title holding "$&" or "$$" is inserted as written.
+  const subject = COMMIT_SUBJECT
+    ? COMMIT_SUBJECT.replaceAll('{stage}', () => stage).replaceAll('{title}', () => title).replaceAll('{runId}', () => runId)
+    : `sdlc-feature: ${stage}${title ? ` — ${title}` : ''}`
+  return `${subject}\n\nRun: ${runId}`
+}
+
 /**
  * Commit everything the stage left in the checkout (outside .claude/, which
  * holds the run's own state) with a message naming the run and the stage, and
@@ -1621,7 +1686,7 @@ async function commitStage(stage, checkSince = null) {
   if (!STAGE_COMMITS || !RUN) return null
   const r = await sealedBridge('stage-commit', null, `const CFG = ${JSON.stringify({
     root: repoRoot(), specDir: SPEC_DIR, since: checkSince,
-    message: `sdlc-feature(${RUN.runId}): ${stage}${initiative ? ` — ${String(initiative).replace(/\s+/g, ' ').slice(0, 72)}` : ''}`,
+    message: stageCommitMessage(stage),
   })}
 const { execFileSync } = require('child_process')
 const run = (...a) => execFileSync('git', a, { cwd: CFG.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -2195,13 +2260,16 @@ const CRITERIA_SCHEMA = {
       },
     },
     assumptions: { type: 'array', items: { type: 'string' } },
-    openQuestions: { type: 'array', items: { type: 'string' } },
+    openQuestions: {
+      type: 'array', items: { type: 'string' },
+      description: 'Each starts with "BLOCKS BUILD:" when a builder cannot proceed without the answer, or "FOR THE PO:" when the answer does not change what gets built now (say the default the plan builds meanwhile). Only what the intent text leaves open, never a question the code or another story already answers.',
+    },
     // Where the intent, the repository's specs and docs, and its code disagree.
     // The HU 16 pilot's planner met one (the ticket put zones in onboarding, an
     // existing spec had ruled them out) — found by a person reading by hand.
     contradictions: {
       type: 'array', items: { type: 'string' },
-      description: 'Each: side A quoted with its source; side B quoted with its source; which wins under the intent, or that a person must decide. [] after looking and finding none.',
+      description: 'Each: side A quoted with its source; side B quoted with its source; which wins under the intent, or that a person must decide — then start that one with "NEEDS A PERSON:". [] after looking and finding none.',
     },
     // Which implementation surfaces the change actually touches. Drives Build fan-out.
     surfaces: {
@@ -2524,8 +2592,9 @@ Criteria for context:\n${criteriaText}`),
 // a No-Go and waited for a person to re-run the whole lifecycle.
 //
 // Bounded at MAX_REPAIR_ROUNDS. The builder that wrote the change fixes it, in
-// the change's own location; ONLY the lenses that raised a surviving blocking
-// finding re-verify, and their new findings go through the same refuter. The
+// the change's own location; the lenses that raised a surviving blocking
+// finding re-verify (and QA, to refresh its evidence, when the run writes it),
+// and their new findings go through the same refuter. The
 // builder never certifies its own repair — ROUTING.md's rule, enforced here by
 // construction. An exhausted loop becomes a blocked gate, not a silent No-Go.
 const MAX_REPAIR_ROUNDS = 2
@@ -2740,7 +2809,9 @@ Produce numbered, stable acceptance-criterion IDs — every downstream agent in 
 
 Also classify which implementation surfaces this genuinely touches (backend / frontend / data) so the build phase only spawns the specialists actually needed.
 
-CONTRADICTIONS. Before you write criteria, compare the intent (and any ticket text it quotes) with what the repository already says and does: its specs and as-built documents, and the code itself. Record every disagreement in contradictions — quote both sides and say where each comes from, then say which side the intent's scope makes win, or that a person must decide. Never settle one silently by picking a side. An empty list means you looked and found none.`),
+CONTRADICTIONS. Before you write criteria, compare the intent (and any ticket text it quotes) with what the repository already says and does: its specs and as-built documents, and the code itself. Record every disagreement in contradictions — quote both sides and say where each comes from, then say which side the intent's scope makes win, or that a person must decide. Never settle one silently by picking a side. An empty list means you looked and found none. Start a contradiction that only a person can settle with "NEEDS A PERSON:".
+
+OPEN QUESTIONS. Start each with "BLOCKS BUILD:" when a builder cannot proceed without the answer, or "FOR THE PO:" when it does not change what gets built now — then say the default the plan builds meanwhile. The person approving the plan sees the BLOCKS BUILD questions and the NEEDS A PERSON contradictions one by one; the rest reach the product owner through spec.md. On the first real pilot 22 items reached the approver, and none of them stopped the build.`),
       { agentType: 'sdlc-suite:product-analyst', label: 'requirements', phase: 'Plan', schema: CRITERIA_SCHEMA, ...tier('plan') },
     )
     const agents = [
@@ -2866,8 +2937,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
       next: `Review spec.md and plan.md in ${handoffDir()}. Edit them if needed (criteria stay one per line: "- **AC-n** — text"; under "## Contradictions" each line must end with its resolution — which side wins — or be deleted once settled), commit them, then start a FRESH run with ${JSON.stringify(nextArgs)} — it starts at Design from exactly the committed files.`,
       humanDecisionRequired: [
         `Approve the plan: review and commit spec.md and plan.md in ${handoffDir()}, then run with approvedPlan: true.`,
-        ...(reqs.contradictions || []).map(c => `CONTRADICTION: ${c}`),
-        ...reqs.openQuestions,
+        ...decisionsFor(reqs),
       ],
       tiers: TIERS,
     }
@@ -3118,9 +3188,9 @@ The section above is a BRIEF, by reference. It is not the diff. Read the changed
 EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from your evidence, so make it easy to check:
 - In "cases", give EVERY acceptance criterion at least one case: an id (CP-01, CP-02, ...), the criterion id, a title that says what is checked, the type (${CASE_TYPES.join(', ')}), the test (file › test name, or the exact command), the result (pass, fail or not-run) and the evidence path.
 - Choose the type the criterion needs: logic → unit; a UI component → component; several modules or the database together → integration; a user journey → e2e; how a screen looks → visual. A criterion you cannot check by execution here is type manual, result not-run: it is pending human QA, never "pass".
-- ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md. If the repository has ${QA_TEMPLATE}, follow it exactly — its case titles, headings and naming — and, when it describes a tracker draft (a container and its cases), also write ${evidenceDir}/tracker-draft.md from it, ready to paste. Never publish anything to a tracker yourself. Without that file, write one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
+- ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md. If the repository has ${QA_TEMPLATE}, follow it exactly — its case titles, headings and naming — and, when it describes a tracker draft (a container and its cases), also write ${evidenceDir}/tracker-draft.md from it, ready to paste. Never publish anything to a tracker yourself. Without that file, write one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is. Write everything a person reads in casos.md and the tracker draft in the language of the template or the spec, the result word included (for a Spanish one: PASA, FALLA, NO EJECUTADO — never pass/fail); only the "result" field of each case keeps pass, fail or not-run. Each case's expected result states the concrete, observable outcome taken from its criterion's text — what the person must see or get — never "the criterion is met" or "the behaviour described by AC-n holds": a tester runs the case from that line.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
 ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the current branch. Name it in every case's execution result: evidence is bound to the commit it was produced on.\n` : ''}- Evidence is committed with the spec: before saving any output, response or screenshot, redact tokens, credentials, secrets and personal data (names, phone numbers, emails) — or use test data that has none.
-- If the repository has mutation testing set up (for example a Stryker configuration), run it on the changed files only and report it in "mutation". Each surviving mutant in changed code is a Should Fix finding: a test that does not fail when the code is broken does not protect it.
+- If the repository has mutation testing set up (for example a Stryker configuration), run it on the code this change touched and report it in "mutation". Use the repository's own script for it when it has one. Otherwise mutate only the lines the change added or modified${BUILD_BASE ? ` (the ranges from \`git diff -U0 ${BUILD_BASE}\`)` : ''} when the tool takes line ranges (Stryker: \`--mutate path:start-end\`), not whole files, and skip static mutants when the tool can (Stryker: \`ignoreStatic\`): on the first real pilot whole files gave 786 mutants, 42% of them static, and hours of run time; the changed lines without static mutants took 3 minutes. Say the scope in "mutation.scope", with how many mutants were skipped as static. Each surviving mutant in changed code is a Should Fix finding: a test that does not fail when the code is broken does not protect it.
 - A criterion with no automated test where one was possible is a finding, not a case to skip.`)
 
   const testFindings = (testArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
@@ -3188,6 +3258,7 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
   // Phase 4b — Repair. Bounded; see MAX_REPAIR_ROUNDS above.
   // -------------------------------------------------------------------------
   repairRounds = { max: MAX_REPAIR_ROUNDS, rounds: [], outcome: 'not-needed' }
+  let evidenceRefreshedOn = null   // the repair commit QA last re-ran its cases on
   const seenFindings = [...allFindings]   // every finding any lens raised, all rounds
   let open = confirmed.filter(isBlocking)
   if (open.length && args?.repair === false) repairRounds.outcome = 'disabled'
@@ -3263,8 +3334,21 @@ Report a BUILD MANIFEST of the repair, with the same rules as the build: every f
     }
 
     const reverifyFailed = []
+    // EVIDENCE REFRESH. A repair changes code after the QA cases ran, so the
+    // evidence in casos.md would name a commit that is no longer the delivered
+    // one (first real pilot: every case named the Build commit, the repair came
+    // after). When the run writes evidence, QA re-verifies every repair round —
+    // even one that fixed another lens's findings — re-running its cases on the
+    // repaired code and rewriting their execution results.
+    const refreshEvidence = !!evidenceDir && !lensKeys.includes('qa') && LENSES.some(l => l.key === 'qa')
+    const refreshBrief = evidenceDir
+      ? `\n\nEVIDENCE REFRESH. The repair changed the code after the QA cases ran. Re-run every automated case in ${evidenceDir}/casos.md (through qa-runner) on the repaired code${verification.verifiedStage === `Repair ${k}` && verification.verifiedCommit ? `, commit ${verification.verifiedCommit}` : ''}, then rewrite each case's execution result — commit, date, result — and its evidence files under ${evidenceDir}/, and the tracker draft if there is one. A case that now fails is a finding. Keep the cases themselves as they are.${(() => {
+        const prior = confirmed.filter(f => f.lens === 'qa').map(f => `- ${f.severity}: ${f.summary}`)
+        return prior.length ? `\n\nYOUR EARLIER FINDINGS, already recorded — do not report them again unless the repair changed them:\n${prior.join('\n')}` : ''
+      })()}`
+      : ''
     const reArtifact = await runPhase(`Re-verify ${k}`, 'Readiness', async () => {
-      const reLenses = LENSES.filter(l => lensKeys.includes(l.key))
+      const reLenses = LENSES.filter(l => lensKeys.includes(l.key) || (refreshEvidence && l.key === 'qa'))
       const out = await pipeline(
         reLenses,
         lens => dispatch(
@@ -3282,7 +3366,7 @@ ORIGINAL BUILD MANIFEST(S):
 ${JSON.stringify(INDEPENDENT_LENSES.has(lens.key) ? factsOnly(manifests) : manifests, null, 2)}
 
 ACCEPTANCE CRITERIA:
-${criteriaText}`),
+${criteriaText}${lens.key === 'qa' ? refreshBrief : ''}`),
           { agentType: lens.agentType, label: `reverify:${lens.key}`, phase: 'Re-verify', schema: FINDINGS_SCHEMA, ...tier(lens.tier) },
         ).then(r => {
           if (r === null || r === undefined) reverifyFailed.push(`reverify:${lens.key}`)
@@ -3297,6 +3381,19 @@ ${criteriaText}`),
       }
     }, 'Re-verify')
 
+    // A refresh that did not run leaves casos.md on an earlier commit: say so
+    // instead of letting the evidence read as bound to the repair (SF-2).
+    // Recomputed every round: QA re-ran its cases on THIS repair commit, or the
+    // evidence is no longer bound to the current code (independent review).
+    if (evidenceDir && verification.verifiedStage === `Repair ${k}`) {
+      const qaAsked = refreshEvidence || lensKeys.includes('qa')
+      const qaDead = (reArtifact.deadLenses || []).includes('qa')
+      evidenceRefreshedOn = qaAsked && !qaDead ? verification.verifiedCommit : null
+      if (qaAsked && qaDead) {
+        verification.errors.push(`Re-verify ${k}: QA did not refresh its evidence — ${evidenceDir}/casos.md still names an earlier commit`)
+        log(`evidence refresh after Repair ${k} did not run — casos.md is not bound to the repaired code`)
+      }
+    }
     const reFindings = (reArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
     // A re-verifier that returned nothing has certified nothing. Its lens's
     // findings stay open rather than reading as "fixed" by silence — the same
@@ -3427,7 +3524,9 @@ ${MODE_APPROVED
     ? `CONTRADICTIONS IN THE APPROVED SPEC — a person reviewed and committed each with its stated resolution; treat those as settled. One that still says a person must decide keeps the criteria it touches from Confirmed`
     : `CONTRADICTIONS FOUND WHILE PLANNING (intent vs the repository's specs, docs or code) — a criterion one of them touches is not Confirmed until a person settles it`}:\n${(reqs.contradictions || []).join('\n') || '(none)'}
 
-TRACEABILITY (test stage): ${repairRounds && repairRounds.rounds && repairRounds.rounds.length ? `MEASURED BEFORE THE REPAIR LOOP — ${repairRounds.rounds.length} repair round(s) changed the code after these cases ran, so a "proven" criterion is Claimed-not-verified and a "failing" one may since be fixed: ` : ''}${traceabilityLine(testRaw, reqs.criteria)}. A criterion pending human QA or failing is not Confirmed.
+TRACEABILITY (test stage): ${repairRounds && repairRounds.rounds && repairRounds.rounds.length ? (evidenceRefreshedOn
+    ? `MEASURED BEFORE THE REPAIR LOOP, then RE-RUN — QA re-ran its cases on the repaired commit ${evidenceRefreshedOn} and rewrote ${evidenceDir}/casos.md, so read that file for the current results; the counts below are the test stage's: `
+    : `MEASURED BEFORE THE REPAIR LOOP — ${repairRounds.rounds.length} repair round(s) changed the code after these cases ran, so a "proven" criterion is Claimed-not-verified and a "failing" one may since be fixed: `) : ''}${traceabilityLine(testRaw, reqs.criteria)}. A criterion pending human QA or failing is not Confirmed.
 
 TEST STAGE: ${testDead.length ? `produced NO result (${testDead.join(', ')}) — nothing was exercised at runtime; no criterion may be classified Confirmed on test evidence.` : 'ran; its findings are among those above.'}
 
@@ -3515,7 +3614,7 @@ IMPLEMENTATION (build manifest — read the listed files rather than assuming th
       `Technical go/no-go (engineering) — ${verdictLine(readiness.technical)}; it never commits.`,
       `Product go/no-go (product owner) — ${verdictLine(readiness.product)}; it never commits.`,
       ...planGaps.map(g => `Plan gap escalated by ${g.builder}: ${g.gap}`),
-      ...reqs.openQuestions,
+      ...decisionsFor(reqs).filter(l => !l.startsWith('CONTRADICTION: ')),
     ],
   }
 }

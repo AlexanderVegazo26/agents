@@ -11,6 +11,36 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Changed
 
+- **`/sdlc-feature` stage commits have short, whole subjects.** The subject is
+  `sdlc-feature: <stage> — <title>`, where the title is the initiative's first
+  sentence cut at a word, and the run id moves to the body (`Run: <runId>`).
+  The first real pilot's subjects were the run id plus the initiative cut at 72
+  characters, in the middle of its instructions. `"commitSubject"` sets the
+  team's own format (`{stage}`, `{title}`, `{runId}`).
+- **QA refreshes its evidence after a repair.** When the run writes evidence,
+  QA re-verifies every repair round, also one that fixed another lens's
+  findings: it re-runs the cases in `casos.md` on the repaired code and rewrites
+  their execution results, so the evidence names the delivered commit. On the
+  first real pilot every case named the Build commit, and the repair came after.
+- **Evidence in the template's language.** `casos.md` and the tracker draft
+  write the result word in the language of the template or the spec (`PASA`,
+  `FALLA`, `NO EJECUTADO` for a Spanish one); the `result` field keeps
+  `pass`/`fail`/`not-run`.
+- **The plan pause lists only what changes the build.** The planner tags each
+  open question `BLOCKS BUILD:` or `FOR THE PO:` (with the default it builds
+  meanwhile) and each contradiction only a person can settle `NEEDS A PERSON:`.
+  `humanDecisionRequired` lists those one by one; questions for the PO and
+  contradictions the spec already resolves become one line pointing to
+  `spec.md`. An untagged item is still listed. On the first real pilot 22 items
+  reached the approver, and none of them stopped the build.
+- **Concrete expected results in `casos.md`.** Each case's expected result is the
+  observable outcome from its criterion's text, never "the criterion is met".
+- **Proposal: mutation testing on the changed lines.** The test stage uses the
+  repository's own mutation script when it has one; otherwise it mutates only
+  the lines the change added or modified (`git diff -U0 <base>`) and skips static
+  mutants when the tool can (Stryker `ignoreStatic`), and reports the scope. On
+  the first real pilot whole files gave 786 mutants, 42% static, and hours of
+  run time; the changed lines without static mutants took 3 minutes (91.72%).
 - **`/sdlc-feature`'s test stage no longer sees the builders' conclusions.**
   Its brief has the acceptance criteria, the changed files and how to read the
   diff. The builders' summaries, `criteriaAddressed`, `notAddressed` and
