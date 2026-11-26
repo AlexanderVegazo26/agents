@@ -11,6 +11,33 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Changed
 
+- **The mutation score says what it was measured over.** The test stage
+  reports `mutation.measured` and `mutation.skipped` with the reason for the
+  skipped ones, and the test report and readiness print
+  `mutation score 91.72% over 290 measured, 37 skipped (…)`, with a warning
+  when more than a quarter was skipped. A run that measured nothing says so
+  instead of printing 0%, and a missing count reads "not reported" instead of
+  disappearing. A reviewer of the changed-lines proposal asked for it: the
+  percentage alone hides how much was not measured.
+- **A surviving mutant blocks, and closes only on evidence.** Each surviving
+  or uncovered mutant in the changed code is a Must Fix finding of its own,
+  naming the report, file, line, mutator and replacement, so it goes through
+  the repair loop. The refuter, the repair builder and the re-verifier share
+  one rule: it closes only when a mutation run on that line shows it Killed, or
+  when a `// Stryker disable next-line <mutator>: <why>` comment in the code
+  gives a reason that holds. An argument for equivalence, or a test never shown
+  to kill it, does not close it. The repair also mutates the lines it changed.
+  The mutation line now says how many survived and had no coverage, and says
+  when there are more live mutants than surviving-mutant findings. Before, a
+  survivor was Should Fix, and a 91.72% score could ship 22 of them.
+- **A repaired defect enters as a failing test first.** The repair builder
+  writes the test that reproduces the finding, sees it fail on the current
+  code, then fixes it and sees it pass, and reports both runs.
+- **The code review checks the callers of what changed.** Changed-lines
+  mutation testing cannot see code that calls a changed function; the review
+  lens is asked to find those callers and say whether their tests would notice
+  the new behaviour.
+
 - **`/sdlc-feature` stage commits have short, whole subjects.** The subject is
   `sdlc-feature: <stage> — <title>`, where the title is the initiative's first
   sentence cut at a word, and the run id moves to the body (`Run: <runId>`).
