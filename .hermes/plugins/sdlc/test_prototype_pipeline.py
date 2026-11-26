@@ -47,6 +47,11 @@ class TempCase(unittest.TestCase):
     def setUp(self) -> None:
         self._td = tempfile.TemporaryDirectory(prefix="proto-case-")
         self.root = Path(self._td.name)
+        # vet_copy only copies from inside WORK_BASE (it walks there by fd from
+        # WORK_BASE down), so the case root stands in for the prototypes folder.
+        wb = mock.patch.object(pp, "WORK_BASE", self.root)
+        wb.start()
+        self.addCleanup(wb.stop)
         self.src = self.root / "site"
         self.dst = self.root / "public"
         self.src.mkdir()

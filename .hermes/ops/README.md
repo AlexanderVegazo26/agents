@@ -13,6 +13,8 @@ Copies of the machine-level Hermes files that live in `~/.hermes` (not a git rep
 | `config/cron-routing.json` | read only | Each cron job's model, provider and fallback chain (no prompts or chat ids). |
 | `config/config-routing.yaml` | read only | The routing parts of `config.yaml`: fallbacks, auxiliary, delegation, MoA, Telegram display. |
 
+`/home/you/` in `config/sdlc-models.json` and `config/SOUL.md` stands for your own home directory: replace it with the absolute path when copying back. Keep the two identical and absolute, because a `claude_allow` entry is matched as a literal command prefix, so `~` there would not match the absolute path the sdlc plugin's video routing note gives the model.
+
 Not tracked: `config.yaml` as a whole, `cron/jobs.json`, `.env` and `auth.json` hold credentials, chat ids and business data.
 
 `hermes-agent/cron/scheduler.py` carries a local patch (per-job `fallback_providers`), committed in that checkout and not here.
