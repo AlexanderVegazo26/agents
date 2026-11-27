@@ -2393,6 +2393,13 @@ const FINDINGS_SCHEMA = {
 // test report carried a verdict and findings and nothing else: a reviewer could
 // not see what had been proven, and human QA could not see where to start.
 const CASE_TYPES = ['unit', 'component', 'integration', 'e2e', 'visual', 'mutation', 'manual']
+
+// A disable comment is a claim of equivalence, and it silences more than the
+// mutant it names. On a real run the repair raised a web score past the gate
+// with a dozen `Stryker disable next-line ConditionalExpression` comments: the
+// reason held for one replacement and hid the killable `false` beside it, and
+// nobody checked until readiness. isBlocking() routes the finding by its words.
+const DISABLE_RULE = 'Check every mutation-tool disable comment the change adds (Stryker: `// Stryker disable next-line <mutator>: <reason>`). It silences every mutant of that mutator on the line, not only the one its reason talks about, so the reason must hold for each of them: no input can tell any of them apart from the original. One that does not hold is a finding of its own whose summary starts "unjustified disable", with the file, the line and a mutant the comment hides that a test would kill.'
 // The types whose passing case proves a criterion. A mutation run measures the
 // tests; it does not prove the behaviour, and a manual case was not executed.
 const AUTOMATED_TYPES = ['unit', 'component', 'integration', 'e2e', 'visual']
@@ -2472,7 +2479,7 @@ const LENSES = [
     agentType: 'sdlc-suite:code-reviewer',
     tier: 'review',
     stage: 'Review',
-    brief: 'Review by reading. Form your independent expectation from the criteria BEFORE reading the diff (your §4 contamination guard), then state if it changed. Never inherit the implementer\'s self-report. Mutation testing measures only the lines the change edited: when the change modifies something other code uses (an exported function, type, constant or message), find its callers and say whether their tests would notice the new behaviour. A caller whose behaviour changes with no test that notices is a finding.',
+    brief: `Review by reading. Form your independent expectation from the criteria BEFORE reading the diff (your §4 contamination guard), then state if it changed. Never inherit the implementer\'s self-report. Mutation testing measures only the lines the change edited: when the change modifies something other code uses (an exported function, type, constant or message), find its callers and say whether their tests would notice the new behaviour. A caller whose behaviour changes with no test that notices is a finding. PLAN COMPLETENESS: go through the implementation plan handed to you below step by step, with its list of files and tests, and check each step against the change. A planned step that is not in the change — a file not touched, a test not written, a document not updated — is a finding of its own whose summary starts "plan step not done", naming the step, unless the plan or the decision record says it was dropped and why. ${DISABLE_RULE}`,
   },
   {
     key: 'qa',
@@ -2480,7 +2487,7 @@ const LENSES = [
     tier: 'test',
     stage: 'Test',
     schema: QA_SCHEMA,
-    brief: 'Verify by executing. Re-run any claimed verification yourself — a "tests pass" report is a hypothesis until you run it this session. Label every claim Verified / Falsified / Unverified / Untestable, and include the "what was NOT tested" section.',
+    brief: `Verify by executing. Re-run any claimed verification yourself — a "tests pass" report is a hypothesis until you run it this session. Label every claim Verified / Falsified / Unverified / Untestable, and include the "what was NOT tested" section. ${DISABLE_RULE}`,
   },
   {
     key: 'security',
@@ -2657,12 +2664,21 @@ Criteria for context:\n${criteriaText}`),
 // construction. An exhausted loop becomes a blocked gate, not a silent No-Go.
 const MAX_REPAIR_ROUNDS = 2
 const BLOCKING_RE = /must[\s-]?fix|critical|blocker|\bhigh\b/i
+// What a finding is about can make it blocking whatever severity the lens
+// wrote. On a real run three surviving mutants came back as one "Should fix",
+// false disable comments and a missing e2e spec and runbook as "Should Fix",
+// and none of them reached the repair loop: readiness found them afterwards
+// and no round was left. The phrases are the ones the lens briefs ask for.
+const BLOCKING_SUBJECT_RE = /surviving mutant|uncovered mutant|unjustified disable|plan step not done/i
+function blocksByItself(f) {
+  return BLOCKING_RE.test(String(f.severity || '')) || BLOCKING_SUBJECT_RE.test(String(f.summary || ''))
+}
 
 // An UNVERIFIED finding (its refuter returned nothing) is kept, never dropped —
 // but it is not sent to a builder under the words "independent reviewers
 // confirmed", because nobody did. It goes to readiness in its own section.
 function isBlocking(f) {
-  return !!f && !f.refuted && !f.unverified && BLOCKING_RE.test(String(f.severity || ''))
+  return !!f && !f.refuted && !f.unverified && blocksByItself(f)
 }
 
 // Findings are compared by content, not object identity: a replayed phase
@@ -3098,12 +3114,23 @@ ${handoffRef('design.md', 'UX SPEC', asText(uxSpec))}${HANDOFF_FILES['mock.html'
       ? `Earlier builders already changed this tree; build on their work and never revert it:\n${earlier.map(m => `- ${m.label}: ${(m.filesChanged || []).map(f => f.path).join(', ') || '(no files listed)'}`).join('\n')}\n`
       : ''}Do not commit, switch branches, stash, reset or clean — ${STAGE_COMMITS ? 'this workflow commits each stage itself, after you finish' : 'the change stays uncommitted for review'}.${BUILD_BASE ? ` For diffRef, write: git diff ${BUILD_BASE}, plus the new untracked files: git status --short` : ''}`
     : '')
+  // Every plan step has an owner. Builders split by surface, and a plan also
+  // lists work that is no surface's: documentation and end-to-end tests. On a
+  // real run each builder did its slice and asked whose the rest was; the
+  // question became a plan gap, and the docs, the runbook and the e2e spec the
+  // plan approved were never written. The last builder closes the plan.
+  const closer = buildOrder[buildOrder.length - 1]
+  const ownership = surface => `OWNERSHIP: the builders on this run are ${buildOrder.map(s => `build:${s}`).join(', ')}. You own the plan steps for your surface. A plan step that belongs to another builder is not a plan gap: leave it to that builder.${surface === closer
+    ? ` CLOSING BUILDER: you are the last builder, so you also own every plan step no other builder owns — the documentation the plan lists (specs, backlog, runbooks, copy decks, the PRD) and the end-to-end, accessibility and visual tests it lists. Do them; they are not plan gaps. A test that can only run elsewhere (for example in CI) is still written: say in notAddressed that it was not run, and why.`
+    : ''}`
   const buildOne = (surface, earlier) => dispatch(
     withPolicy(`${BUILDERS[surface].brief}
 
 ACCEPTANCE CRITERIA (trace to these IDs):\n${criteriaText}
 
 ${handoffRef('plan.md', 'IMPLEMENTATION PLAN — execute it; do not redesign it', asText(architecture))}
+
+${ownership(surface)}
 
 When the plan does not settle something you need — an interface, a data shape, an error behaviour, anything listed under "Open decisions" — do NOT make the design decision yourself. Implement what the plan does settle and put each open decision in planGaps, worded so a planner can answer it. An escalated gap costs one planning round; an improvised design choice at build tier costs a review cycle and usually a rewrite.
 
@@ -3277,8 +3304,10 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
     if (stop) return stop
   }
 
-  const reviewArtifact = await lensPhase('Review', 'Readiness', LENSES.filter(l => l.stage === 'Review'), () =>
-    `${handoffRef('test-report.md', 'TEST STAGE RESULT (qa-engineer, after cross-check) — evidence to weigh, not a verdict to adopt', testReport)}`,
+  const reviewArtifact = await lensPhase('Review', 'Readiness', LENSES.filter(l => l.stage === 'Review'), lens =>
+    `${handoffRef('test-report.md', 'TEST STAGE RESULT (qa-engineer, after cross-check) — evidence to weigh, not a verdict to adopt', testReport)}${lens.key === 'review'
+      ? `\n\n${handoffRef('plan.md', 'IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)', asText(architecture))}`
+      : ''}`,
     // Every Test failure, refuters included — a dead refuter means qa's
     // findings were never cross-checked (code review C-1).
     (testArtifact.failed || []).slice(), 'Test')
@@ -3480,7 +3509,7 @@ ${criteriaText}${lens.key === 'qa' ? refreshBrief : ''}`),
     // unverified here let the loop report `closed` on a defect the re-verifier
     // had just re-confirmed (code review N1).
     open = [
-      ...reFindings.filter(f => !f.refuted && BLOCKING_RE.test(String(f.severity || ''))),
+      ...reFindings.filter(f => !f.refuted && blocksByItself(f)),
       ...stillOpenUnchecked,
     ]
     repairRounds.rounds.push({

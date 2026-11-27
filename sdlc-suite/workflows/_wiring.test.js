@@ -1261,6 +1261,76 @@ async function main() {
     })
   })
 
+  // ------------------------------- what blocks is the content, not the label
+  console.log('\nBlocking by content — a surviving mutant, an unjustified disable or a plan step not done is repaired whatever severity the lens wrote')
+
+  // On a real run a lens filed three surviving mutants as one "Should fix",
+  // a reviewer called a dozen Stryker disables false at "Should Fix", and the
+  // missing e2e and runbook were findings nobody repaired: isBlocking() read
+  // only the severity word, so none of them reached the repair loop.
+  for (const [lens, summary] of [
+    ['qa', 'surviving mutant in src/export.ts:12 (ConditionalExpression → true), likely equivalent'],
+    ['review', 'unjustified disable: the Stryker disable on src/export.ts:12 also silences a killable mutant'],
+    ['review', 'plan step not done: step 8, the e2e spec the plan lists, is not in the change'],
+  ]) {
+    await test(`a "${summary.split(':')[0]}" finding labelled Should Fix still goes to repair (${lens})`, () => {
+      const finding = { severity: 'Should Fix', summary, evidence: 'src/export.ts:12', file: 'src/export.ts' }
+      return runScript('sdlc-feature.js', {
+        cwd: tmpdir(`content-blocking-${lens}-${summary.split(':')[0].replace(/\W+/g, '-')}`),
+        args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+        onAgent: featureAgents({
+          ...repairBase,
+          'verify:qa': lens === 'qa' ? { verdict: 'x', findings: [finding] } : { verdict: 'clean', findings: [] },
+          'verify:review': lens === 'review' ? { verdict: 'x', findings: [finding] } : { verdict: 'clean', findings: [] },
+          [`refute:${lens}`]: { refuted: false, reasoning: 'confirmed on re-read' },
+          [`reverify:${lens}`]: { verdict: 'fixed', findings: [] },
+        }),
+      }).then(r => {
+        assert.strictEqual(r.thrown, null, r.thrown && r.thrown.message)
+        assert.ok(r.calls.some(c => /^repair:/.test(c.label)), `no repair was dispatched; rounds: ${JSON.stringify(r.result.repairRounds)}`)
+      })
+    })
+  }
+
+  await test('an ordinary Should Fix still does not block (the content rule is narrow)', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('content-blocking-ordinary'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        ...repairBase,
+        'verify:qa': { verdict: 'x', findings: [{ severity: 'Should Fix', summary: 'the export button could use a tooltip', evidence: 'ui/index.ts:3', file: 'ui/index.ts' }] },
+        'refute:qa': { refuted: false, reasoning: 'confirmed' },
+      }),
+    }).then(r => {
+      assert.ok(!r.calls.some(c => /^repair:/.test(c.label)), 'a cosmetic Should Fix was sent to repair')
+    })
+  })
+
+  // ------------------------------------------- every plan step has an owner
+  console.log('\nOwnership — every plan step has a builder, and the review checks the plan against the change')
+
+  await test('the last builder closes the plan: docs and e2e/a11y/visual tests are its, not a plan gap', () => {
+    const calls = feature.calls.filter(c => /^build:/.test(c.label))
+    assert.deepStrictEqual(calls.map(c => c.label), ['build:backend', 'build:frontend'])
+    const [first, last] = calls
+    assert.ok(/CLOSING BUILDER/.test(last.prompt), 'the last builder is not told it closes the plan')
+    assert.ok(/documentation the plan lists/.test(last.prompt) && /end-to-end, accessibility and visual tests/.test(last.prompt),
+      'the closing builder is not told docs and e2e are its')
+    assert.ok(!/CLOSING BUILDER/.test(first.prompt), 'an earlier builder was told it closes the plan')
+    for (const c of calls) {
+      assert.ok(/A plan step that belongs to another builder is not a plan gap/.test(c.prompt), `${c.label} may escalate another builder's step as a plan gap`)
+    }
+  })
+
+  await test('the review lens checks every plan step against the change and every disable it adds', () => {
+    const review = feature.calls.find(c => c.label === 'verify:review')
+    assert.ok(/PLAN COMPLETENESS/.test(review.prompt) && /plan step not done/.test(review.prompt), 'the review is not asked to check the plan against the change')
+    assert.ok(/unjustified disable/.test(review.prompt) && /every mutant of that mutator on the line/.test(review.prompt),
+      'the review is not told a disable silences every mutant of its mutator on the line')
+    const qa = feature.calls.find(c => c.label === 'verify:qa')
+    assert.ok(/unjustified disable/.test(qa.prompt), 'the test lens, which runs the mutation, is not given the disable rule')
+  })
+
   // ------------------------------------------- the whole loop, end to end
   console.log('\nThe loop closes — two runs, distil, ratify, and the third run is taught')
 

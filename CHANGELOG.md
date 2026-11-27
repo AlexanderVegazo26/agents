@@ -208,6 +208,30 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Fixed
 
+- **`sdlc-feature`: no plan step without an owner, and what blocks is what a
+  finding is about.** On an unattended run on a real repository, the builders
+  split by surface each did their slice and asked whose the rest was. The
+  documentation the plan listed (backlog items, a runbook entry, a data-model
+  line) and its e2e and accessibility specs became plan gaps and were never
+  written. Three surviving mutants came back as one "Should fix", and a dozen
+  `Stryker disable` comments whose reasons held for one replacement but hid
+  a killable one came back as "Should Fix". `isBlocking()` read only the
+  severity word, so none of them reached the repair loop, and readiness ended
+  no-go with no round left. Four changes fix this:
+  - The last builder is the **closing builder**: it also owns every plan step
+    no surface does (docs and e2e/a11y/visual tests). No builder escalates
+    another builder's step as a plan gap.
+  - The `code-reviewer` lens gets `plan.md` and checks every step against the
+    change. A missing step is a "plan step not done" finding.
+  - The review and test lenses get `DISABLE_RULE`: a disable comment silences
+    every mutant of its mutator on the line, so its reason must hold for each.
+    One that does not is an "unjustified disable" finding.
+  - A finding blocks when its severity says so, or when its summary is about a
+    surviving or uncovered mutant, an unjustified disable or a plan step not
+    done. This applies in the first verification and in re-verification.
+
+  `_wiring.test.js`: six new cases, five of them red before the change. The
+  sixth checks that an ordinary "Should Fix" still does not block.
 - **Bridge scripts are `.cjs`.** In a repository whose `package.json` declares
   `"type": "module"`, Node loaded each `.js` bridge as ESM, `require` was
   undefined, and every workflow stopped at its first step (found on the first
