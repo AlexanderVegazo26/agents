@@ -1281,6 +1281,10 @@ async function main() {
     ['qa', 'surviving mutant in src/export.ts:12 (ConditionalExpression → true), likely equivalent'],
     ['review', 'unjustified disable: the Stryker disable on src/export.ts:12 also silences a killable mutant'],
     ['review', 'plan step not done: step 8, the e2e spec the plan lists, is not in the change'],
+    // What lenses put before the phrase: a bullet, emphasis, a count, a severity, an ID.
+    ['qa', '- **2 surviving mutants** in src/export.ts:12 and :14'],
+    ['review', 'F-2: plan step not done — the runbook entry the plan lists'],
+    ['review', 'Should Fix — unjustified disable on src/export.ts:12'],
   ]) {
     await test(`a "${summary.split(':')[0]}" finding labelled Should Fix still goes to repair (${lens})`, () => {
       const finding = { severity: 'Should Fix', summary, evidence: 'src/export.ts:12', file: 'src/export.ts' }
@@ -1383,6 +1387,27 @@ async function main() {
       assert.ok(/A plan step that belongs to another builder is not a plan gap/.test(c.prompt), `${c.label} may escalate another builder's step as a plan gap`)
     }
     assert.ok(/belong to build:frontend, the closing builder/.test(first.prompt), 'the other builders are not told whose the docs and e2e are')
+  })
+
+  await test('a plan.md edited after Plan is a blocked gate, and the review checks the recorded plan, not the edit', () => {
+    const cwd = tmpdir('plan-edited')
+    return runScript('sdlc-feature.js', {
+      cwd,
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        // A builder (it has Write) exempts itself by editing the approved plan.
+        'build:frontend': () => {
+          fs.appendFileSync(path.join(runDirs(cwd)[0], 'handoff', 'plan.md'), '\n\nSTEP 8 DROPPED by the builder.\n')
+          return manifest('build:frontend', FRONTEND_FILES)
+        },
+      }),
+    }).then(r => {
+      assert.strictEqual(r.thrown, null, r.thrown && r.thrown.message)
+      assert.ok(r.result.blockedGates.some(g => g.gate === 'plan.edited'), JSON.stringify(r.result.blockedGates.map(g => g.gate)))
+      const review = r.calls.find(c => c.label === 'verify:review').prompt
+      assert.ok(review.includes(`${PLAN_CHECK_TITLE}:\nArchitecture: no new service`), 'the review was not given the recorded plan text')
+      assert.ok(!review.includes('STEP 8 DROPPED'), 'the edited plan reached the review')
+    })
   })
 
   await test('the closing builder does not depend on the order the analyst listed the surfaces in', () => {
@@ -3255,7 +3280,9 @@ async function main() {
   await test('every live mutant must be its own finding: fewer surviving-mutant findings than live mutants is said', () => {
     const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
     const a = src.indexOf('function liveMutantGap(m, findings) {')
-    const gap = new Function(`${src.slice(a, src.indexOf('\n}\n', a) + 3)}; return liveMutantGap`)()
+    // It counts findings with the same phrase rule isBlocking() routes by.
+    const line = name => { const i = src.indexOf(`const ${name} = `); return src.slice(i, src.indexOf('\n', i)) }
+    const gap = new Function(`${line('SUBJECT_LEAD')}\n${line('LIVE_MUTANT_SUBJECT_RE')}\n${src.slice(a, src.indexOf('\n}\n', a) + 3)}; return liveMutantGap`)()
     const f = n => Array.from({ length: n }, (_, i) => ({ summary: `Surviving mutant ${i} in src/x.ts` }))
     assert.strictEqual(gap({ survived: 22, noCoverage: 2 }, [{ summary: 'one finding for all survivors' }]),
       '; 24 live mutant(s) reported but only 0 surviving-mutant finding(s): every live mutant must be its own Must Fix finding')

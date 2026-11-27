@@ -2226,7 +2226,7 @@ function traceabilityLine(raw, criteria) {
 function liveMutantGap(m, findings) {
   const count = v => (Number.isInteger(v) && v >= 0 ? v : 0)
   const live = m && typeof m === 'object' ? count(m.survived) + count(m.noCoverage) : 0
-  const filed = (Array.isArray(findings) ? findings : []).filter(f => /^\s*(?:surviving|uncovered) mutant/i.test(String(f && f.summary || ''))).length
+  const filed = (Array.isArray(findings) ? findings : []).filter(f => LIVE_MUTANT_SUBJECT_RE.test(String(f && f.summary || ''))).length
   return live > filed
     ? `; ${live} live mutant(s) reported but only ${filed} surviving-mutant finding(s): every live mutant must be its own Must Fix finding`
     : ''
@@ -2622,7 +2622,7 @@ function refuteFindings(result, lensKey, criteriaText, phaseLabel = 'Cross-check
 FINDING (${f.severity}): ${f.summary}
 EVIDENCE CLAIMED: ${f.evidence}
 
-${SURVIVOR_RULE} ${DISABLE_RULE}${/^\s*plan step not done/i.test(String(f.summary || ''))
+${SURVIVOR_RULE} ${DISABLE_RULE}${PLAN_STEP_SUBJECT_RE.test(String(f.summary || ''))
   ? `\n\nA "plan step not done" finding stands when the step is in the plan and not in the change; only the plan itself can drop a step, never a builder. ${planRef('IMPLEMENTATION PLAN — the steps this finding is checked against')}`
   : ''}
 
@@ -2672,9 +2672,15 @@ const BLOCKING_RE = /must[\s-]?fix|critical|blocker|\bhigh\b/i
 // and none of them reached the repair loop: readiness found them afterwards
 // and no round was left. The phrases are the ones the lens briefs ask for.
 // Anchored at the start of the summary, which is where the briefs ask for the
-// phrase: an unanchored match made "no surviving mutant on the changed lines" or
-// "surviving mutant now Killed" blocking too (independent review).
-const BLOCKING_SUBJECT_RE = /^\s*(?:surviving mutant|uncovered mutant|unjustified disable|plan step not done)/i
+// phrase, so "no surviving mutant on the changed lines" does not block
+// (independent review). What may come before it is what lenses actually put
+// there: bullets, emphasis, a count, a severity word or a finding ID —
+// "- **3 surviving mutants**", "Should Fix — surviving mutant", "F-2: plan
+// step not done". A killed mutant is not reported at all (re-verify brief).
+const SUBJECT_LEAD = '^[^a-z]*(?:(?:must[\\s-]?fix|should[\\s-]?fix|nit|critical|blocker|high|medium|low|f-?\\d+)[^a-z]+)?'
+const BLOCKING_SUBJECT_RE = new RegExp(`${SUBJECT_LEAD}(?:surviving mutant|uncovered mutant|unjustified disable|plan step not done)`, 'i')
+const LIVE_MUTANT_SUBJECT_RE = new RegExp(`${SUBJECT_LEAD}(?:surviving|uncovered) mutant`, 'i')
+const PLAN_STEP_SUBJECT_RE = new RegExp(`${SUBJECT_LEAD}plan step not done`, 'i')
 function blocksByItself(f) {
   return BLOCKING_RE.test(String(f.severity || '')) || BLOCKING_SUBJECT_RE.test(String(f.summary || ''))
 }
@@ -3315,10 +3321,28 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
     const stop = missingInputs('Review', ['test-report.md'])
     if (stop) return stop
   }
-  // Builders and the test stage have Write, and the review checks the change
-  // against plan.md: a plan edited since the Plan stage recorded it is not
-  // handed on, so the review reads the plan as approved (independent review).
-  await adoptFiles('Review', { 'plan.md': (planArtifact.files || {})['plan.md'] }, true)
+  // Builders, the test stage and the repairs have Write, and the review and its
+  // re-verifiers check the change against plan.md. A plan.md that no longer
+  // matches the hash the Plan stage recorded is not handed on: the checks get
+  // the Plan stage's recorded text instead, and the edit is a blocked gate, not
+  // only a log line (independent review).
+  const planHash = (planArtifact.files || {})['plan.md']
+  let planEditRecorded = false
+  async function recheckPlan(stage) {
+    if (!planHash || !HANDOFF_FILES['plan.md']) return
+    await adoptFiles(stage, { 'plan.md': planHash }, true)
+    if (HANDOFF_FILES['plan.md'] || planEditRecorded) return
+    planEditRecorded = true
+    keep([
+      'BLOCKED — plan.edited',
+      `  Action withheld: checking the change against plan.md as it is on disk at ${stage}`,
+      '  Why gated: plan.md no longer matches the hash the Plan stage recorded, so an agent after Plan edited the approved plan',
+      `  Prepared: the plan checks used the Plan stage's recorded text instead${APPROVED ? ' (for an approved plan, the version committed when the run started)' : ''}; the edited file is still on disk`,
+      '  Unblocks: a human comparing the edit with the approved plan, and re-planning if it should stand',
+      '  Authorize by: not an authorization gate — the plan is settled before Build, not during it',
+    ].join('\n'))
+  }
+  await recheckPlan('Review')
 
   const reviewArtifact = await lensPhase('Review', 'Readiness', LENSES.filter(l => l.stage === 'Review'), lens =>
     `${handoffRef('test-report.md', 'TEST STAGE RESULT (qa-engineer, after cross-check) — evidence to weigh, not a verdict to adopt', testReport)}${lens.key === 'review'
@@ -3390,7 +3414,7 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
     const ownersOf = f => {
       const o = manifests.filter(m => owns(m, f))
       if (o.length) return o
-      return closing.length && /^\s*plan step not done/i.test(String(f.summary || '')) ? closing : manifests
+      return closing.length && PLAN_STEP_SUBJECT_RE.test(String(f.summary || '')) ? closing : manifests
     }
     const fixers = manifests.filter(m => target.some(f => ownersOf(f).includes(m)))
     const findingsFor = m => target.filter(f => ownersOf(f).includes(m))
@@ -3458,6 +3482,8 @@ Report a BUILD MANIFEST of the repair, with the same rules as the build: every f
         return prior.length ? `\n\nYOUR EARLIER FINDINGS, already recorded — do not report them again unless the repair changed them:\n${prior.join('\n')}` : ''
       })()}`
       : ''
+    // A repair can edit plan.md too.
+    await recheckPlan(`Re-verify ${k}`)
     const reArtifact = await runPhase(`Re-verify ${k}`, 'Readiness', async () => {
       const reLenses = LENSES.filter(l => lensKeys.includes(l.key) || (refreshEvidence && l.key === 'qa'))
       const out = await pipeline(
@@ -3465,7 +3491,7 @@ Report a BUILD MANIFEST of the repair, with the same rules as the build: every f
         lens => dispatch(
           withPolicy(`${lens.brief}
 
-RE-VERIFICATION, round ${k} of ${MAX_REPAIR_ROUNDS}. A builder has attempted to fix the blocking findings below, which your lens raised and an independent refuter confirmed. Decide INDEPENDENTLY whether each one is actually fixed: read the changed files yourself — the repair manifest is the builder's claim, not evidence. Report every finding that is still present, at its real severity, and any new defect the repair introduced. A finding you have shown to be fixed is not reported again; a finding you could not check is reported as still present, with why. ${SURVIVOR_RULE} For such a finding, run the mutation tool yourself on that file and line (Stryker: \`--mutate <file>:<line>-<line>\`) and report the mutant's status.${lens.key === 'review' ? `\n\n${planRef('IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)')}` : ''}
+RE-VERIFICATION, round ${k} of ${MAX_REPAIR_ROUNDS}. A builder has attempted to fix the blocking findings below, which your lens raised and an independent refuter confirmed. Decide INDEPENDENTLY whether each one is actually fixed: read the changed files yourself — the repair manifest is the builder's claim, not evidence. Report every finding that is still present, at its real severity, and any new defect the repair introduced. A finding you have shown to be fixed is not reported again — a mutant you saw Killed is not reported at all; a finding you could not check is reported as still present, with why. ${SURVIVOR_RULE} For such a finding, run the mutation tool yourself on that file and line (Stryker: \`--mutate <file>:<line>-<line>\`) and report the mutant's status.${lens.key === 'review' ? `\n\n${planRef('IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)')}` : ''}
 
 FINDINGS TO RE-CHECK:
 ${JSON.stringify(target.filter(f => f.lens === lens.key).map(f => ({ severity: f.severity, summary: f.summary, evidence: f.evidence, file: f.file, line: f.line })), null, 2)}

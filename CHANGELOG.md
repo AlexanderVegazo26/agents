@@ -224,8 +224,10 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
     another builder's step as a plan gap. In parallel worktrees the closer is
     told the other builders' code is not in its tree.
   - The `code-reviewer` lens gets `plan.md` and checks every step against the
-    change. The plan's recorded hash is checked again before Review. A missing
-    step is a "plan step not done" finding. Only the plan can drop a step,
+    change. The plan's recorded hash is checked again before Review and before
+    each re-verification. If an agent edited it, the checks get the Plan
+    stage's recorded text and the edit becomes a `BLOCKED — plan.edited`
+    gate. A missing step is a "plan step not done" finding. Only the plan can drop a step,
     never a builder. The refuter of such a finding and the review
     re-verifier get the plan too. When no builder's files own the finding,
     repair sends it to the closing builder only.
@@ -235,12 +237,13 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
     does not is an "unjustified disable" finding.
   - A finding blocks when its severity says so, or when its summary **starts
     with** "surviving mutant", "uncovered mutant", "unjustified disable" or
-    "plan step not done". This applies in verification and in
-    re-verification. The anchor keeps "no surviving mutant on the changed
-    lines" from blocking, and `liveMutantGap()` counts the same anchored
-    phrases.
+    "plan step not done". Only what lenses actually put first may come before
+    the phrase: bullets, emphasis, a count, a severity word or a finding ID.
+    This applies in verification and in re-verification. The anchor keeps "no
+    surviving mutant on the changed lines" from blocking. `liveMutantGap()`,
+    the refuter and repair routing all use the same rule.
 
-  `_wiring.test.js`: eleven new cases. Each was shown to fail without the
+  `_wiring.test.js`: fifteen new cases. Each was shown to fail without the
   change it covers: against the code before the change, or, for the
   re-verification filter, with that one line reverted. Two cases are
   controls: an ordinary "Should Fix", and a finding that only mentions the
