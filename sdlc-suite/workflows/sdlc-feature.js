@@ -2226,7 +2226,7 @@ function traceabilityLine(raw, criteria) {
 function liveMutantGap(m, findings) {
   const count = v => (Number.isInteger(v) && v >= 0 ? v : 0)
   const live = m && typeof m === 'object' ? count(m.survived) + count(m.noCoverage) : 0
-  const filed = (Array.isArray(findings) ? findings : []).filter(f => /surviving mutant/i.test(String(f && f.summary || ''))).length
+  const filed = (Array.isArray(findings) ? findings : []).filter(f => /^\s*(?:surviving|uncovered) mutant/i.test(String(f && f.summary || ''))).length
   return live > filed
     ? `; ${live} live mutant(s) reported but only ${filed} surviving-mutant finding(s): every live mutant must be its own Must Fix finding`
     : ''
@@ -2479,7 +2479,7 @@ const LENSES = [
     agentType: 'sdlc-suite:code-reviewer',
     tier: 'review',
     stage: 'Review',
-    brief: `Review by reading. Form your independent expectation from the criteria BEFORE reading the diff (your §4 contamination guard), then state if it changed. Never inherit the implementer\'s self-report. Mutation testing measures only the lines the change edited: when the change modifies something other code uses (an exported function, type, constant or message), find its callers and say whether their tests would notice the new behaviour. A caller whose behaviour changes with no test that notices is a finding. PLAN COMPLETENESS: go through the implementation plan handed to you below step by step, with its list of files and tests, and check each step against the change. A planned step that is not in the change — a file not touched, a test not written, a document not updated — is a finding of its own whose summary starts "plan step not done", naming the step, unless the plan or the decision record says it was dropped and why. ${DISABLE_RULE}`,
+    brief: `Review by reading. Form your independent expectation from the criteria BEFORE reading the diff (your §4 contamination guard), then state if it changed. Never inherit the implementer\'s self-report. Mutation testing measures only the lines the change edited: when the change modifies something other code uses (an exported function, type, constant or message), find its callers and say whether their tests would notice the new behaviour. A caller whose behaviour changes with no test that notices is a finding. PLAN COMPLETENESS: go through the implementation plan handed to you below step by step, with its list of files and tests, and check each step against the change. A planned step that is not in the change — a file not touched, a test not written, a document not updated — is a finding of its own whose summary starts "plan step not done", naming the step, unless the plan itself says the step was dropped and why. A builder cannot drop a planned step: one a builder says it dropped, in its manifest or in the decision record, is still a plan step not done. ${DISABLE_RULE}`,
   },
   {
     key: 'qa',
@@ -2622,7 +2622,9 @@ function refuteFindings(result, lensKey, criteriaText, phaseLabel = 'Cross-check
 FINDING (${f.severity}): ${f.summary}
 EVIDENCE CLAIMED: ${f.evidence}
 
-${SURVIVOR_RULE}
+${SURVIVOR_RULE} ${DISABLE_RULE}${/^\s*plan step not done/i.test(String(f.summary || ''))
+  ? `\n\nA "plan step not done" finding stands when the step is in the plan and not in the change; only the plan itself can drop a step, never a builder. ${planRef('IMPLEMENTATION PLAN — the steps this finding is checked against')}`
+  : ''}
 
 Criteria for context:\n${criteriaText}`),
         {
@@ -2669,7 +2671,10 @@ const BLOCKING_RE = /must[\s-]?fix|critical|blocker|\bhigh\b/i
 // false disable comments and a missing e2e spec and runbook as "Should Fix",
 // and none of them reached the repair loop: readiness found them afterwards
 // and no round was left. The phrases are the ones the lens briefs ask for.
-const BLOCKING_SUBJECT_RE = /surviving mutant|uncovered mutant|unjustified disable|plan step not done/i
+// Anchored at the start of the summary, which is where the briefs ask for the
+// phrase: an unanchored match made "no surviving mutant on the changed lines" or
+// "surviving mutant now Killed" blocking too (independent review).
+const BLOCKING_SUBJECT_RE = /^\s*(?:surviving mutant|uncovered mutant|unjustified disable|plan step not done)/i
 function blocksByItself(f) {
   return BLOCKING_RE.test(String(f.severity || '')) || BLOCKING_SUBJECT_RE.test(String(f.summary || ''))
 }
@@ -2699,6 +2704,10 @@ let findingCounts = { confirmed: 0, refuted: 0, byLens: {} }
 let refutations = []
 let repairRounds = null
 let planGaps = []
+// The plan as the Plan stage returned it, for the stages that check the change
+// against it outside the Build scope (refuters, re-verification).
+let PLAN_TEXT = null
+const planRef = title => handoffRef('plan.md', title, PLAN_TEXT)
 
 async function runWorkflow() {
   // A run recorded under the older layout (Requirements, Verify) is refused by
@@ -2946,6 +2955,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
 
   const criteriaText = criteriaTextOf(reqs)
   const architecture = agentResult(planArtifact, 'architecture')
+  PLAN_TEXT = asText(architecture)
   // No plan -> stop. The build tier is cheap BECAUSE the plan leaves it nothing
   // to design; without one it would design everything, unreviewed (S3).
   if (architecture === null || architecture === undefined || (typeof architecture === 'string' && !architecture.trim()) ||
@@ -3118,10 +3128,12 @@ ${handoffRef('design.md', 'UX SPEC', asText(uxSpec))}${HANDOFF_FILES['mock.html'
   // lists work that is no surface's: documentation and end-to-end tests. On a
   // real run each builder did its slice and asked whose the rest was; the
   // question became a plan gap, and the docs, the runbook and the e2e spec the
-  // plan approved were never written. The last builder closes the plan.
-  const closer = buildOrder[buildOrder.length - 1]
-  const ownership = surface => `OWNERSHIP: the builders on this run are ${buildOrder.map(s => `build:${s}`).join(', ')}. You own the plan steps for your surface. A plan step that belongs to another builder is not a plan gap: leave it to that builder.${surface === closer
-    ? ` CLOSING BUILDER: you are the last builder, so you also own every plan step no other builder owns — the documentation the plan lists (specs, backlog, runbooks, copy decks, the PRD) and the end-to-end, accessibility and visual tests it lists. Do them; they are not plan gaps. A test that can only run elsewhere (for example in CI) is still written: say in notAddressed that it was not run, and why.`
+  // plan approved were never written. One builder closes the plan, chosen the
+  // same way in both modes — the frontend when there is one, as in the
+  // checkout's own order — never by the order the analyst listed surfaces in.
+  const closer = ['data', 'backend', 'frontend'].filter(s => surfaces.includes(s)).pop()
+  const ownership = surface => `OWNERSHIP: the builders on this run are ${buildOrder.map(s => `build:${s}`).join(', ')}. You own the plan steps for your surface. A plan step that belongs to another builder is not a plan gap: leave it to that builder. The documentation the plan lists and its end-to-end, accessibility and visual tests belong to build:${closer}, the closing builder.${surface === closer
+    ? ` CLOSING BUILDER: that is you. Besides your surface you own every plan step no other builder owns — the documentation the plan lists (specs, backlog, runbooks, copy decks, the PRD) and the end-to-end, accessibility and visual tests it lists. Do them; they are not plan gaps. A test that can only run elsewhere (for example in CI) is still written: say in notAddressed that it was not run, and why.${IN_CHECKOUT ? '' : ' The other builders work in their own worktrees at the same time, so their code is not in yours: write those tests against the plan and the design, and say in notAddressed what you could not run against the real code.'}`
     : ''}`
   const buildOne = (surface, earlier) => dispatch(
     withPolicy(`${BUILDERS[surface].brief}
@@ -3275,7 +3287,7 @@ EVIDENCE, ONE CASE PER CRITERION. A person reviews and approves this change from
 - Choose the type the criterion needs: logic → unit; a UI component → component; several modules or the database together → integration; a user journey → e2e; how a screen looks → visual. A criterion you cannot check by execution here is type manual, result not-run: it is pending human QA, never "pass".
 - ${evidenceDir ? `Save each case's evidence under ${evidenceDir}/<case id>/ — what the test or command returned (output as .txt, API responses as .json), and a screenshot or a short video when the case has a screen and a browser is available. Also write ${evidenceDir}/casos.md. If the repository has ${QA_TEMPLATE}, follow it exactly — its case titles, headings and naming — and, when it describes a tracker draft (a container and its cases), also write ${evidenceDir}/tracker-draft.md from it, ready to paste. Never publish anything to a tracker yourself. Without that file, write one section per case with its title, functional description, preconditions, steps, expected result and execution result (environment, commit, date), so it can be reviewed or copied into the team's tracker as it is. Write everything a person reads in casos.md and the tracker draft in the language of the template or the spec, the result word included (for a Spanish one: PASA, FALLA, NO EJECUTADO — never pass/fail); only the "result" field of each case keeps pass, fail or not-run. Each case's expected result states the concrete, observable outcome taken from its criterion's text — what the person must see or get — never "the criterion is met" or "the behaviour described by AC-n holds": a tester runs the case from that line.` : 'There is no handoff directory for this run: put the essential evidence inline in each case\'s "evidence" field.'}
 ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the current branch. Name it in every case's execution result: evidence is bound to the commit it was produced on.\n` : ''}- Evidence is committed with the spec: before saving any output, response or screenshot, redact tokens, credentials, secrets and personal data (names, phone numbers, emails) — or use test data that has none.
-- If the repository has mutation testing set up (for example a Stryker configuration), run it on the code this change touched and report it in "mutation". Use the repository's own script for it when it has one. Otherwise mutate only the lines the change added or modified${BUILD_BASE ? ` (the ranges from \`git diff -U0 ${BUILD_BASE}\`)` : ''} when the tool takes line ranges (Stryker: \`--mutate path:start-end\`), not whole files, and skip static mutants when the tool can (Stryker: \`ignoreStatic\`): on the first real pilot whole files gave 786 mutants, 42% of them static, and hours of run time; the changed lines without static mutants took 3 minutes. Say the scope in "mutation.scope", with the reason for any skipped mutants (static, invalid), and give "mutation.measured" and "mutation.skipped": the score speaks only of the measured mutants, so a score over a few measured out of many says little. Each surviving mutant in changed code — a mutant with no coverage counts as surviving — is a Must Fix finding of its own, whose summary says "surviving mutant" and whose evidence names the report file, the file and line, the mutator and the replacement, so a reviewer can check it by reading; give "mutation.survived" and "mutation.noCoverage" as counts: a test that does not fail when the code is broken does not protect it, and a survivor left open keeps the change from Go. The fix is a test that fails on that mutant. Only when the mutant is equivalent (no input can tell it apart from the original) is the fix a comment that says so where the tool reads it (Stryker: \`// Stryker disable next-line <mutator>: <why it is equivalent>\`), and the reason must hold up when the lens re-checks it.
+- If the repository has mutation testing set up (for example a Stryker configuration), run it on the code this change touched and report it in "mutation". Use the repository's own script for it when it has one. Otherwise mutate only the lines the change added or modified${BUILD_BASE ? ` (the ranges from \`git diff -U0 ${BUILD_BASE}\`)` : ''} when the tool takes line ranges (Stryker: \`--mutate path:start-end\`), not whole files, and skip static mutants when the tool can (Stryker: \`ignoreStatic\`): on the first real pilot whole files gave 786 mutants, 42% of them static, and hours of run time; the changed lines without static mutants took 3 minutes. Say the scope in "mutation.scope", with the reason for any skipped mutants (static, invalid), and give "mutation.measured" and "mutation.skipped": the score speaks only of the measured mutants, so a score over a few measured out of many says little. Each surviving mutant in changed code — a mutant with no coverage counts as surviving — is a Must Fix finding of its own, whose summary starts with "surviving mutant" and whose evidence names the report file, the file and line, the mutator and the replacement, so a reviewer can check it by reading; give "mutation.survived" and "mutation.noCoverage" as counts: a test that does not fail when the code is broken does not protect it, and a survivor left open keeps the change from Go. The fix is a test that fails on that mutant. Only when the mutant is equivalent (no input can tell it apart from the original) is the fix a comment that says so where the tool reads it (Stryker: \`// Stryker disable next-line <mutator>: <why it is equivalent>\`), and the reason must hold up when the lens re-checks it.
 - A criterion with no automated test where one was possible is a finding, not a case to skip.`)
 
   const testFindings = (testArtifact.agents || []).flatMap(a => a.result || []).filter(Boolean)
@@ -3303,10 +3315,14 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
     const stop = missingInputs('Review', ['test-report.md'])
     if (stop) return stop
   }
+  // Builders and the test stage have Write, and the review checks the change
+  // against plan.md: a plan edited since the Plan stage recorded it is not
+  // handed on, so the review reads the plan as approved (independent review).
+  await adoptFiles('Review', { 'plan.md': (planArtifact.files || {})['plan.md'] }, true)
 
   const reviewArtifact = await lensPhase('Review', 'Readiness', LENSES.filter(l => l.stage === 'Review'), lens =>
     `${handoffRef('test-report.md', 'TEST STAGE RESULT (qa-engineer, after cross-check) — evidence to weigh, not a verdict to adopt', testReport)}${lens.key === 'review'
-      ? `\n\n${handoffRef('plan.md', 'IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)', asText(architecture))}`
+      ? `\n\n${planRef('IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)')}`
       : ''}`,
     // Every Test failure, refuters included — a dead refuter means qa's
     // findings were never cross-checked (code review C-1).
@@ -3366,9 +3382,15 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
       const [short, long] = a.length <= b.length ? [a, b] : [b, a]
       return a === b || (short.includes('/') && long.endsWith(`/${short}`))
     })
+    // A plan step not done usually names a file nobody wrote (the missing doc or
+    // spec), so no manifest owns it. It goes to the closing builder, who owns
+    // those steps — sent to every builder, parallel worktrees would each write
+    // the same file (independent review).
+    const closing = manifests.filter(m => m.label === `build:${closer}`)
     const ownersOf = f => {
       const o = manifests.filter(m => owns(m, f))
-      return o.length ? o : manifests
+      if (o.length) return o
+      return closing.length && /^\s*plan step not done/i.test(String(f.summary || '')) ? closing : manifests
     }
     const fixers = manifests.filter(m => target.some(f => ownersOf(f).includes(m)))
     const findingsFor = m => target.filter(f => ownersOf(f).includes(m))
@@ -3381,7 +3403,7 @@ ${buildCommit ? `- The code under test is commit ${buildCommit.commit} on the cu
 
 Work on YOUR ORIGINAL CHANGE, where it already lives — ${m.diffRef ? `reach it through: ${m.diffRef}` : 'the worktree or branch you built it in'}. Do not start from a fresh checkout: the change is not there, and a fix applied to the wrong tree fixes nothing.${IN_CHECKOUT ? ` It is in the checkout this run started in${STAGE_COMMITS ? ', committed by this workflow after each stage' : ', uncommitted'}, together with the other builders' work: fix only what the findings name, never revert theirs, and do not commit, switch branches, stash, reset or clean${STAGE_COMMITS ? ' — this workflow commits your repair' : ''}.` : ''} Stay inside the findings' scope; anything else you notice goes in your summary as noticed-but-not-touched.
 
-A finding that is a defect in behaviour enters as a test first: write the test that reproduces it, run it and see it FAIL on the current code, then fix the code and see the same test pass. Say both runs in your summary. A fix without a test that failed before it can come back unnoticed. A finding that is itself a missing or weak test (a surviving mutant) is fixed by that test: run the mutation tool on that file and line and report that the mutant is now Killed, or, only if it is equivalent, add the disable comment with the reason. Also run it on the lines your repair changed, and report the result: code written in a repair has had no mutation run yet.
+A finding that is a defect in behaviour enters as a test first: write the test that reproduces it, run it and see it FAIL on the current code, then fix the code and see the same test pass. Say both runs in your summary. A fix without a test that failed before it can come back unnoticed. A finding that is itself a missing or weak test (a surviving mutant) is fixed by that test: run the mutation tool on that file and line and report that the mutant is now Killed, or, only if it is equivalent, add the disable comment with the reason. A disable comment silences every mutant of its mutator on that line, not only the one you mean: add one only when the reason holds for each of them, or the re-verification reports it as an unjustified disable. Also run it on the lines your repair changed, and report the result: code written in a repair has had no mutation run yet.
 
 A finding you believe is wrong is not yours to dismiss — say so in notAddressed with the evidence, and the independent lens that raised it will re-check. You do not certify this repair; the lens re-verifies it after you.
 
@@ -3443,7 +3465,7 @@ Report a BUILD MANIFEST of the repair, with the same rules as the build: every f
         lens => dispatch(
           withPolicy(`${lens.brief}
 
-RE-VERIFICATION, round ${k} of ${MAX_REPAIR_ROUNDS}. A builder has attempted to fix the blocking findings below, which your lens raised and an independent refuter confirmed. Decide INDEPENDENTLY whether each one is actually fixed: read the changed files yourself — the repair manifest is the builder's claim, not evidence. Report every finding that is still present, at its real severity, and any new defect the repair introduced. A finding you have shown to be fixed is not reported again; a finding you could not check is reported as still present, with why. ${SURVIVOR_RULE} For such a finding, run the mutation tool yourself on that file and line (Stryker: \`--mutate <file>:<line>-<line>\`) and report the mutant's status.
+RE-VERIFICATION, round ${k} of ${MAX_REPAIR_ROUNDS}. A builder has attempted to fix the blocking findings below, which your lens raised and an independent refuter confirmed. Decide INDEPENDENTLY whether each one is actually fixed: read the changed files yourself — the repair manifest is the builder's claim, not evidence. Report every finding that is still present, at its real severity, and any new defect the repair introduced. A finding you have shown to be fixed is not reported again; a finding you could not check is reported as still present, with why. ${SURVIVOR_RULE} For such a finding, run the mutation tool yourself on that file and line (Stryker: \`--mutate <file>:<line>-<line>\`) and report the mutant's status.${lens.key === 'review' ? `\n\n${planRef('IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)')}` : ''}
 
 FINDINGS TO RE-CHECK:
 ${JSON.stringify(target.filter(f => f.lens === lens.key).map(f => ({ severity: f.severity, summary: f.summary, evidence: f.evidence, file: f.file, line: f.line })), null, 2)}

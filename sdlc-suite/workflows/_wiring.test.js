@@ -1264,6 +1264,15 @@ async function main() {
   // ------------------------------- what blocks is the content, not the label
   console.log('\nBlocking by content — a surviving mutant, an unjustified disable or a plan step not done is repaired whatever severity the lens wrote')
 
+  // The plan reaches a prompt by path when the run recorded plan.md, inline otherwise.
+  const PLAN_CHECK_TITLE = 'IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)'
+  const planHanded = (prompt, title) => {
+    const at = prompt.indexOf(`${title}:`)
+    if (at < 0) return false
+    const after = prompt.slice(at + title.length + 1, at + title.length + 400)
+    return /^ read \S.*plan\.md/.test(after) || after.startsWith('\nArchitecture: no new service')
+  }
+
   // On a real run a lens filed three surviving mutants as one "Should fix",
   // a reviewer called a dozen Stryker disables false at "Should Fix", and the
   // missing e2e and runbook were findings nobody repaired: isBlocking() read
@@ -1292,17 +1301,70 @@ async function main() {
     })
   }
 
-  await test('an ordinary Should Fix still does not block (the content rule is narrow)', () => {
+  for (const [what, summary] of [
+    ['an ordinary Should Fix', 'the export button could use a tooltip'],
+    // The phrase only counts at the start of the summary: a finding that merely
+    // mentions it is not about a live mutant (independent review).
+    ['a finding that only mentions the phrase', 'no surviving mutant on the changed lines, but AC-3 has only a manual case'],
+  ]) {
+    await test(`${what} still does not block (the content rule is narrow)`, () => {
+      return runScript('sdlc-feature.js', {
+        cwd: tmpdir(`content-blocking-not-${what.replace(/\W+/g, '-')}`),
+        args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+        onAgent: featureAgents({
+          ...repairBase,
+          'verify:qa': { verdict: 'x', findings: [{ severity: 'Should Fix', summary, evidence: 'ui/index.ts:3', file: 'ui/index.ts' }] },
+          'refute:qa': { refuted: false, reasoning: 'confirmed' },
+        }),
+      }).then(r => {
+        // Not vacuous: the run completed and the finding reached the refuter,
+        // so it was confirmed and isBlocking() looked at it.
+        assert.strictEqual(r.thrown, null, r.thrown && r.thrown.message)
+        assert.strictEqual(r.result.status, 'completed')
+        assert.ok(r.calls.some(c => c.label === 'refute:qa'), 'the finding never reached the refuter')
+        assert.ok(r.result.findings.confirmed.some(f => f.summary === summary), 'the finding was not confirmed')
+        assert.ok(!r.calls.some(c => /^repair:/.test(c.label)), `"${summary}" was sent to repair`)
+      })
+    })
+  }
+
+  await test('a re-verifier that reports the same subject at Should Fix keeps it open until the bound', () => {
+    const live = { verdict: 'x', findings: [{ severity: 'Should Fix', summary: 'surviving mutant in src/export.ts:12 (still Survived)', evidence: 'src/export.ts:12', file: 'src/export.ts' }] }
     return runScript('sdlc-feature.js', {
-      cwd: tmpdir('content-blocking-ordinary'),
+      cwd: tmpdir('content-blocking-reverify'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({ ...repairBase, 'verify:qa': live, 'refute:qa': { refuted: false, reasoning: 'confirmed' }, 'reverify:qa': live }),
+    }).then(r => {
+      assert.strictEqual(r.result.repairRounds.outcome, 'exhausted', JSON.stringify(r.result.repairRounds))
+      assert.strictEqual(r.calls.filter(c => c.label === 'repair:backend').length, 2)
+    })
+  })
+
+  await test('the refuter, the repair and the re-verifier carry the disable rule, and the plan where a plan step is at stake', () => {
+    const step = { severity: 'Should Fix', summary: 'plan step not done: step 8, the e2e spec, is not in the change', evidence: 'plan.md step 8', file: 'e2e/export.spec.ts' }
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('content-blocking-prompts'),
       args: { initiative: 'add a CSV export', policy: POLICY_JSON },
       onAgent: featureAgents({
         ...repairBase,
-        'verify:qa': { verdict: 'x', findings: [{ severity: 'Should Fix', summary: 'the export button could use a tooltip', evidence: 'ui/index.ts:3', file: 'ui/index.ts' }] },
-        'refute:qa': { refuted: false, reasoning: 'confirmed' },
+        'verify:qa': { verdict: 'clean', findings: [] },
+        'verify:review': { verdict: 'x', findings: [step] },
+        'refute:review': { refuted: false, reasoning: 'the step is in the plan and not in the change' },
+        'repair:frontend': { ...manifest('repair:frontend', ['e2e/export.spec.ts'], 'wrote the e2e spec'), notAddressed: [] },
+        'reverify:review': { verdict: 'fixed', findings: [] },
       }),
     }).then(r => {
-      assert.ok(!r.calls.some(c => /^repair:/.test(c.label)), 'a cosmetic Should Fix was sent to repair')
+      const refuter = r.calls.find(c => c.label === 'refute:review')
+      assert.ok(/unjustified disable/.test(refuter.prompt), 'the refuter judges a disable with the one-mutant rule only')
+      assert.ok(/only the plan itself can drop a step/.test(refuter.prompt) && planHanded(refuter.prompt, 'IMPLEMENTATION PLAN — the steps this finding is checked against'),
+        'the refuter of a plan-step finding does not get the plan')
+      // No manifest owns the missing file: the finding goes to the closing builder only.
+      const repairs = r.calls.filter(c => /^repair:/.test(c.label)).map(c => c.label)
+      assert.deepStrictEqual(repairs, ['repair:frontend'], `a plan step nobody owned went to ${repairs.join(', ')}`)
+      assert.ok(/silences every mutant of its mutator on that line/.test(r.calls.find(c => c.label === 'repair:frontend').prompt),
+        'the repair can add a disable without being told what it silences')
+      const reverify = r.calls.find(c => c.label === 'reverify:review')
+      assert.ok(planHanded(reverify.prompt, PLAN_CHECK_TITLE), 'the re-verifier is asked to check a plan it does not have')
     })
   })
 
@@ -1320,11 +1382,32 @@ async function main() {
     for (const c of calls) {
       assert.ok(/A plan step that belongs to another builder is not a plan gap/.test(c.prompt), `${c.label} may escalate another builder's step as a plan gap`)
     }
+    assert.ok(/belong to build:frontend, the closing builder/.test(first.prompt), 'the other builders are not told whose the docs and e2e are')
+  })
+
+  await test('the closing builder does not depend on the order the analyst listed the surfaces in', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('closer-order'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({ requirements: { ...REQS, surfaces: ['frontend', 'backend'] } }),
+    }).then(r => {
+      const byLabel = l => r.calls.find(c => c.label === l)
+      assert.ok(/CLOSING BUILDER/.test(byLabel('build:frontend').prompt), 'frontend is not the closing builder when listed first')
+      assert.ok(!/CLOSING BUILDER/.test(byLabel('build:backend').prompt), 'the closer followed the analyst\'s list order')
+      // Parallel worktrees: the closer is told the other code is not in its tree.
+      assert.ok(/their code is not in yours/.test(byLabel('build:frontend').prompt), 'a parallel closer is not told the other builders\' code is not in its worktree')
+    })
   })
 
   await test('the review lens checks every plan step against the change and every disable it adds', () => {
     const review = feature.calls.find(c => c.label === 'verify:review')
     assert.ok(/PLAN COMPLETENESS/.test(review.prompt) && /plan step not done/.test(review.prompt), 'the review is not asked to check the plan against the change')
+    // The plan itself is handed to the review lens, and only to it.
+    assert.ok(planHanded(review.prompt, PLAN_CHECK_TITLE), 'the review lens does not get the plan')
+    for (const other of ['verify:security', 'verify:performance']) {
+      assert.ok(!/IMPLEMENTATION PLAN — check every step/.test(feature.calls.find(c => c.label === other).prompt), `${other} was handed the plan check`)
+    }
+    assert.ok(/A builder cannot drop a planned step/.test(review.prompt), 'a builder can exempt itself by writing that it dropped a step')
     assert.ok(/unjustified disable/.test(review.prompt) && /every mutant of that mutator on the line/.test(review.prompt),
       'the review is not told a disable silences every mutant of its mutator on the line')
     const qa = feature.calls.find(c => c.label === 'verify:qa')

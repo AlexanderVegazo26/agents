@@ -218,20 +218,33 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   a killable one came back as "Should Fix". `isBlocking()` read only the
   severity word, so none of them reached the repair loop, and readiness ended
   no-go with no round left. Four changes fix this:
-  - The last builder is the **closing builder**: it also owns every plan step
-    no surface does (docs and e2e/a11y/visual tests). No builder escalates
-    another builder's step as a plan gap.
+  - A **closing builder** (frontend, else backend, else data, whatever order
+    the surfaces came in) also owns every plan step no surface does: docs and
+    e2e/a11y/visual tests. Every builder is told so, and none escalates
+    another builder's step as a plan gap. In parallel worktrees the closer is
+    told the other builders' code is not in its tree.
   - The `code-reviewer` lens gets `plan.md` and checks every step against the
-    change. A missing step is a "plan step not done" finding.
-  - The review and test lenses get `DISABLE_RULE`: a disable comment silences
-    every mutant of its mutator on the line, so its reason must hold for each.
-    One that does not is an "unjustified disable" finding.
-  - A finding blocks when its severity says so, or when its summary is about a
-    surviving or uncovered mutant, an unjustified disable or a plan step not
-    done. This applies in the first verification and in re-verification.
+    change. The plan's recorded hash is checked again before Review. A missing
+    step is a "plan step not done" finding. Only the plan can drop a step,
+    never a builder. The refuter of such a finding and the review
+    re-verifier get the plan too. When no builder's files own the finding,
+    repair sends it to the closing builder only.
+  - `DISABLE_RULE` goes to the review and test lenses and every refuter, and
+    the repair gets the same caution. A disable comment silences every mutant
+    of its mutator on the line, so its reason must hold for each. One that
+    does not is an "unjustified disable" finding.
+  - A finding blocks when its severity says so, or when its summary **starts
+    with** "surviving mutant", "uncovered mutant", "unjustified disable" or
+    "plan step not done". This applies in verification and in
+    re-verification. The anchor keeps "no surviving mutant on the changed
+    lines" from blocking, and `liveMutantGap()` counts the same anchored
+    phrases.
 
-  `_wiring.test.js`: six new cases, five of them red before the change. The
-  sixth checks that an ordinary "Should Fix" still does not block.
+  `_wiring.test.js`: eleven new cases. Each was shown to fail without the
+  change it covers: against the code before the change, or, for the
+  re-verification filter, with that one line reverted. Two cases are
+  controls: an ordinary "Should Fix", and a finding that only mentions the
+  phrase, are confirmed but still do not block.
 - **Bridge scripts are `.cjs`.** In a repository whose `package.json` declares
   `"type": "module"`, Node loaded each `.js` bridge as ESM, `require` was
   undefined, and every workflow stopped at its first step (found on the first
