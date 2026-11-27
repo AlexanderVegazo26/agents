@@ -125,7 +125,7 @@ def caller():
     Per process: the kernel name (comm) and the basenames of argv[0..2]. Command Code runs as
     `node .../command-code/dist/index.mjs` and retitles itself `command-code`; Hermes runs as a
     Python module. Path components other than the basename are not matched (a `cmd/` directory in a
-    Go repo, or /home/pi, would otherwise be misread)."""
+    Go repo, or the home directory of a user named `pi`, would otherwise be misread)."""
     if os.environ.get("LLM_ASK_CALLER"):
         return os.environ["LLM_ASK_CALLER"]
     names = set(KNOWN_CALLERS) | set(CALLER_ALIASES)
