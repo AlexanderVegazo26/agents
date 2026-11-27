@@ -1,6 +1,6 @@
 ---
 name: local-offload
-version: 1.0.1
+version: 1.0.2
 description: Cut cloud-model token use by handing the reading-heavy, judgment-light steps of a task — summarising big files, logs and diffs, triaging test output, first drafts of boilerplate code and tests, transcripts and frame captions, extraction and classification — to local models with `llm-ask`, while the cloud agent keeps planning, judgment and the final verification. Load at the start of any coding, testing, debugging, video, research or documentation task on a machine where `llm-ask` is on PATH. Do NOT use for security, auth, payments or architecture decisions, for anything that ships without the cloud agent verifying it, or when `llm-ask tiers` reports no endpoint.
 ---
 
