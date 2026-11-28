@@ -1456,7 +1456,7 @@ async function main() {
     const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
     const fn = name => { const a = src.indexOf(`function ${name}(`); return src.slice(a, src.indexOf('\n}\n', a) + 3) }
     const line = name => { const i = src.indexOf(`const ${name} = `); return src.slice(i, src.indexOf('\n', i)) }
-    const { ownersSectionOf, ownersGaps } = new Function(`${line('OWNERS_HEADING')}\n${fn('ownersSectionOf')}\n${fn('ownersGaps')}\nreturn { ownersSectionOf, ownersGaps }`)()
+    const { ownersSectionOf, ownersGaps } = new Function(`${line('OWNERS_HEADING')}\n${fn('ownersSectionOf')}\n${fn('ownersBounds')}\n${fn('ownersGaps')}\nreturn { ownersSectionOf, ownersGaps }`)()
     const plan = '# Plan\n\nPasos.\n\n## Dueños\n\n| Entregable | Dueño |\n|:--|--:|\n| a.ts | build:backend |\n| ui.tsx | Build:Frontend |\n\n## Riesgos\n\n| x | y |'
     const section = ownersSectionOf(plan)
     assert.ok(section.includes('a.ts') && !section.includes('Riesgos'), section)
@@ -1486,20 +1486,36 @@ async function main() {
     })
   })
 
-  await test('the plan tier gets one chance to fix only the Owners table; a fixed plan is built', () => {
+  await test('the plan tier gets one chance to return only the Owners table; the code splices it in and the plan is built', () => {
+    const cwd = tmpdir('owners-retry')
     return runScript('sdlc-feature.js', {
-      cwd: tmpdir('owners-retry'),
+      cwd,
       args: { initiative: 'add a CSV export', policy: POLICY_JSON },
       onAgent: featureAgents({
-        architecture: 'Architecture: no new service; Tier 1.',
-        'architecture-owners': planFor('SURFACES: backend, frontend'),
+        architecture: 'Architecture: no new service; Tier 1.\n\nStep 1: CSV writer.',
+        // A model that wraps the table in prose: only the table rows are kept.
+        'architecture-owners': `Here is the table:${ownersTable('backend, frontend')}\n\nHope this helps.`,
       }),
     }).then(r => {
       const retry = r.calls.find(c => c.label === 'architecture-owners')
-      assert.ok(retry && /Fix ONLY the "## Owners" section/.test(retry.prompt) && /no "## Owners" table/.test(retry.prompt), 'the plan tier was not asked to fix the table')
+      assert.ok(retry && /Return ONLY that table/.test(retry.prompt) && /no "## Owners" table/.test(retry.prompt), 'the plan tier was not asked for the table alone')
+      assert.ok(/do not edit plan\.md yourself/.test(retry.prompt), 'the plan tier may rewrite the whole plan')
       assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
       assert.ok(!r.result.blockedGates.some(g => g.gate === 'plan.unowned'), 'a fixed plan still left a plan.unowned gate')
+      const onDisk = fs.readFileSync(path.join(runDirs(cwd)[0], 'handoff', 'plan.md'), 'utf8')
+      assert.ok(onDisk.startsWith('Architecture: no new service; Tier 1.\n\nStep 1: CSV writer.'), 'the rest of the plan changed')
+      assert.ok(/## Owners\n\n\| Deliverable \| Owner \|/.test(onDisk) && !/Hope this helps/.test(onDisk), onDisk)
     })
+  })
+
+  await test('spliceOwners replaces only the Owners section, or appends one', () => {
+    const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
+    const fn = name => { const a = src.indexOf(`function ${name}(`); return src.slice(a, src.indexOf('\n}\n', a) + 3) }
+    const line = name => { const i = src.indexOf(`const ${name} = `); return src.slice(i, src.indexOf('\n', i)) }
+    const { spliceOwners } = new Function(`${line('OWNERS_HEADING')}\n${fn('ownersBounds')}\n${fn('spliceOwners')}\nreturn { spliceOwners }`)()
+    const t = '| A | O |\n|---|---|\n| x | build:backend |'
+    assert.strictEqual(spliceOwners('# P\n\n## 9. Dueños\n\n| old |\n\n## 10. Riesgos\n\nr', t), '# P\n\n## 9. Dueños\n\n| A | O |\n|---|---|\n| x | build:backend |\n\n## 10. Riesgos\n\nr')
+    assert.strictEqual(spliceOwners('# P\n\nbody\n\n', t), '# P\n\nbody\n\n## Owners\n\n| A | O |\n|---|---|\n| x | build:backend |\n')
   })
 
   await test('the closing builder does not depend on the order the analyst listed the surfaces in', () => {

@@ -2751,6 +2751,12 @@ function ownersInstruction(surfaces) {
  */
 function ownersSectionOf(text) {
   const lines = String(text || '').split(/\r?\n/)
+  const b = ownersBounds(lines)
+  return b ? lines.slice(b.at + 1, b.end).join('\n') : null
+}
+
+/** The Owners heading's line and the line its section ends before, or null. */
+function ownersBounds(lines) {
   const heads = []
   let fence = false
   lines.forEach((l, i) => {
@@ -2762,7 +2768,20 @@ function ownersSectionOf(text) {
   if (at === undefined) return null
   const levelOf = i => lines[i].trim().match(/^#+/)[0].length
   const next = heads.find(i => i > at && levelOf(i) <= levelOf(at))
-  return lines.slice(at + 1, next === undefined ? lines.length : next).join('\n')
+  return { at, end: next === undefined ? lines.length : next }
+}
+
+/**
+ * The plan with its Owners section replaced by `table`, or with "## Owners"
+ * appended when it has none. Done by code, so fixing the table cannot touch
+ * any other line of the plan (independent review: a whole-plan rewrite could).
+ */
+function spliceOwners(text, table) {
+  const lines = String(text || '').split(/\r?\n/)
+  const b = ownersBounds(lines)
+  const t = String(table).trim()
+  if (!b) return `${String(text || '').replace(/\s+$/, '')}\n\n## Owners\n\n${t}\n`
+  return [...lines.slice(0, b.at + 1), '', t, '', ...lines.slice(b.end)].join('\n')
 }
 
 /**
@@ -3018,21 +3037,29 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
     )
     // One chance to fix the Owners table before the run stops on it: a plan
     // that is right everywhere else should not cost a night over a table
-    // (independent review). Kept only if it passes; else the first plan stands.
+    // (independent review). The architect returns ONLY the table and the code
+    // splices it in, so no other line of the plan can change; the result is
+    // written and kept only if it passes, else the first plan stands, on disk
+    // too. A plan too long to rewrite whole is not touched.
     const ownersFirst = architecture ? ownersProblemOf(asText(architecture), reqs.surfaces) : null
-    if (ownersFirst) {
+    if (ownersFirst && asText(architecture).length <= RENDER_CAP) {
       const fixed = await dispatch(
         withPolicy(`Your plan.md does not pass the owners check: ${ownersFirst}.
 
 ${ownersInstruction(reqs.surfaces)}
 
-Fix ONLY the "## Owners" section — do not change any other part of the plan — and return the whole plan.md as markdown.${writeInstruction('plan.md')}
+Return ONLY that table: the header row, the |---| separator and one row per deliverable of the plan below. No heading, no other text, and do not edit plan.md yourself — the workflow puts the table in its place.
 
 YOUR PLAN:
-${capText(asText(architecture), RENDER_CAP)}`),
+${asText(architecture)}`),
         { agentType: 'solution-architect', label: 'architecture-owners', phase: 'Plan', ...tier('plan') },
       )
-      if (fixed && !ownersProblemOf(asText(fixed), reqs.surfaces)) architecture = fixed
+      const table = String(asText(fixed) || '').split(/\r?\n/).filter(l => /^\s*\|/.test(l)).join('\n')
+      const spliced = table ? spliceOwners(asText(architecture), table) : null
+      if (spliced && spliced.length <= RENDER_CAP && !ownersProblemOf(spliced, reqs.surfaces)) {
+        architecture = spliced
+        await writeRendered('plan.md', spliced)
+      }
     }
     agents.push({ label: 'architecture', result: architecture })
     Object.assign(files, await confirmFiles(

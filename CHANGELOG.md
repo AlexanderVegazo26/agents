@@ -225,7 +225,9 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
     plan.unowned` gate. A run that pauses for approval still pauses, and the
     problem is the first thing the person decides. Any other run stops before
     Design and builds nothing, but first the plan tier gets one chance to fix
-    only the table. A run with a single builder needs no table. The parser
+    only the table: it returns the table alone and the workflow splices it in,
+    so no other line of the plan can change. A run with a single builder
+    needs no table. The parser
     reads numbered and emphasised headings ("## 14. Dueños"), takes the last
     Owners heading, ignores code fences, and treats the row the `|---|`
     separator follows as the header. For an approved or resumed run, the
