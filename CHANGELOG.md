@@ -218,11 +218,21 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
   a killable one came back as "Should Fix". `isBlocking()` read only the
   severity word, so none of them reached the repair loop, and readiness ended
   no-go with no round left. Four changes fix this:
+  - **The plan names an owner for every deliverable.** `plan.md` ends with a
+    `## Owners` table: each file, test and document, and which
+    `build:<surface>` owns it. A missing table, a deliverable with no owner,
+    or an owner that is not a builder of the run is a `BLOCKED —
+    plan.unowned` gate. A run that pauses for approval still pauses, and the
+    problem is the first thing the person decides. Any other run stops before
+    Design and builds nothing. For an approved or resumed run, the table is
+    read from the committed file.
   - A **closing builder** (frontend, else backend, else data, whatever order
     the surfaces came in) also owns every plan step no surface does: docs and
     e2e/a11y/visual tests. Every builder is told so, and none escalates
-    another builder's step as a plan gap. In parallel worktrees the closer is
-    told the other builders' code is not in its tree.
+    another builder's step as a plan gap. The closer runs after the others in
+    both modes. In parallel worktrees it is told where their code is. It
+    writes the e2e, accessibility and visual tests from the acceptance
+    criteria, not from the implementation.
   - The `code-reviewer` lens gets `plan.md` and checks every step against the
     change. The plan's recorded hash is checked again before Review and before
     each re-verification. If an agent edited it, the checks get the Plan

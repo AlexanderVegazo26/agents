@@ -1970,11 +1970,18 @@ const files = {}
 if (dir && !errors.length) for (const n of CFG.names) { if (confine(CFG.specDir + '/' + n, n) !== null) files[n] = state(path.join(dir, n)) }
 const intent = intentAbs && !errors.length ? state(intentAbs) : null
 let specText = null
+let planText = null
 if (CFG.approved && dir && !errors.length) {
   for (const n of ['spec.md', 'plan.md']) {
     if (!files[n] || files[n].state !== 'committed') errors.push('approvedPlan: ' + n + ' in ' + CFG.specDir + ' must be committed and unchanged since (it is ' + (files[n] ? files[n].state : 'absent') + ').')
   }
   if (!errors.length) specText = fs.readFileSync(path.join(dir, 'spec.md'), 'utf8').slice(0, 200000)
+}
+// The plan's text whenever there is one, approved or not: a resumed approved
+// run passes no approvedPlan, and its Owners table is still checked before
+// Build; the plan checks get it inline when the file is not handed on.
+if (dir && !errors.length && files['plan.md'] && files['plan.md'].state !== 'absent') {
+  try { planText = fs.readFileSync(path.join(dir, 'plan.md'), 'utf8').slice(0, 200000) } catch (e) { planText = null }
 }
 // The commit a checkout build diffs against, and what is uncommitted OUTSIDE
 // the spec directory and .claude/ — a checkout build refuses to mix with it.
@@ -2000,7 +2007,7 @@ try {
 // The branch stage commits land on; null when HEAD is detached.
 let branch = null
 try { branch = git('symbolic-ref', '--quiet', '--short', 'HEAD') || null } catch (e) { branch = null }
-return { errors, files, intent, specText, head, dirty, branch }`, TIERS.transcribe.model)
+return { errors, files, intent, specText, planText, head, dirty, branch }`, TIERS.transcribe.model)
 }
 
 /** Criteria, surfaces, assumptions and questions back out of a spec.md in renderSpec's layout. */
@@ -2715,6 +2722,61 @@ let planGaps = []
 let PLAN_TEXT = null
 const planRef = title => handoffRef('plan.md', title, PLAN_TEXT)
 
+// Every deliverable of the plan has an owner, and the plan says who (Jean's
+// review of the first unattended night: an unowned deliverable stops the plan,
+// it does not become a plan gap at build tier). The surfaces in the order the
+// checkout builds them; the last one closes the plan: docs and e2e/a11y/visual.
+const BUILD_ORDER = ['data', 'backend', 'frontend']
+const closerOf = surfaces => BUILD_ORDER.filter(s => (surfaces || []).includes(s)).pop()
+const OWNERS_HEADING = /^#{1,4}\s*(?:owners|ownership|dueños|responsables)\b/i
+
+/** What the plan tier is told to write, so the check below can read it. */
+function ownersInstruction(surfaces) {
+  const builders = BUILD_ORDER.filter(s => (surfaces || []).includes(s)).map(s => `build:${s}`)
+  if (!builders.length) return ''
+  return `OWNERS: end plan.md with a section headed "## Owners" — a markdown table with one row per deliverable and its owner: each file to create or change, each test (unit, integration, end-to-end, accessibility, visual) and each document (spec, backlog, runbook, copy deck, PRD). The owner is one of ${builders.join(', ')}, written exactly like that. The documentation and the end-to-end, accessibility and visual tests go to build:${closerOf(surfaces)}, the closing builder. A deliverable with no owner stops the run before anything is built.`
+}
+
+/** The plan's Owners section (heading to the next heading of the same or a higher level), or null. */
+function ownersSectionOf(text) {
+  const lines = String(text || '').split(/\r?\n/)
+  const at = lines.findIndex(l => OWNERS_HEADING.test(l.trim()))
+  if (at < 0) return null
+  const level = lines[at].trim().match(/^#+/)[0].length
+  const out = []
+  for (const l of lines.slice(at + 1)) {
+    const h = l.trim().match(/^(#+)\s/)
+    if (h && h[1].length <= level) break
+    out.push(l)
+  }
+  return out.join('\n')
+}
+
+/**
+ * The Owners table checked against the run's builders: `missing` when there is
+ * no table, the deliverables with no `build:<surface>` owner, and those whose
+ * owner is not a builder of this run.
+ */
+function ownersGaps(section, builders) {
+  if (section === null) return { missing: true, unowned: [], unknown: [] }
+  const cells = l => l.split('|').slice(1, -1).map(c => c.trim())
+  const rows = section.split('\n')
+    .filter(l => /^\s*\|.*\|\s*$/.test(l) && !/^\s*\|[\s:|-]+\|\s*$/.test(l))
+    .map(cells)
+    .filter(c => c.length >= 2)
+  // The header row names the columns; a data row names a deliverable.
+  const data = rows.filter((c, i) => !(i === 0 && !/build:/i.test(c.join(' ')) && /owner|dueño|responsable/i.test(c.join(' '))))
+  if (!data.length) return { missing: true, unowned: [], unknown: [] }
+  const unowned = []
+  const unknown = []
+  for (const c of data) {
+    const names = (c.slice(1).join(' ').match(/build:[a-z]+/gi) || []).map(n => n.toLowerCase())
+    if (!names.length) unowned.push(c[0])
+    for (const n of names.filter(x => !builders.includes(x))) unknown.push(`${c[0]} → ${n}`)
+  }
+  return { missing: false, unowned, unknown }
+}
+
 async function runWorkflow() {
   // A run recorded under the older layout (Requirements, Verify) is refused by
   // openRun itself, before its record is touched (code review S-C, QA D2).
@@ -2917,7 +2979,7 @@ ${humanIntent ? `INTENT: ${humanIntent}\n\n` : ''}ACCEPTANCE CRITERIA:\n${criter
 
 SURFACES: ${reqs.surfaces.join(', ') || '(none classified)'}
 
-Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufactured ADR. Then state, concretely enough that a builder never has to make a design decision: the files to create or change and what changes in each; interfaces, data shapes and error behaviour; the order of the steps; which test proves each criterion; and NFRs as measurable numbers, never "scalable" or "fast". Anything you cannot decide yet goes in an explicit "Open decisions" section — builders are told to escalate those back, not to guess. Flag anything that constrains the UX, so design reconciles it rather than the build. Return plan.md as markdown.${writeInstruction('plan.md')}`),
+Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufactured ADR. Then state, concretely enough that a builder never has to make a design decision: the files to create or change and what changes in each; interfaces, data shapes and error behaviour; the order of the steps; which test proves each criterion; and NFRs as measurable numbers, never "scalable" or "fast". Anything you cannot decide yet goes in an explicit "Open decisions" section — builders are told to escalate those back, not to guess. Flag anything that constrains the UX, so design reconciles it rather than the build. ${ownersInstruction(reqs.surfaces)} Return plan.md as markdown.${writeInstruction('plan.md')}`),
       { agentType: 'sdlc-suite:solution-architect', label: 'architecture', phase: 'Plan', ...tier('plan') },
     )
     agents.push({ label: 'architecture', result: architecture })
@@ -2961,7 +3023,9 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
 
   const criteriaText = criteriaTextOf(reqs)
   const architecture = agentResult(planArtifact, 'architecture')
-  PLAN_TEXT = asText(architecture)
+  // An approved plan is a file the person committed; the Plan stage's own
+  // "result" is only a pointer to it, so its text comes from the preflight.
+  PLAN_TEXT = MODE_APPROVED && pre && typeof pre.planText === 'string' ? pre.planText : asText(architecture)
   // No plan -> stop. The build tier is cheap BECAUSE the plan leaves it nothing
   // to design; without one it would design everything, unreviewed (S3).
   if (architecture === null || architecture === undefined || (typeof architecture === 'string' && !architecture.trim()) ||
@@ -2982,6 +3046,31 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
   } else {
     // Rendered by this workflow, so rewritten on every pass, replay included.
     await writeRendered('spec.md', renderSpec(reqs))
+  }
+
+  // OWNERS. Every deliverable of the plan has an owner, and an unowned one
+  // stops the plan instead of becoming a plan gap at build tier (Jean's review
+  // of the first unattended night, where the docs and e2e the plan approved
+  // were nobody's and were never written). A run that pauses for approval
+  // still pauses, with the problem first in what the person decides.
+  const ownerBuilders = BUILD_ORDER.filter(s => reqs.surfaces.includes(s)).map(s => `build:${s}`)
+  const owners = ownerBuilders.length ? ownersGaps(ownersSectionOf(PLAN_TEXT), ownerBuilders) : null
+  const ownersProblem = !owners ? null
+    : owners.missing ? 'plan.md has no "## Owners" table, so no deliverable has an owner'
+    : [
+      owners.unowned.length && `no owner: ${owners.unowned.join('; ')}`,
+      owners.unknown.length && `owner is not a builder of this run (${ownerBuilders.join(', ')}): ${owners.unknown.join('; ')}`,
+    ].filter(Boolean).join('; ') || null
+  if (ownersProblem) {
+    keep([
+      'BLOCKED — plan.unowned',
+      '  Action withheld: building a plan with deliverables nobody owns',
+      `  Why gated: ${ownersProblem.replace(/\s+/g, ' ').slice(0, 600)}`,
+      `  Prepared: the plan and the spec, in ${handoffDir()}`,
+      `  Unblocks: a "## Owners" table in plan.md giving every deliverable one of ${ownerBuilders.join(', ')} (the docs and the e2e, accessibility and visual tests to build:${closerOf(reqs.surfaces)})`,
+      '  Authorize by: not an authorization gate — an owner per deliverable is part of the plan',
+    ].join('\n'))
+    log(`plan.unowned: ${ownersProblem}`)
   }
 
   // -------------------------------------------------------------------------
@@ -3026,10 +3115,20 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
       handoff: { dir: handoffDir(), files: { ...HANDOFF_FILES }, specDir: SPEC_DIR, strict: STRICT },
       next: `Review spec.md and plan.md in ${handoffDir()}. Edit them if needed (criteria stay one per line: "- **AC-n** — text"; under "## Contradictions" each line must end with its resolution — which side wins — or be deleted once settled), commit them, then start a FRESH run with ${JSON.stringify(nextArgs)} — it starts at Design from exactly the committed files.`,
       humanDecisionRequired: [
+        ...(ownersProblem ? [`Give every deliverable an owner in plan.md's "## Owners" table before approving it — the approved run stops otherwise: ${ownersProblem}`] : []),
         `Approve the plan: review and commit spec.md and plan.md in ${handoffDir()}, then run with approvedPlan: true.`,
         ...decisionsFor(reqs),
       ],
       tiers: TIERS,
+    }
+  }
+  if (ownersProblem) {
+    status = 'stopped'
+    return {
+      status: 'stopped',
+      reason: `plan.md does not give every deliverable an owner (${ownersProblem}). Nothing was built: an unowned deliverable is what left the docs and e2e of an earlier run unwritten. Add the "## Owners" table to plan.md${MODE_APPROVED ? ', commit it' : ''} and start a fresh run${MODE_APPROVED ? ' with approvedPlan: true' : ''}.`,
+      requirements: reqs,
+      handoff: { dir: handoffDir(), files: { ...HANDOFF_FILES }, specDir: SPEC_DIR, strict: STRICT },
     }
   }
 
@@ -3137,9 +3236,12 @@ ${handoffRef('design.md', 'UX SPEC', asText(uxSpec))}${HANDOFF_FILES['mock.html'
   // plan approved were never written. One builder closes the plan, chosen the
   // same way in both modes — the frontend when there is one, as in the
   // checkout's own order — never by the order the analyst listed surfaces in.
-  const closer = ['data', 'backend', 'frontend'].filter(s => surfaces.includes(s)).pop()
-  const ownership = surface => `OWNERSHIP: the builders on this run are ${buildOrder.map(s => `build:${s}`).join(', ')}. You own the plan steps for your surface. A plan step that belongs to another builder is not a plan gap: leave it to that builder. The documentation the plan lists and its end-to-end, accessibility and visual tests belong to build:${closer}, the closing builder.${surface === closer
-    ? ` CLOSING BUILDER: that is you. Besides your surface you own every plan step no other builder owns — the documentation the plan lists (specs, backlog, runbooks, copy decks, the PRD) and the end-to-end, accessibility and visual tests it lists. Do them; they are not plan gaps. A test that can only run elsewhere (for example in CI) is still written: say in notAddressed that it was not run, and why.${IN_CHECKOUT ? '' : ' The other builders work in their own worktrees at the same time, so their code is not in yours: write those tests against the plan and the design, and say in notAddressed what you could not run against the real code.'}`
+  // It runs last in both modes, over what the others built (Jean's review).
+  const closer = closerOf(surfaces)
+  const ownership = (surface, earlier = []) => `OWNERSHIP: the builders on this run are ${buildOrder.map(s => `build:${s}`).join(', ')}. The "## Owners" table at the end of the plan says which deliverables are yours: build every one it gives you and none it gives another builder. A plan step that belongs to another builder is not a plan gap: leave it to that builder. The documentation the plan lists and its end-to-end, accessibility and visual tests belong to build:${closer}, the closing builder.${surface === closer
+    ? ` CLOSING BUILDER: that is you, and you run after the other builders. Besides your surface you own every plan step no other builder owns — the documentation the plan lists (specs, backlog, runbooks, copy decks, the PRD) and the end-to-end, accessibility and visual tests it lists. Do them; they are not plan gaps. Write the end-to-end, accessibility and visual tests from the ACCEPTANCE CRITERIA above — what a user must be able to do — not from what the builders implemented: a test written from the implementation passes whatever it does. A test that can only run elsewhere (for example in CI) is still written: say in notAddressed that it was not run, and why.${!IN_CHECKOUT && earlier.length
+      ? ` The other builders worked in their own worktrees; read their code there, through each one's diffRef, before writing tests against it:\n${earlier.map(m => `- ${m.label}: ${m.diffRef || '(no diffRef)'} — ${(m.filesChanged || []).map(f => f.path).join(', ') || '(no files listed)'}`).join('\n')}`
+      : ''}`
     : ''}`
   const buildOne = (surface, earlier) => dispatch(
     withPolicy(`${BUILDERS[surface].brief}
@@ -3148,7 +3250,7 @@ ACCEPTANCE CRITERIA (trace to these IDs):\n${criteriaText}
 
 ${handoffRef('plan.md', 'IMPLEMENTATION PLAN — execute it; do not redesign it', asText(architecture))}
 
-${ownership(surface)}
+${ownership(surface, earlier)}
 
 When the plan does not settle something you need — an interface, a data shape, an error behaviour, anything listed under "Open decisions" — do NOT make the design decision yourself. Implement what the plan does settle and put each open decision in planGaps, worded so a planner can answer it. An escalated gap costs one planning round; an improvised design choice at build tier costs a review cycle and usually a rewrite.
 
@@ -3167,8 +3269,17 @@ Report a BUILD MANIFEST, not prose. The reviewers that follow you read the code 
       // started from, not wherever HEAD is by then (code review round 7, S1).
       return { agents: out, base: BUILD_BASE }
     }
-    const built = await parallel(surfaces.map(surface => () => buildOne(surface, [])))
-    return { agents: surfaces.map((s, i) => ({ label: `build:${s}`, result: built[i] })) }
+    // In parallel worktrees the others build at once; the closer runs after
+    // them, told where their work is, so its e2e test what was built.
+    const others = surfaces.filter(s => s !== closer)
+    const builtOthers = await parallel(others.map(surface => () => buildOne(surface, [])))
+    const byLabel = {}
+    others.forEach((s, i) => { byLabel[s] = builtOthers[i] })
+    if (closer) {
+      const earlier = others.map(s => ({ label: `build:${s}`, result: byLabel[s] })).filter(x => x.result).map(x => ({ label: x.label, ...x.result }))
+      byLabel[closer] = await buildOne(closer, earlier)
+    }
+    return { agents: surfaces.map(s => ({ label: `build:${s}`, result: byLabel[s] })) }
   })
   if (IN_CHECKOUT && buildArtifact && typeof buildArtifact.base === 'string' && buildArtifact.base) BUILD_BASE = buildArtifact.base
 
