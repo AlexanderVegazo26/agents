@@ -1463,6 +1463,43 @@ async function main() {
     assert.deepStrictEqual(ownersGaps(section, ['build:backend', 'build:frontend']), { missing: false, unowned: [], unknown: [] })
     assert.strictEqual(ownersSectionOf('# Plan\n\nno table here'), null)
     assert.deepStrictEqual(ownersGaps('| Entregable | Dueño |\n|---|---|', ['build:backend']), { missing: true, unowned: [], unknown: [] })
+    // Numbered and emphasised headings, as real plans write them (the HU 40 plan numbers every section).
+    for (const h of ['## 14. Dueños', '## **Owners**', '### 3.2 Responsables']) {
+      assert.ok(ownersSectionOf(`# Plan\n\n${h}\n\n| a | build:backend |`) !== null, h)
+    }
+    // A heading inside a code fence is not one; the LAST Owners heading wins.
+    const fenced = '## Owners\n\n| old.ts | build:backend |\n\n```md\n## not a heading\n```\n\n## Owners\n\n| Archivo | Quién |\n|---|---|\n| new.ts | `build: backend` |\n| | |'
+    const last = ownersSectionOf(fenced)
+    assert.ok(last.includes('new.ts') && !last.includes('old.ts'), last)
+    // The header is the row the separator follows, whatever it says; "build: x" counts; a nameless row is still named.
+    assert.deepStrictEqual(ownersGaps(last, ['build:backend']), { missing: false, unowned: ['(row with no deliverable: empty)'], unknown: [] })
+  })
+
+  await test('a run with a single builder needs no Owners table', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('owners-single'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({ requirements: { ...REQS, surfaces: ['backend'] }, architecture: 'Architecture: no new service; Tier 1.' }),
+    }).then(r => {
+      assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+      assert.ok(!r.calls.some(c => c.label === 'architecture-owners'), 'a single-builder plan was sent back for an Owners table')
+    })
+  })
+
+  await test('the plan tier gets one chance to fix only the Owners table; a fixed plan is built', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('owners-retry'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        architecture: 'Architecture: no new service; Tier 1.',
+        'architecture-owners': planFor('SURFACES: backend, frontend'),
+      }),
+    }).then(r => {
+      const retry = r.calls.find(c => c.label === 'architecture-owners')
+      assert.ok(retry && /Fix ONLY the "## Owners" section/.test(retry.prompt) && /no "## Owners" table/.test(retry.prompt), 'the plan tier was not asked to fix the table')
+      assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+      assert.ok(!r.result.blockedGates.some(g => g.gate === 'plan.unowned'), 'a fixed plan still left a plan.unowned gate')
+    })
   })
 
   await test('the closing builder does not depend on the order the analyst listed the surfaces in', () => {

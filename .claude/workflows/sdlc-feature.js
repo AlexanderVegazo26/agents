@@ -1911,11 +1911,11 @@ return out`, TIERS.transcribe.model)
  * document's hash and git state (committed / modified / untracked / absent);
  * and, for approvedPlan, reads the committed spec.md back.
  */
-async function specPreflight(approvedCheck) {
+async function specPreflight(approvedCheck, wantPlan = false) {
   return sealedBridge('spec-preflight', null, `// What this step inspects, in the clear.
 const CFG = ${JSON.stringify({
     root: repoRoot(), specDir: SPEC_DIR, intentRel: INTENT_ARG.value,
-    names: ['spec.md', 'plan.md', 'design.md', 'mock.html', 'test-report.md'], approved: approvedCheck,
+    names: ['spec.md', 'plan.md', 'design.md', 'mock.html', 'test-report.md'], approved: approvedCheck, wantPlan,
   })}
 const fs = require('fs')
 const { execFileSync } = require('child_process')
@@ -1977,11 +1977,16 @@ if (CFG.approved && dir && !errors.length) {
   }
   if (!errors.length) specText = fs.readFileSync(path.join(dir, 'spec.md'), 'utf8').slice(0, 200000)
 }
-// The plan's text whenever there is one, approved or not: a resumed approved
-// run passes no approvedPlan, and its Owners table is still checked before
-// Build; the plan checks get it inline when the file is not handed on.
-if (dir && !errors.length && files['plan.md'] && files['plan.md'].state !== 'absent') {
-  try { planText = fs.readFileSync(path.join(dir, 'plan.md'), 'utf8').slice(0, 200000) } catch (e) { planText = null }
+// The plan's text, only when it will be used (an approved run, or a resume
+// that may be one): its Owners table is checked before Build, and the plan
+// checks get it inline when the file is not handed on. Relayed back in chunks,
+// so not read for a fresh run that plans anew. The END is kept when it is long:
+// the Owners table is at the end.
+if (CFG.wantPlan && dir && !errors.length && files['plan.md'] && files['plan.md'].state !== 'absent') {
+  try {
+    const t = fs.readFileSync(path.join(dir, 'plan.md'), 'utf8')
+    planText = t.length > 200000 ? t.slice(-200000) : t
+  } catch (e) { planText = null }
 }
 // The commit a checkout build diffs against, and what is uncommitted OUTSIDE
 // the spec directory and .claude/ — a checkout build refuses to mix with it.
@@ -2728,7 +2733,9 @@ const planRef = title => handoffRef('plan.md', title, PLAN_TEXT)
 // checkout builds them; the last one closes the plan: docs and e2e/a11y/visual.
 const BUILD_ORDER = ['data', 'backend', 'frontend']
 const closerOf = surfaces => BUILD_ORDER.filter(s => (surfaces || []).includes(s)).pop()
-const OWNERS_HEADING = /^#{1,4}\s*(?:owners|ownership|dueños|responsables)\b/i
+// A number and emphasis may come before the word: plans number their sections
+// ("## 14. Dueños"), and the HU 40 plan did (independent review).
+const OWNERS_HEADING = /^#{1,4}\s*(?:[\d.]+\s*)?[*_]*\s*(?:owners|ownership|dueños|responsables)\b/i
 
 /** What the plan tier is told to write, so the check below can read it. */
 function ownersInstruction(surfaces) {
@@ -2737,19 +2744,25 @@ function ownersInstruction(surfaces) {
   return `OWNERS: end plan.md with a section headed "## Owners" — a markdown table with one row per deliverable and its owner: each file to create or change, each test (unit, integration, end-to-end, accessibility, visual) and each document (spec, backlog, runbook, copy deck, PRD). The owner is one of ${builders.join(', ')}, written exactly like that. The documentation and the end-to-end, accessibility and visual tests go to build:${closerOf(surfaces)}, the closing builder. A deliverable with no owner stops the run before anything is built.`
 }
 
-/** The plan's Owners section (heading to the next heading of the same or a higher level), or null. */
+/**
+ * The plan's Owners section, heading to the next heading of the same or a higher
+ * level, or null. Headings inside code fences are not headings; and the LAST
+ * matching heading wins, since the table is asked for at the end of the plan.
+ */
 function ownersSectionOf(text) {
   const lines = String(text || '').split(/\r?\n/)
-  const at = lines.findIndex(l => OWNERS_HEADING.test(l.trim()))
-  if (at < 0) return null
-  const level = lines[at].trim().match(/^#+/)[0].length
-  const out = []
-  for (const l of lines.slice(at + 1)) {
-    const h = l.trim().match(/^(#+)\s/)
-    if (h && h[1].length <= level) break
-    out.push(l)
-  }
-  return out.join('\n')
+  const heads = []
+  let fence = false
+  lines.forEach((l, i) => {
+    const t = l.trim()
+    if (/^(```|~~~)/.test(t)) fence = !fence
+    else if (!fence && /^#{1,6}\s/.test(t)) heads.push(i)
+  })
+  const at = [...heads].reverse().find(i => OWNERS_HEADING.test(lines[i].trim()))
+  if (at === undefined) return null
+  const levelOf = i => lines[i].trim().match(/^#+/)[0].length
+  const next = heads.find(i => i > at && levelOf(i) <= levelOf(at))
+  return lines.slice(at + 1, next === undefined ? lines.length : next).join('\n')
 }
 
 /**
@@ -2759,22 +2772,43 @@ function ownersSectionOf(text) {
  */
 function ownersGaps(section, builders) {
   if (section === null) return { missing: true, unowned: [], unknown: [] }
+  const lines = section.split('\n')
+  const isRow = l => /^\s*\|.*\|\s*$/.test(l)
+  // A separator has a dash in every cell; "| | |" is an empty row, not one.
+  const isSeparator = l => /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/.test(l)
   const cells = l => l.split('|').slice(1, -1).map(c => c.trim())
-  const rows = section.split('\n')
-    .filter(l => /^\s*\|.*\|\s*$/.test(l) && !/^\s*\|[\s:|-]+\|\s*$/.test(l))
-    .map(cells)
-    .filter(c => c.length >= 2)
-  // The header row names the columns; a data row names a deliverable.
-  const data = rows.filter((c, i) => !(i === 0 && !/build:/i.test(c.join(' ')) && /owner|dueño|responsable/i.test(c.join(' '))))
+  // The header is the row the separator line follows, whatever its words say.
+  const data = []
+  lines.forEach((l, i) => {
+    if (!isRow(l) || isSeparator(l) || (i + 1 < lines.length && isSeparator(lines[i + 1]))) return
+    const c = cells(l)
+    if (c.length >= 2) data.push(c)
+  })
   if (!data.length) return { missing: true, unowned: [], unknown: [] }
   const unowned = []
   const unknown = []
   for (const c of data) {
-    const names = (c.slice(1).join(' ').match(/build:[a-z]+/gi) || []).map(n => n.toLowerCase())
-    if (!names.length) unowned.push(c[0])
-    for (const n of names.filter(x => !builders.includes(x))) unknown.push(`${c[0]} → ${n}`)
+    const name = c[0] || `(row with no deliverable: ${c.slice(1).join(' | ') || 'empty'})`
+    const names = (c.slice(1).join(' ').match(/build:\s*[a-z]+/gi) || []).map(n => n.replace(/\s+/g, '').toLowerCase())
+    if (!names.length) unowned.push(name)
+    for (const n of names.filter(x => !builders.includes(x))) unknown.push(`${name} → ${n}`)
   }
   return { missing: false, unowned, unknown }
+}
+
+/**
+ * What is wrong with a plan's owners, in one line, or null. A run with a single
+ * builder has a single possible owner, so it needs no table (independent review).
+ */
+function ownersProblemOf(planText, surfaces) {
+  const builders = BUILD_ORDER.filter(s => (surfaces || []).includes(s)).map(s => `build:${s}`)
+  if (builders.length <= 1) return null
+  const o = ownersGaps(ownersSectionOf(planText), builders)
+  if (o.missing) return 'plan.md has no "## Owners" table, so no deliverable has an owner'
+  return [
+    o.unowned.length && `no owner: ${o.unowned.join('; ')}`,
+    o.unknown.length && `owner is not a builder of this run (${builders.join(', ')}): ${o.unknown.join('; ')}`,
+  ].filter(Boolean).join('; ') || null
 }
 
 async function runWorkflow() {
@@ -2825,7 +2859,7 @@ async function runWorkflow() {
   // -------------------------------------------------------------------------
   let pre = null
   if (SPEC_DIR || INTENT_ARG.value) {
-    pre = await specPreflight(APPROVED && !planReplays)
+    pre = await specPreflight(APPROVED && !planReplays, APPROVED || planReplays)
     if (!pre) {
       status = 'stopped'
       return { status: 'stopped', reason: 'the spec-directory preflight did not run, so the spec directory could not be confirmed safe to write. Nothing was planned.' }
@@ -2972,7 +3006,7 @@ OPEN QUESTIONS. Start each with "BLOCKS BUILD:" when a builder cannot proceed wi
     // No criteria -> nothing for an architect to plan against. Not dispatched,
     // so not recorded as a failure either; the stop below says why.
     if (!reqs || !reqs.criteria?.length) return { agents, files, pauseRequired: PAUSE }
-    const architecture = await dispatch(
+    let architecture = await dispatch(
       withPolicy(`Write the implementation PLAN for these requirements — plan.md, the document a cheaper build tier executes WITHOUT redesigning anything.
 
 ${humanIntent ? `INTENT: ${humanIntent}\n\n` : ''}ACCEPTANCE CRITERIA:\n${criteriaTextOf(reqs)}
@@ -2982,6 +3016,24 @@ SURFACES: ${reqs.surfaces.join(', ') || '(none classified)'}
 Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufactured ADR. Then state, concretely enough that a builder never has to make a design decision: the files to create or change and what changes in each; interfaces, data shapes and error behaviour; the order of the steps; which test proves each criterion; and NFRs as measurable numbers, never "scalable" or "fast". Anything you cannot decide yet goes in an explicit "Open decisions" section — builders are told to escalate those back, not to guess. Flag anything that constrains the UX, so design reconciles it rather than the build. ${ownersInstruction(reqs.surfaces)} Return plan.md as markdown.${writeInstruction('plan.md')}`),
       { agentType: 'solution-architect', label: 'architecture', phase: 'Plan', ...tier('plan') },
     )
+    // One chance to fix the Owners table before the run stops on it: a plan
+    // that is right everywhere else should not cost a night over a table
+    // (independent review). Kept only if it passes; else the first plan stands.
+    const ownersFirst = architecture ? ownersProblemOf(asText(architecture), reqs.surfaces) : null
+    if (ownersFirst) {
+      const fixed = await dispatch(
+        withPolicy(`Your plan.md does not pass the owners check: ${ownersFirst}.
+
+${ownersInstruction(reqs.surfaces)}
+
+Fix ONLY the "## Owners" section — do not change any other part of the plan — and return the whole plan.md as markdown.${writeInstruction('plan.md')}
+
+YOUR PLAN:
+${capText(asText(architecture), RENDER_CAP)}`),
+        { agentType: 'solution-architect', label: 'architecture-owners', phase: 'Plan', ...tier('plan') },
+      )
+      if (fixed && !ownersProblemOf(asText(fixed), reqs.surfaces)) architecture = fixed
+    }
     agents.push({ label: 'architecture', result: architecture })
     Object.assign(files, await confirmFiles(
       { ...(humanIntent ? {} : { 'intent.md': handoffPath('intent.md') }), 'plan.md': handoffPath('plan.md') },
@@ -3025,7 +3077,11 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
   const architecture = agentResult(planArtifact, 'architecture')
   // An approved plan is a file the person committed; the Plan stage's own
   // "result" is only a pointer to it, so its text comes from the preflight.
-  PLAN_TEXT = MODE_APPROVED && pre && typeof pre.planText === 'string' ? pre.planText : asText(architecture)
+  // Only the file the Plan stage recorded: on a resume the preflight reads
+  // whatever plan.md holds now, which may have been edited since (review).
+  const planOnDiskIsRecorded = !!(pre && pre.files && pre.files['plan.md'] && planArtifact.files &&
+    pre.files['plan.md'].sha && pre.files['plan.md'].sha === planArtifact.files['plan.md'])
+  PLAN_TEXT = MODE_APPROVED && pre && typeof pre.planText === 'string' && planOnDiskIsRecorded ? pre.planText : asText(architecture)
   // No plan -> stop. The build tier is cheap BECAUSE the plan leaves it nothing
   // to design; without one it would design everything, unreviewed (S3).
   if (architecture === null || architecture === undefined || (typeof architecture === 'string' && !architecture.trim()) ||
@@ -3054,13 +3110,7 @@ Decide the tier per your §2 — a Tier 1 change gets a short plan, not a manufa
   // were nobody's and were never written). A run that pauses for approval
   // still pauses, with the problem first in what the person decides.
   const ownerBuilders = BUILD_ORDER.filter(s => reqs.surfaces.includes(s)).map(s => `build:${s}`)
-  const owners = ownerBuilders.length ? ownersGaps(ownersSectionOf(PLAN_TEXT), ownerBuilders) : null
-  const ownersProblem = !owners ? null
-    : owners.missing ? 'plan.md has no "## Owners" table, so no deliverable has an owner'
-    : [
-      owners.unowned.length && `no owner: ${owners.unowned.join('; ')}`,
-      owners.unknown.length && `owner is not a builder of this run (${ownerBuilders.join(', ')}): ${owners.unknown.join('; ')}`,
-    ].filter(Boolean).join('; ') || null
+  const ownersProblem = ownersProblemOf(PLAN_TEXT, reqs.surfaces)
   if (ownersProblem) {
     keep([
       'BLOCKED — plan.unowned',

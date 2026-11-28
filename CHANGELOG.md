@@ -224,8 +224,15 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
     or an owner that is not a builder of the run is a `BLOCKED —
     plan.unowned` gate. A run that pauses for approval still pauses, and the
     problem is the first thing the person decides. Any other run stops before
-    Design and builds nothing. For an approved or resumed run, the table is
-    read from the committed file.
+    Design and builds nothing, but first the plan tier gets one chance to fix
+    only the table. A run with a single builder needs no table. The parser
+    reads numbered and emphasised headings ("## 14. Dueños"), takes the last
+    Owners heading, ignores code fences, and treats the row the `|---|`
+    separator follows as the header. For an approved or resumed run, the
+    table is read from the committed file, and only when its hash is the one
+    the Plan stage recorded. **A plan approved before this change has no
+    table.** If it has more than one builder, its approved run stops until a
+    person adds the table and recommits.
   - A **closing builder** (frontend, else backend, else data, whatever order
     the surfaces came in) also owns every plan step no surface does: docs and
     e2e/a11y/visual tests. Every builder is told so, and none escalates
