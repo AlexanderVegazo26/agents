@@ -176,7 +176,19 @@ function runBridge(prompt, cwd) {
  * @param {boolean} [opts.noBridge]  make every bridge step fail, as if the
  *                                   modules could not be reached at all
  */
-async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBridge = null, bridgeDelayMs = 0 }) {
+// The real Workflow runtime (Claude Code 2.1.332, measured 2026-11-26) rewrites
+// the script before running it: every function body and loop body opens with a
+// call to an injected guard, e.g. `function lzwPack(bytes) {__wRg$l();`. That
+// guard exists in the sandbox, not in the node a bridge step runs under — and
+// Function.prototype.toString returns the rewritten text. `instrument: true`
+// replays that rewrite on function declarations so a scenario sees what the
+// runtime would hand a bridge.
+const GUARD = '__wRg$l'
+function instrumentLikeRuntime(src) {
+  return src.replace(/(\bfunction\s+[\w$]+\s*\([^)]*\)\s*\{)/g, m => `${m}${GUARD}();`)
+}
+
+async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBridge = null, bridgeDelayMs = 0, instrument = false }) {
   // Under `--src <tree>`, a scenario that reaches the runtime through a policy
   // path would otherwise derive its runtimeDir from POLICY_JSON — i.e. always
   // `sdlc-suite/workflows` — so `--src .claude/workflows` exercised the
@@ -188,8 +200,9 @@ async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBri
       (args.policy || args.policyDefault)) {
     args = { ...args, runtimeDir: SRC }
   }
-  const src = fs.readFileSync(path.join(SRC, file), 'utf8')
+  let src = fs.readFileSync(path.join(SRC, file), 'utf8')
     .replace(/^export\s+const\s+meta\s*=/m, 'const meta =')
+  if (instrument) src = instrumentLikeRuntime(src)
   const script = new vm.Script(`(async () => {'use strict';\n${src}\n})()`, { filename: file })
 
   const calls = []
@@ -210,6 +223,7 @@ async function runScript(file, { args, cwd, onAgent, noBridge = false, tamperBri
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: id => clearTimeout(id),
   }
+  if (instrument) ctx[GUARD] = () => {}
   vm.createContext(ctx, { codeGeneration: { strings: false, wasm: false } })
   vm.runInContext(DETERMINISM_SHIM, ctx)
 
@@ -474,6 +488,23 @@ async function main() {
   await test('policySource and degraded are on the return', () => {
     assert.strictEqual(feature.result.degraded, false)
     assert.strictEqual(feature.result.policySource, RESOLVED.source)
+  })
+
+  // ------------------------------------------------------------------ runtime
+  console.log('\nRuntime instrumentation — a bridge carries no guard call node lacks')
+
+  const instrumentedCwd = tmpdir('instrumented')
+  const instrumented = await runScript('sdlc-feature.js', {
+    cwd: instrumentedCwd,
+    args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+    onAgent: featureAgents(),
+    instrument: true,
+  })
+
+  await test('under the runtime\'s guard rewrite, the run is recorded and completes', () => {
+    assert.strictEqual(instrumented.thrown, null, instrumented.thrown && instrumented.thrown.message)
+    assert.ok(instrumented.result.runDir, `no run directory: ${JSON.stringify(instrumented.result.blockedGates).slice(0, 240)}`)
+    assert.strictEqual(instrumented.result.status, 'completed')
   })
 
   // ------------------------------------------------------------------ CHG-16

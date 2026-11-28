@@ -354,8 +354,7 @@ const xs = (buf, tag) => {
   }
   return out
 }
-${lzwPack.toString()}
-${lzwUnpack.toString()}
+${loaderSource(lzwPack, lzwUnpack)}
 const realWrite = process.stdout.write.bind(process.stdout)
 const realErr = process.stderr.write.bind(process.stderr)
 // Output an earlier run (or an earlier attempt of a resumed run) left at this
@@ -654,6 +653,22 @@ function lzwUnpack(packed) {
     prev = e
   }
   return Uint8Array.from(out)
+}
+
+/**
+ * The source a loader pastes for `fns`, made runnable outside the sandbox.
+ * The Workflow runtime rewrites the script before it runs it (Claude Code
+ * 2.1.332, measured 2026-11-26): each function and loop body opens with a call
+ * to a guard it injects, e.g. `function lzwPack(bytes) {__wRg$l();`, and
+ * toString() returns the rewritten text. Pasted raw, every loader called a
+ * guard node never had and died with a ReferenceError before doing any work —
+ * no run directory, so a run with specDir stopped in its first minute. Each
+ * such guard gets an empty stand-in; the pasted code is left exactly as is.
+ */
+function loaderSource(...fns) {
+  const src = fns.map(f => f.toString()).join('\n')
+  const guards = [...new Set(src.match(/\b__[\w$]*(?=\s*\()/g) || [])]
+  return guards.map(g => `function ${g}() {}`).concat(src).join('\n')
 }
 
 /**
