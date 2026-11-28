@@ -208,6 +208,16 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Fixed
 
+- **Bridges run under the instrumented Workflow runtime.** Claude Code 2.1.332
+  rewrites a workflow script before running it: every function and loop body
+  opens with a call to a guard it injects (`__wRg$l();`), and `toString()`
+  returns that text. The loaders pasted `lzwPack` and `lzwUnpack` through
+  `toString()`, so every bridge called a guard node never had and died with a
+  `ReferenceError` before doing any work. With no run directory, a run with
+  `specDir` stopped in its first minute. `loaderSource()` in the shared runtime
+  block now declares an empty stand-in for each such guard and leaves the
+  pasted code as is. `_wiring.test.js` replays the rewrite (`instrument: true`)
+  and failed before the fix with the error the live run produced.
 - **Bridge scripts are `.cjs`.** In a repository whose `package.json` declares
   `"type": "module"`, Node loaded each `.js` bridge as ESM, `require` was
   undefined, and every workflow stopped at its first step (found on the first
