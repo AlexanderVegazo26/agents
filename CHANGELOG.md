@@ -208,6 +208,65 @@ train. See `CONTRIBUTING.md` for the compatibility policy.
 
 ### Fixed
 
+- **`sdlc-feature`: no plan step without an owner, and what blocks is what a
+  finding is about.** On an unattended run on a real repository, the builders
+  split by surface each did their slice and asked whose the rest was. The
+  documentation the plan listed (backlog items, a runbook entry, a data-model
+  line) and its e2e and accessibility specs became plan gaps and were never
+  written. Three surviving mutants came back as one "Should fix", and a dozen
+  `Stryker disable` comments whose reasons held for one replacement but hid
+  a killable one came back as "Should Fix". `isBlocking()` read only the
+  severity word, so none of them reached the repair loop, and readiness ended
+  no-go with no round left. Four changes fix this:
+  - **The plan names an owner for every deliverable.** `plan.md` ends with a
+    `## Owners` table: each file, test and document, and which
+    `build:<surface>` owns it. A missing table, a deliverable with no owner,
+    or an owner that is not a builder of the run is a `BLOCKED —
+    plan.unowned` gate. A run that pauses for approval still pauses, and the
+    problem is the first thing the person decides. Any other run stops before
+    Design and builds nothing, but first the plan tier gets one chance to fix
+    only the table: it returns the table alone and the workflow splices it in,
+    so no other line of the plan can change. A run with a single builder
+    needs no table. The parser
+    reads numbered and emphasised headings ("## 14. Dueños"), takes the last
+    Owners heading, ignores code fences, and treats the row the `|---|`
+    separator follows as the header. For an approved or resumed run, the
+    table is read from the committed file, and only when its hash is the one
+    the Plan stage recorded. **A plan approved before this change has no
+    table.** If it has more than one builder, its approved run stops until a
+    person adds the table and recommits.
+  - A **closing builder** (frontend, else backend, else data, whatever order
+    the surfaces came in) also owns every plan step no surface does: docs and
+    e2e/a11y/visual tests. Every builder is told so, and none escalates
+    another builder's step as a plan gap. The closer runs after the others in
+    both modes. In parallel worktrees it is told where their code is. It
+    writes the e2e, accessibility and visual tests from the acceptance
+    criteria, not from the implementation.
+  - The `code-reviewer` lens gets `plan.md` and checks every step against the
+    change. The plan's recorded hash is checked again before Review and before
+    each re-verification. If an agent edited it, the checks get the Plan
+    stage's recorded text and the edit becomes a `BLOCKED — plan.edited`
+    gate. A missing step is a "plan step not done" finding. Only the plan can drop a step,
+    never a builder. The refuter of such a finding and the review
+    re-verifier get the plan too. When no builder's files own the finding,
+    repair sends it to the closing builder only.
+  - `DISABLE_RULE` goes to the review and test lenses and every refuter, and
+    the repair gets the same caution. A disable comment silences every mutant
+    of its mutator on the line, so its reason must hold for each. One that
+    does not is an "unjustified disable" finding.
+  - A finding blocks when its severity says so, or when its summary **starts
+    with** "surviving mutant", "uncovered mutant", "unjustified disable" or
+    "plan step not done". Only what lenses actually put first may come before
+    the phrase: bullets, emphasis, a count, a severity word or a finding ID.
+    This applies in verification and in re-verification. The anchor keeps "no
+    surviving mutant on the changed lines" from blocking. `liveMutantGap()`,
+    the refuter and repair routing all use the same rule.
+
+  `_wiring.test.js`: fifteen new cases. Each was shown to fail without the
+  change it covers: against the code before the change, or, for the
+  re-verification filter, with that one line reverted. Two cases are
+  controls: an ordinary "Should Fix", and a finding that only mentions the
+  phrase, are confirmed but still do not block.
 - **Bridges run under the instrumented Workflow runtime.** Claude Code 2.1.332
   rewrites a workflow script before running it: every function and loop body
   opens with a call to a guard it injects (`__wRg$l();`), and `toString()`

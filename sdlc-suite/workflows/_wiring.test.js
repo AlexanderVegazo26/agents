@@ -399,6 +399,20 @@ function manifest(label, files, summary) {
 const BACKEND_FILES = ['src/export.ts', 'src/csv.ts']
 const FRONTEND_FILES = ['ui/ExportButton.tsx']
 
+// The stub plan, with the Owners table the plan tier is asked for: one row per
+// deliverable, owned by a builder of the surfaces named in the prompt.
+function planFor(prompt) {
+  const m = /SURFACES: ([^\n]*)/.exec(String(prompt))
+  const surfaces = m ? m[1].split(',').map(s => s.trim()).filter(s => ['data', 'backend', 'frontend'].includes(s)) : []
+  const closer = ['data', 'backend', 'frontend'].filter(s => surfaces.includes(s)).pop()
+  const rows = surfaces.map(s => `| ${s} code | build:${s} |`)
+  if (closer) rows.push(`| e2e/export.spec.ts | build:${closer} |`)
+  return ['Architecture: no new service; Tier 1.', '', '## Owners', '', '| Deliverable | Owner |', '|---|---|', ...rows].join('\n')
+}
+
+/** Just the Owners section of the stub plan, for tests that bring their own plan text. */
+const ownersTable = csv => '\n\n' + planFor(`SURFACES: ${csv}`).split('\n').slice(2).join('\n')
+
 function featureAgents(overrides = {}) {
   return (prompt, opts) => {
     // dispatch() re-dispatches a null result once under `<label> (retry)`. An
@@ -417,7 +431,7 @@ function featureAgents(overrides = {}) {
     }
     if (label === 'requirements') return REQS
     if (label === 'ux-spec') return 'UX spec: one button, five states.'
-    if (label === 'architecture') return 'Architecture: no new service; Tier 1.'
+    if (label === 'architecture') return planFor(prompt)
     if (label === 'build:backend') return manifest('build:backend', BACKEND_FILES)
     if (label === 'build:frontend') return manifest('build:frontend', FRONTEND_FILES)
     if (label && label.startsWith('verify:')) {
@@ -700,7 +714,7 @@ async function main() {
     // assertions below can tell "the breaker entry was added" apart from "the
     // breaker replaced everything that was already there".
     onAgent: featureAgents({
-      architecture: `Architecture: Tier 1, no new service.\n\n${BLOCKED_TEXT}`,
+      architecture: `Architecture: Tier 1, no new service.\n\n${BLOCKED_TEXT}${ownersTable('backend, frontend')}`,
       'verify:review': null, 'verify:security': null, 'verify:performance': null,
     }),
   })
@@ -1292,6 +1306,280 @@ async function main() {
     })
   })
 
+  // ------------------------------- what blocks is the content, not the label
+  console.log('\nBlocking by content — a surviving mutant, an unjustified disable or a plan step not done is repaired whatever severity the lens wrote')
+
+  // The plan reaches a prompt by path when the run recorded plan.md, inline otherwise.
+  const PLAN_CHECK_TITLE = 'IMPLEMENTATION PLAN — check every step of it against the change (PLAN COMPLETENESS)'
+  const planHanded = (prompt, title) => {
+    const at = prompt.indexOf(`${title}:`)
+    if (at < 0) return false
+    const after = prompt.slice(at + title.length + 1, at + title.length + 400)
+    return /^ read \S.*plan\.md/.test(after) || after.startsWith('\nArchitecture: no new service')
+  }
+
+  // On a real run a lens filed three surviving mutants as one "Should fix",
+  // a reviewer called a dozen Stryker disables false at "Should Fix", and the
+  // missing e2e and runbook were findings nobody repaired: isBlocking() read
+  // only the severity word, so none of them reached the repair loop.
+  for (const [lens, summary] of [
+    ['qa', 'surviving mutant in src/export.ts:12 (ConditionalExpression → true), likely equivalent'],
+    ['review', 'unjustified disable: the Stryker disable on src/export.ts:12 also silences a killable mutant'],
+    ['review', 'plan step not done: step 8, the e2e spec the plan lists, is not in the change'],
+    // What lenses put before the phrase: a bullet, emphasis, a count, a severity, an ID.
+    ['qa', '- **2 surviving mutants** in src/export.ts:12 and :14'],
+    ['review', 'F-2: plan step not done — the runbook entry the plan lists'],
+    ['review', 'Should Fix — unjustified disable on src/export.ts:12'],
+  ]) {
+    await test(`a "${summary.split(':')[0]}" finding labelled Should Fix still goes to repair (${lens})`, () => {
+      const finding = { severity: 'Should Fix', summary, evidence: 'src/export.ts:12', file: 'src/export.ts' }
+      return runScript('sdlc-feature.js', {
+        cwd: tmpdir(`content-blocking-${lens}-${summary.split(':')[0].replace(/\W+/g, '-')}`),
+        args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+        onAgent: featureAgents({
+          ...repairBase,
+          'verify:qa': lens === 'qa' ? { verdict: 'x', findings: [finding] } : { verdict: 'clean', findings: [] },
+          'verify:review': lens === 'review' ? { verdict: 'x', findings: [finding] } : { verdict: 'clean', findings: [] },
+          [`refute:${lens}`]: { refuted: false, reasoning: 'confirmed on re-read' },
+          [`reverify:${lens}`]: { verdict: 'fixed', findings: [] },
+        }),
+      }).then(r => {
+        assert.strictEqual(r.thrown, null, r.thrown && r.thrown.message)
+        assert.ok(r.calls.some(c => /^repair:/.test(c.label)), `no repair was dispatched; rounds: ${JSON.stringify(r.result.repairRounds)}`)
+      })
+    })
+  }
+
+  for (const [what, summary] of [
+    ['an ordinary Should Fix', 'the export button could use a tooltip'],
+    // The phrase only counts at the start of the summary: a finding that merely
+    // mentions it is not about a live mutant (independent review).
+    ['a finding that only mentions the phrase', 'no surviving mutant on the changed lines, but AC-3 has only a manual case'],
+  ]) {
+    await test(`${what} still does not block (the content rule is narrow)`, () => {
+      return runScript('sdlc-feature.js', {
+        cwd: tmpdir(`content-blocking-not-${what.replace(/\W+/g, '-')}`),
+        args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+        onAgent: featureAgents({
+          ...repairBase,
+          'verify:qa': { verdict: 'x', findings: [{ severity: 'Should Fix', summary, evidence: 'ui/index.ts:3', file: 'ui/index.ts' }] },
+          'refute:qa': { refuted: false, reasoning: 'confirmed' },
+        }),
+      }).then(r => {
+        // Not vacuous: the run completed and the finding reached the refuter,
+        // so it was confirmed and isBlocking() looked at it.
+        assert.strictEqual(r.thrown, null, r.thrown && r.thrown.message)
+        assert.strictEqual(r.result.status, 'completed')
+        assert.ok(r.calls.some(c => c.label === 'refute:qa'), 'the finding never reached the refuter')
+        assert.ok(r.result.findings.confirmed.some(f => f.summary === summary), 'the finding was not confirmed')
+        assert.ok(!r.calls.some(c => /^repair:/.test(c.label)), `"${summary}" was sent to repair`)
+      })
+    })
+  }
+
+  await test('a re-verifier that reports the same subject at Should Fix keeps it open until the bound', () => {
+    const live = { verdict: 'x', findings: [{ severity: 'Should Fix', summary: 'surviving mutant in src/export.ts:12 (still Survived)', evidence: 'src/export.ts:12', file: 'src/export.ts' }] }
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('content-blocking-reverify'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({ ...repairBase, 'verify:qa': live, 'refute:qa': { refuted: false, reasoning: 'confirmed' }, 'reverify:qa': live }),
+    }).then(r => {
+      assert.strictEqual(r.result.repairRounds.outcome, 'exhausted', JSON.stringify(r.result.repairRounds))
+      assert.strictEqual(r.calls.filter(c => c.label === 'repair:backend').length, 2)
+    })
+  })
+
+  await test('the refuter, the repair and the re-verifier carry the disable rule, and the plan where a plan step is at stake', () => {
+    const step = { severity: 'Should Fix', summary: 'plan step not done: step 8, the e2e spec, is not in the change', evidence: 'plan.md step 8', file: 'e2e/export.spec.ts' }
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('content-blocking-prompts'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        ...repairBase,
+        'verify:qa': { verdict: 'clean', findings: [] },
+        'verify:review': { verdict: 'x', findings: [step] },
+        'refute:review': { refuted: false, reasoning: 'the step is in the plan and not in the change' },
+        'repair:frontend': { ...manifest('repair:frontend', ['e2e/export.spec.ts'], 'wrote the e2e spec'), notAddressed: [] },
+        'reverify:review': { verdict: 'fixed', findings: [] },
+      }),
+    }).then(r => {
+      const refuter = r.calls.find(c => c.label === 'refute:review')
+      assert.ok(/unjustified disable/.test(refuter.prompt), 'the refuter judges a disable with the one-mutant rule only')
+      assert.ok(/only the plan itself can drop a step/.test(refuter.prompt) && planHanded(refuter.prompt, 'IMPLEMENTATION PLAN — the steps this finding is checked against'),
+        'the refuter of a plan-step finding does not get the plan')
+      // No manifest owns the missing file: the finding goes to the closing builder only.
+      const repairs = r.calls.filter(c => /^repair:/.test(c.label)).map(c => c.label)
+      assert.deepStrictEqual(repairs, ['repair:frontend'], `a plan step nobody owned went to ${repairs.join(', ')}`)
+      assert.ok(/silences every mutant of its mutator on that line/.test(r.calls.find(c => c.label === 'repair:frontend').prompt),
+        'the repair can add a disable without being told what it silences')
+      const reverify = r.calls.find(c => c.label === 'reverify:review')
+      assert.ok(planHanded(reverify.prompt, PLAN_CHECK_TITLE), 'the re-verifier is asked to check a plan it does not have')
+    })
+  })
+
+  // ------------------------------------------- every plan step has an owner
+  console.log('\nOwnership — every plan step has a builder, and the review checks the plan against the change')
+
+  await test('the last builder closes the plan: docs and e2e/a11y/visual tests are its, not a plan gap', () => {
+    const calls = feature.calls.filter(c => /^build:/.test(c.label))
+    assert.deepStrictEqual(calls.map(c => c.label), ['build:backend', 'build:frontend'])
+    const [first, last] = calls
+    assert.ok(/CLOSING BUILDER/.test(last.prompt), 'the last builder is not told it closes the plan')
+    assert.ok(/documentation the plan lists/.test(last.prompt) && /end-to-end, accessibility and visual tests/.test(last.prompt),
+      'the closing builder is not told docs and e2e are its')
+    assert.ok(!/CLOSING BUILDER/.test(first.prompt), 'an earlier builder was told it closes the plan')
+    for (const c of calls) {
+      assert.ok(/A plan step that belongs to another builder is not a plan gap/.test(c.prompt), `${c.label} may escalate another builder's step as a plan gap`)
+    }
+    assert.ok(/belong to build:frontend, the closing builder/.test(first.prompt), 'the other builders are not told whose the docs and e2e are')
+  })
+
+  await test('a plan.md edited after Plan is a blocked gate, and the review checks the recorded plan, not the edit', () => {
+    const cwd = tmpdir('plan-edited')
+    return runScript('sdlc-feature.js', {
+      cwd,
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        // A builder (it has Write) exempts itself by editing the approved plan.
+        'build:frontend': () => {
+          fs.appendFileSync(path.join(runDirs(cwd)[0], 'handoff', 'plan.md'), '\n\nSTEP 8 DROPPED by the builder.\n')
+          return manifest('build:frontend', FRONTEND_FILES)
+        },
+      }),
+    }).then(r => {
+      assert.strictEqual(r.thrown, null, r.thrown && r.thrown.message)
+      assert.ok(r.result.blockedGates.some(g => g.gate === 'plan.edited'), JSON.stringify(r.result.blockedGates.map(g => g.gate)))
+      const review = r.calls.find(c => c.label === 'verify:review').prompt
+      assert.ok(review.includes(`${PLAN_CHECK_TITLE}:\nArchitecture: no new service`), 'the review was not given the recorded plan text')
+      assert.ok(!review.includes('STEP 8 DROPPED'), 'the edited plan reached the review')
+    })
+  })
+
+  // --- every deliverable has an owner in the plan (Jean's review) ---------------
+  await test('the plan tier is asked for an Owners table, docs and e2e to the closing builder', () => {
+    const arch = feature.calls.find(c => c.label === 'architecture')
+    assert.ok(/## Owners/.test(arch.prompt) && /build:backend, build:frontend/.test(arch.prompt), 'the architect is not asked for the Owners table')
+    assert.ok(/end-to-end, accessibility and visual tests go to build:frontend, the closing builder/.test(arch.prompt), 'the architect is not told whose docs and e2e are')
+    const closing = feature.calls.find(c => c.label === 'build:frontend')
+    assert.ok(/from the ACCEPTANCE CRITERIA above/.test(closing.prompt), 'the closing builder may write its e2e from the implementation')
+  })
+
+  for (const [what, plan, expect] of [
+    ['a plan with no Owners table', 'Architecture: no new service; Tier 1.', /no "## Owners" table/],
+    ['a deliverable with no owner', `Architecture.\n\n## Owners\n\n| Deliverable | Owner |\n|---|---|\n| src/export.ts | build:backend |\n| docs/runbook.md | |`, /no owner: docs\/runbook\.md/],
+    ['an owner that is not a builder of the run', `Architecture.\n\n## Owners\n\n| Deliverable | Owner |\n|---|---|\n| src/export.ts | build:backend |\n| db/0013.sql | build:data |`, /owner is not a builder of this run \(build:backend, build:frontend\): db\/0013\.sql → build:data/],
+  ]) {
+    await test(`${what} stops the run before Design, with a plan.unowned gate`, () => {
+      return runScript('sdlc-feature.js', {
+        cwd: tmpdir(`owners-${what.replace(/\W+/g, '-')}`),
+        args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+        onAgent: featureAgents({ architecture: plan }),
+      }).then(r => {
+        assert.strictEqual(r.result.status, 'stopped', JSON.stringify(r.result).slice(0, 300))
+        assert.ok(expect.test(r.result.reason), r.result.reason)
+        assert.ok(r.result.blockedGates.some(g => g.gate === 'plan.unowned'), JSON.stringify(r.result.blockedGates.map(g => g.gate)))
+        assert.ok(!r.calls.some(c => /^(ux-spec|build:)/.test(c.label)), `something was designed or built: ${r.calls.map(c => c.label).join(', ')}`)
+      })
+    })
+  }
+
+  await test('the Owners parser: heading in Spanish, header and separator rows, a deliverable per row', () => {
+    const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
+    const fn = name => { const a = src.indexOf(`function ${name}(`); return src.slice(a, src.indexOf('\n}\n', a) + 3) }
+    const line = name => { const i = src.indexOf(`const ${name} = `); return src.slice(i, src.indexOf('\n', i)) }
+    const { ownersSectionOf, ownersGaps } = new Function(`${line('OWNERS_HEADING')}\n${fn('ownersSectionOf')}\n${fn('ownersBounds')}\n${fn('ownersGaps')}\nreturn { ownersSectionOf, ownersGaps }`)()
+    const plan = '# Plan\n\nPasos.\n\n## Dueños\n\n| Entregable | Dueño |\n|:--|--:|\n| a.ts | build:backend |\n| ui.tsx | Build:Frontend |\n\n## Riesgos\n\n| x | y |'
+    const section = ownersSectionOf(plan)
+    assert.ok(section.includes('a.ts') && !section.includes('Riesgos'), section)
+    assert.deepStrictEqual(ownersGaps(section, ['build:backend', 'build:frontend']), { missing: false, unowned: [], unknown: [] })
+    assert.strictEqual(ownersSectionOf('# Plan\n\nno table here'), null)
+    assert.deepStrictEqual(ownersGaps('| Entregable | Dueño |\n|---|---|', ['build:backend']), { missing: true, unowned: [], unknown: [] })
+    // Numbered and emphasised headings, as real plans write them (the HU 40 plan numbers every section).
+    for (const h of ['## 14. Dueños', '## **Owners**', '### 3.2 Responsables']) {
+      assert.ok(ownersSectionOf(`# Plan\n\n${h}\n\n| a | build:backend |`) !== null, h)
+    }
+    // A heading inside a code fence is not one; the LAST Owners heading wins.
+    const fenced = '## Owners\n\n| old.ts | build:backend |\n\n```md\n## not a heading\n```\n\n## Owners\n\n| Archivo | Quién |\n|---|---|\n| new.ts | `build: backend` |\n| | |'
+    const last = ownersSectionOf(fenced)
+    assert.ok(last.includes('new.ts') && !last.includes('old.ts'), last)
+    // The header is the row the separator follows, whatever it says; "build: x" counts; a nameless row is still named.
+    assert.deepStrictEqual(ownersGaps(last, ['build:backend']), { missing: false, unowned: ['(row with no deliverable: empty)'], unknown: [] })
+  })
+
+  await test('a run with a single builder needs no Owners table', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('owners-single'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({ requirements: { ...REQS, surfaces: ['backend'] }, architecture: 'Architecture: no new service; Tier 1.' }),
+    }).then(r => {
+      assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+      assert.ok(!r.calls.some(c => c.label === 'architecture-owners'), 'a single-builder plan was sent back for an Owners table')
+    })
+  })
+
+  await test('the plan tier gets one chance to return only the Owners table; the code splices it in and the plan is built', () => {
+    const cwd = tmpdir('owners-retry')
+    return runScript('sdlc-feature.js', {
+      cwd,
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({
+        architecture: 'Architecture: no new service; Tier 1.\n\nStep 1: CSV writer.',
+        // A model that wraps the table in prose: only the table rows are kept.
+        'architecture-owners': `Here is the table:${ownersTable('backend, frontend')}\n\nHope this helps.`,
+      }),
+    }).then(r => {
+      const retry = r.calls.find(c => c.label === 'architecture-owners')
+      assert.ok(retry && /Return ONLY that table/.test(retry.prompt) && /no "## Owners" table/.test(retry.prompt), 'the plan tier was not asked for the table alone')
+      assert.ok(/do not edit plan\.md yourself/.test(retry.prompt), 'the plan tier may rewrite the whole plan')
+      assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
+      assert.ok(!r.result.blockedGates.some(g => g.gate === 'plan.unowned'), 'a fixed plan still left a plan.unowned gate')
+      const onDisk = fs.readFileSync(path.join(runDirs(cwd)[0], 'handoff', 'plan.md'), 'utf8')
+      assert.ok(onDisk.startsWith('Architecture: no new service; Tier 1.\n\nStep 1: CSV writer.'), 'the rest of the plan changed')
+      assert.ok(/## Owners\n\n\| Deliverable \| Owner \|/.test(onDisk) && !/Hope this helps/.test(onDisk), onDisk)
+    })
+  })
+
+  await test('spliceOwners replaces only the Owners section, or appends one', () => {
+    const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
+    const fn = name => { const a = src.indexOf(`function ${name}(`); return src.slice(a, src.indexOf('\n}\n', a) + 3) }
+    const line = name => { const i = src.indexOf(`const ${name} = `); return src.slice(i, src.indexOf('\n', i)) }
+    const { spliceOwners } = new Function(`${line('OWNERS_HEADING')}\n${fn('ownersBounds')}\n${fn('spliceOwners')}\nreturn { spliceOwners }`)()
+    const t = '| A | O |\n|---|---|\n| x | build:backend |'
+    assert.strictEqual(spliceOwners('# P\n\n## 9. Dueños\n\n| old |\n\n## 10. Riesgos\n\nr', t), '# P\n\n## 9. Dueños\n\n| A | O |\n|---|---|\n| x | build:backend |\n\n## 10. Riesgos\n\nr')
+    assert.strictEqual(spliceOwners('# P\n\nbody\n\n', t), '# P\n\nbody\n\n## Owners\n\n| A | O |\n|---|---|\n| x | build:backend |\n')
+  })
+
+  await test('the closing builder does not depend on the order the analyst listed the surfaces in', () => {
+    return runScript('sdlc-feature.js', {
+      cwd: tmpdir('closer-order'),
+      args: { initiative: 'add a CSV export', policy: POLICY_JSON },
+      onAgent: featureAgents({ requirements: { ...REQS, surfaces: ['frontend', 'backend'] } }),
+    }).then(r => {
+      const byLabel = l => r.calls.find(c => c.label === l)
+      assert.ok(/CLOSING BUILDER/.test(byLabel('build:frontend').prompt), 'frontend is not the closing builder when listed first')
+      assert.ok(!/CLOSING BUILDER/.test(byLabel('build:backend').prompt), 'the closer followed the analyst\'s list order')
+      // Parallel worktrees: the closer is told the other code is not in its tree.
+      assert.ok(/read their code there, through each one's diffRef/.test(byLabel('build:frontend').prompt), 'a parallel closer is not told where the other builders\' code is')
+      // ...and runs after them: backend was dispatched first although the analyst listed frontend first.
+      assert.ok(r.calls.findIndex(c => c.label === 'build:backend') < r.calls.findIndex(c => c.label === 'build:frontend'), 'the closer did not run after the other builders')
+    })
+  })
+
+  await test('the review lens checks every plan step against the change and every disable it adds', () => {
+    const review = feature.calls.find(c => c.label === 'verify:review')
+    assert.ok(/PLAN COMPLETENESS/.test(review.prompt) && /plan step not done/.test(review.prompt), 'the review is not asked to check the plan against the change')
+    // The plan itself is handed to the review lens, and only to it.
+    assert.ok(planHanded(review.prompt, PLAN_CHECK_TITLE), 'the review lens does not get the plan')
+    for (const other of ['verify:security', 'verify:performance']) {
+      assert.ok(!/IMPLEMENTATION PLAN — check every step/.test(feature.calls.find(c => c.label === other).prompt), `${other} was handed the plan check`)
+    }
+    assert.ok(/A builder cannot drop a planned step/.test(review.prompt), 'a builder can exempt itself by writing that it dropped a step')
+    assert.ok(/unjustified disable/.test(review.prompt) && /every mutant of that mutator on the line/.test(review.prompt),
+      'the review is not told a disable silences every mutant of its mutator on the line')
+    const qa = feature.calls.find(c => c.label === 'verify:qa')
+    assert.ok(/unjustified disable/.test(qa.prompt), 'the test lens, which runs the mutation, is not given the disable rule')
+  })
+
   // ------------------------------------------- the whole loop, end to end
   console.log('\nThe loop closes — two runs, distil, ratify, and the third run is taught')
 
@@ -1817,7 +2105,7 @@ async function main() {
     assert.strictEqual(feature.result.design.mock, null)
     const spec = fs.readFileSync(path.join(dir, 'spec.md'), 'utf8')
     assert.ok(spec.includes('**AC-1**') && spec.includes('does the CSV need a BOM?'), spec)
-    assert.strictEqual(fs.readFileSync(path.join(dir, 'plan.md'), 'utf8'), 'Architecture: no new service; Tier 1.')
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'plan.md'), 'utf8'), planFor('SURFACES: backend, frontend'))
   })
 
   await test('downstream stages are handed the FILE, not the pasted text', () => {
@@ -2593,7 +2881,7 @@ async function main() {
     gitIn(cwd, 'commit', '-q', '-m', 'earlier run')
     const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, pauseAfterPlan: false }, onAgent: featureAgents() })
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
-    assert.strictEqual(fs.readFileSync(path.join(d, 'plan.md'), 'utf8'), 'Architecture: no new service; Tier 1.', 'the stale plan.md survived')
+    assert.strictEqual(fs.readFileSync(path.join(d, 'plan.md'), 'utf8'), planFor('SURFACES: backend, frontend'), 'the stale plan.md survived')
     assert.strictEqual(r.result.design.mock, null, 'a stale mock.html was handed on')
     assert.ok(!/STATIC MOCK/.test(byLabel(r, 'build:frontend').prompt))
   })
@@ -2660,13 +2948,13 @@ async function main() {
     const cuts0 = BRIDGE_OUTPUT_CUTS.length
     const r1 = await runScript('sdlc-feature.js', {
       cwd, args: { initiative: 'x', policy: POLICY_JSON },
-      onAgent: featureAgents({ architecture: bigPlan, requirements: three, 'build:backend': null, 'build:frontend': null, 'build:data': null }),
+      onAgent: featureAgents({ architecture: bigPlan + ownersTable('backend, frontend, data'), requirements: three, 'build:backend': null, 'build:frontend': null, 'build:data': null }),
     })
     assert.strictEqual(r1.result.status, 'stopped', JSON.stringify(r1.result).slice(0, 300))
     assert.ok(r1.calls.some(c => /^bridge:phase:part$/.test(c.label)), 'the large phase record was not written in parts')
     const r2 = await runScript('sdlc-feature.js', {
       cwd, args: { initiative: 'x', policy: POLICY_JSON, resume: r1.result.runId },
-      onAgent: featureAgents({ architecture: bigPlan, requirements: three }),
+      onAgent: featureAgents({ architecture: bigPlan + ownersTable('backend, frontend, data'), requirements: three }),
     })
     assert.strictEqual(r2.result.status, 'completed', JSON.stringify(r2.result).slice(0, 400))
     assert.ok(r2.calls.some(c => c.label === 'bridge:open:read'), 'the large resume was not read back in chunks')
@@ -2690,7 +2978,7 @@ async function main() {
       `PLAN-LINE ${i}: ${require('crypto').createHash('sha256').update(`d${i}`).digest('hex')}\n`).join('')
     let spoiled = 0
     const r = await runScript('sdlc-feature.js', {
-      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan }),
+      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan + ownersTable('backend, frontend') }),
       tamperBridge: (label, out, prompt) => {
         if (label === 'bridge:phase:part' && spoiled === 0) {
           // The transcriber "copied" it wrong: one character changed on disk.
@@ -2715,7 +3003,7 @@ async function main() {
     const bigPlan = Array.from({ length: 2000 }, (_, i) =>
       `PLAN-LINE ${i}: ${require('crypto').createHash('sha256').update(`c${i}`).digest('hex')}\n`).join('')
     const r = await runScript('sdlc-feature.js', {
-      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan }), bridgeDelayMs: 5,
+      cwd, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan + ownersTable('backend, frontend') }), bridgeDelayMs: 5,
     })
     assert.strictEqual(r.result.status, 'completed', JSON.stringify(r.result).slice(0, 300))
     const perStep = {}
@@ -2734,7 +3022,7 @@ async function main() {
     const cwd2 = tmpdir('concparts-lost')
     let lost = 0
     const r2 = await runScript('sdlc-feature.js', {
-      cwd: cwd2, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan }), bridgeDelayMs: 5,
+      cwd: cwd2, args: { initiative: 'x', policy: POLICY_JSON }, onAgent: featureAgents({ architecture: bigPlan + ownersTable('backend, frontend') }), bridgeDelayMs: 5,
       tamperBridge: (label, out) => (label === 'bridge:phase:part' && lost++ === 1 ? { ok: false, error: 'could not write' } : out),
     })
     assert.ok(lost > 1, 'the scenario never lost a part')
@@ -2879,6 +3167,26 @@ async function main() {
     return { cwd, d, runId: r.result.runId }
   }
   const commitAll = (cwd, msg) => { gitIn(cwd, 'add', '-A'); gitIn(cwd, 'commit', '-q', '-m', msg) }
+
+  await test('a plan that pauses for approval with an unowned deliverable still pauses, with the owners problem first', async () => {
+    const { cwd } = gitSpecRepo()
+    const r = await runScript('sdlc-feature.js', {
+      cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC },
+      onAgent: featureAgents({ architecture: 'Architecture: no new service; Tier 1.' }),
+    })
+    assert.strictEqual(r.result.status, 'awaiting-plan-approval', JSON.stringify(r.result).slice(0, 300))
+    assert.ok(/^Give every deliverable an owner in plan\.md's "## Owners" table/.test(r.result.humanDecisionRequired[0]), r.result.humanDecisionRequired[0])
+  })
+
+  await test('an approved plan whose Owners table was removed stops before Design', async () => {
+    const { cwd, d } = await pausedRun()
+    fs.writeFileSync(path.join(d, 'plan.md'), 'Architecture: no new service; Tier 1.\n')
+    commitAll(cwd, 'approve without owners')
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC, approvedPlan: true }, onAgent: featureAgents() })
+    assert.strictEqual(r.result.status, 'stopped', JSON.stringify(r.result).slice(0, 300))
+    assert.ok(/commit it and start a fresh run with approvedPlan: true/.test(r.result.reason), r.result.reason)
+    assert.ok(!r.calls.some(c => /^(ux-spec|build:)/.test(c.label)), r.calls.map(c => c.label).join(', '))
+  })
 
   await test('resuming a PAUSED run "as approved" is refused — approval is a fresh run', async () => {
     const { cwd, d, runId } = await pausedRun()
@@ -3133,7 +3441,9 @@ async function main() {
   await test('every live mutant must be its own finding: fewer surviving-mutant findings than live mutants is said', () => {
     const src = fs.readFileSync(path.join(SRC, 'sdlc-feature.js'), 'utf8')
     const a = src.indexOf('function liveMutantGap(m, findings) {')
-    const gap = new Function(`${src.slice(a, src.indexOf('\n}\n', a) + 3)}; return liveMutantGap`)()
+    // It counts findings with the same phrase rule isBlocking() routes by.
+    const line = name => { const i = src.indexOf(`const ${name} = `); return src.slice(i, src.indexOf('\n', i)) }
+    const gap = new Function(`${line('SUBJECT_LEAD')}\n${line('LIVE_MUTANT_SUBJECT_RE')}\n${src.slice(a, src.indexOf('\n}\n', a) + 3)}; return liveMutantGap`)()
     const f = n => Array.from({ length: n }, (_, i) => ({ summary: `Surviving mutant ${i} in src/x.ts` }))
     assert.strictEqual(gap({ survived: 22, noCoverage: 2 }, [{ summary: 'one finding for all survivors' }]),
       '; 24 live mutant(s) reported but only 0 surviving-mutant finding(s): every live mutant must be its own Must Fix finding')
@@ -3649,7 +3959,7 @@ async function main() {
   await test('the pause never asks a person to approve a plan.md this run did not write', async () => {
     const { cwd } = gitSpecRepo()
     const huge = 'P'.repeat(20 * 1024)   // over the fallback-write limit, and the stub writes no file
-    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents({ architecture: huge }) })
+    const r = await runScript('sdlc-feature.js', { cwd, args: { initiative: 'HU-9', policy: POLICY_JSON, specDir: SPEC }, onAgent: featureAgents({ architecture: huge + ownersTable('backend, frontend') }) })
     assert.strictEqual(r.result.status, 'stopped', JSON.stringify(r.result).slice(0, 300))
     assert.ok(/Plan approval has no input file: plan\.md/.test(r.result.reason), r.result.reason)
   })
